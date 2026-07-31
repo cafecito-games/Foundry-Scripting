@@ -63,5 +63,8 @@
     "vscode-oniguruma": "^2.0.1",
     "vscode-textmate": "^9.1.0",
     "vscode-tmgrammar-test": "^0.1.3"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
   }
 }
