@@ -12,8 +12,8 @@ export interface ConnectionStatusPresentation {
 
 export interface StatusBarItemHandle {
   text: string;
-  tooltip?: string;
-  command?: string;
+  tooltip?: unknown;
+  command?: unknown;
 }
 
 export interface ConnectionStatusActions {

@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 interface CapturedManagerOptions {
   createClient: (endpoint: { host: string; port: number }, signal: AbortSignal) => unknown;
+  onStateChange?: (state: { kind: string }) => void;
+  output?: unknown;
 }
 
 interface CapturedClientOptions {
@@ -56,9 +58,12 @@ describe("connection runtime", () => {
 
   it("wires cancellation and workspace mismatch handling into each client", async () => {
     runtimeMock.showWarningMessage.mockResolvedValue("Open Server Project");
+    const outputChannel = { appendLine: vi.fn() } as never;
+    const onStateChange = vi.fn();
     createConnectionManager(
-      { appendLine: vi.fn() } as never,
+      outputChannel,
       "/workspace/editor-project",
+      onStateChange,
     );
     const signal = new AbortController().signal;
 
@@ -67,6 +72,8 @@ describe("connection runtime", () => {
       signal,
     );
     const options = runtimeMock.clientOptions[0];
+    expect(runtimeMock.managerOptions[0]?.onStateChange).toBe(onStateChange);
+    expect(runtimeMock.managerOptions[0]?.output).toBe(outputChannel);
     expect(options?.signal).toBe(signal);
 
     await options?.workspaceMismatchHandler?.handleServerWorkspace(

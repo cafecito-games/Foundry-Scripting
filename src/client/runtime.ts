@@ -1,5 +1,8 @@
 import * as vscode from "vscode";
-import { ConnectionManager } from "./connection-manager.js";
+import {
+  ConnectionManager,
+  type ConnectionState,
+} from "./connection-manager.js";
 import { FoundryHostLauncher } from "./host-launcher.js";
 import { FoundryScriptLanguageClient } from "./language-client.js";
 import { createWorkspaceMismatchHandler } from "./workspace-mismatch.js";
@@ -7,6 +10,7 @@ import { createWorkspaceMismatchHandler } from "./workspace-mismatch.js";
 export function createConnectionManager(
   outputChannel: vscode.OutputChannel,
   workspacePath: string,
+  onStateChange: (state: ConnectionState) => void,
 ): ConnectionManager {
   const workspaceMismatchHandler = createWorkspaceMismatchHandler({
     workspacePath,
@@ -27,5 +31,7 @@ export function createConnectionManager(
         workspaceMismatchHandler,
       }),
     launcher: new FoundryHostLauncher({ output: outputChannel }),
+    onStateChange,
+    output: outputChannel,
   });
 }

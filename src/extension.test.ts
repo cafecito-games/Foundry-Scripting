@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as vscode from "vscode";
 import packageManifest from "../package.json";
+import {
+  CONNECTION_ACTIONS_COMMAND,
+  OPEN_LOG_ACTION,
+  OPEN_SETTINGS_ACTION,
+  RECONNECT_ACTION,
+} from "./client/connection-status.js";
 import { HostStartupFailure } from "./client/host-launcher.js";
 
 const extensionMock = vi.hoisted(() => ({
@@ -8,12 +14,24 @@ const extensionMock = vi.hoisted(() => ({
   workspaceFolders: [] as Array<{ uri: { fsPath: string } }>,
   outputChannel: {
     appendLine: vi.fn(),
+    show: vi.fn(),
+    dispose: vi.fn(),
+  },
+  statusItem: {
+    text: "",
+    tooltip: "",
+    command: undefined as string | undefined,
+    show: vi.fn(),
     dispose: vi.fn(),
   },
   showErrorMessage: vi.fn(),
+  showQuickPick: vi.fn(),
   executeCommand: vi.fn(),
+  registeredCommands: new Map<string, () => Promise<void>>(),
+  registerCommand: vi.fn(),
   start: vi.fn(),
   stop: vi.fn(),
+  reconnectNow: vi.fn(),
   createConnectionManager: vi.fn(),
   taskProviderDisposable: { dispose: vi.fn() },
   registerTaskProvider: vi.fn(),
@@ -31,14 +49,18 @@ vi.mock("vscode", () => ({
   },
   window: {
     createOutputChannel: vi.fn(() => extensionMock.outputChannel),
+    createStatusBarItem: vi.fn(() => extensionMock.statusItem),
     showErrorMessage: extensionMock.showErrorMessage,
+    showQuickPick: extensionMock.showQuickPick,
   },
   commands: {
     executeCommand: extensionMock.executeCommand,
+    registerCommand: extensionMock.registerCommand,
   },
   tasks: {
     registerTaskProvider: extensionMock.registerTaskProvider,
   },
+  StatusBarAlignment: { Left: 1 },
 }));
 
 vi.mock("./client/runtime.js", () => ({
@@ -57,19 +79,36 @@ describe("extension entry point", () => {
     extensionMock.configuration.clear();
     extensionMock.workspaceFolders.length = 0;
     extensionMock.outputChannel.appendLine.mockClear();
+    extensionMock.outputChannel.show.mockClear();
     extensionMock.outputChannel.dispose.mockClear();
+    extensionMock.statusItem.text = "";
+    extensionMock.statusItem.tooltip = "";
+    extensionMock.statusItem.command = undefined;
+    extensionMock.statusItem.show.mockClear();
+    extensionMock.statusItem.dispose.mockClear();
     extensionMock.showErrorMessage.mockReset();
+    extensionMock.showQuickPick.mockReset();
     extensionMock.executeCommand.mockReset();
     extensionMock.registerTaskProvider.mockReset();
     extensionMock.registerTaskProvider.mockReturnValue(
       extensionMock.taskProviderDisposable,
     );
+    extensionMock.registeredCommands.clear();
+    extensionMock.registerCommand.mockReset();
+    extensionMock.registerCommand.mockImplementation(
+      (command: string, handler: () => Promise<void>) => {
+        extensionMock.registeredCommands.set(command, handler);
+        return { dispose: () => extensionMock.registeredCommands.delete(command) };
+      },
+    );
     extensionMock.start = vi.fn().mockResolvedValue(undefined);
     extensionMock.stop = vi.fn().mockResolvedValue(undefined);
+    extensionMock.reconnectNow = vi.fn().mockResolvedValue(undefined);
     extensionMock.createConnectionManager.mockReset();
     extensionMock.createConnectionManager.mockImplementation(() => ({
       start: extensionMock.start,
       stop: extensionMock.stop,
+      reconnectNow: extensionMock.reconnectNow,
     }));
   });
 
@@ -87,6 +126,7 @@ describe("extension entry point", () => {
     expect(extensionMock.createConnectionManager).toHaveBeenCalledWith(
       extensionMock.outputChannel,
       "/workspace/game",
+      expect.any(Function),
     );
     expect(extensionMock.start).toHaveBeenCalledWith({
       settings: {
@@ -97,6 +137,7 @@ describe("extension entry point", () => {
       project: "/workspace/game",
     });
     expect(context.subscriptions).toContain(extensionMock.outputChannel);
+    expect(context.subscriptions).toContain(extensionMock.statusItem);
   });
 
   it("off creates no connection manager and needs no workspace", async () => {
@@ -112,6 +153,8 @@ describe("extension entry point", () => {
       expect.anything(),
     );
     expect(context.subscriptions).toContain(extensionMock.taskProviderDisposable);
+    expect(extensionMock.statusItem.show).toHaveBeenCalledOnce();
+    expect(extensionMock.statusItem.text).toContain("Off");
   });
 
   it("reports a missing project without attempting a connection", async () => {
@@ -175,6 +218,49 @@ describe("extension entry point", () => {
 
     expect(extensionMock.stop).toHaveBeenCalledOnce();
     expect(extensionMock.showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it("renders manager states and reconnects immediately from the status command", async () => {
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game" },
+    });
+    extensionMock.showQuickPick.mockResolvedValue(RECONNECT_ACTION);
+    await activate(createContext());
+    const onStateChange = extensionMock.createConnectionManager.mock.calls[0]?.[2] as
+      | ((state: { kind: string }) => void)
+      | undefined;
+
+    onStateChange?.({ kind: "connected" });
+    await extensionMock.registeredCommands.get(CONNECTION_ACTIONS_COMMAND)?.();
+
+    expect(extensionMock.statusItem.text).toContain("Connected");
+    expect(extensionMock.reconnectNow).toHaveBeenCalledOnce();
+  });
+
+  it("opens the LSP log from the status command", async () => {
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game" },
+    });
+    extensionMock.showQuickPick.mockResolvedValue(OPEN_LOG_ACTION);
+    await activate(createContext());
+
+    await extensionMock.registeredCommands.get(CONNECTION_ACTIONS_COMMAND)?.();
+
+    expect(extensionMock.outputChannel.show).toHaveBeenCalledOnce();
+  });
+
+  it("offers settings instead of reconnect while off", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    extensionMock.showQuickPick.mockResolvedValue(OPEN_SETTINGS_ACTION);
+    await activate(createContext());
+
+    await extensionMock.registeredCommands.get(CONNECTION_ACTIONS_COMMAND)?.();
+
+    expect(extensionMock.executeCommand).toHaveBeenCalledWith(
+      "workbench.action.openSettings",
+      "foundryScript.lsp.mode",
+    );
+    expect(extensionMock.reconnectNow).not.toHaveBeenCalled();
   });
 });
 
