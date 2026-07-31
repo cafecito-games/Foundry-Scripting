@@ -893,7 +893,30 @@ var extend = 1
 
 var async = 2
 #   ^^^^^ - storage.modifier
+
+    get:
+#   ^^^ storage.modifier.accessor.foundryscript
+
+    get():
+#   ^^^ storage.modifier.accessor.foundryscript
+
+    set(value):
+#   ^^^ storage.modifier.accessor.foundryscript
+
+    get = get_health
+#   ^^^ storage.modifier.accessor.foundryscript
+
+var get = 5
+#   ^^^ - storage.modifier
+
+    dict = {get = 1}
+#           ^^^ - storage.modifier
+
+    obj.set = 3
+#       ^^^ - storage.modifier
 ```
+
+The accessor cases are a matched set. GRAMMAR.md §4.4 defines four accessor forms — `get:`, `get():`, `set(value):`, and the pointer style `get = method` — and all four must scope. The three negative cases pin the reason the pattern is anchored to line start: without that anchor it fires on any identifier named `get` or `set` followed by `=`, which is ordinary legal code.
 
 The final two cases are the point of this file: `extend` and `async` are ordinary identifiers outside their declaration positions (`GRAMMAR.md` §2.5, §4.7, §4.8).
 
@@ -1011,9 +1034,9 @@ Then add these entries to `repository`:
           "match": "\\basync\\b(?=(?:\\s+(?:static|final|abstract))*\\s+func\\b)"
         },
         {
-          "comment": "GRAMMAR.md 4.4 property accessors. LIMITATION: a dictionary key literally named get or set followed by a colon is a false positive.",
+          "comment": "GRAMMAR.md 4.4 property accessors, covering all four forms: get:, get():, set(value):, and the pointer style get = method. Anchored to the start of the line because accessors occupy their own line in a property_block; without that anchor this fires on any identifier named get or set followed by = -- `var get = 5`, `func f(get = 1)`, `{get = 1}`, `obj.set = 3` all false-positive. LIMITATION: the single-line inline_property form (`var x: int = 1: get = a, set = b`) is missed, since those accessors are mid-line. A false negative is the safer direction.",
           "name": "storage.modifier.accessor.foundryscript",
-          "match": "\\b(?:get|set)\\b(?=\\s*[:=])"
+          "match": "^\\s*(?:get|set)\\b(?=\\s*(?:\\([^)]*\\))?\\s*[:=])"
         }
       ]
     },
@@ -1035,7 +1058,7 @@ If `var extend = 1` fails by scoping `extend` as a keyword, the `^` anchor was d
 
 Open `~/CafecitoGames/Foundry/modules/foundry_script/GRAMMAR.md` §2.5 and confirm every keyword in the fenced block appears in exactly one alternation in `#keywords`, and that no word appears there which §2.5 does not list. This is the manual stand-in for the drift check that issue #5 automates.
 
-Expected: 40 keywords accounted for across the `keyword.control`, `keyword.declaration`, `storage.modifier`, `keyword.operator.word`, `keyword.other`, and `invalid.illegal.yield` patterns.
+Expected: **44** keywords accounted for across the `keyword.control` (13), `keyword.declaration` (14), `storage.modifier` (5), `keyword.operator.word` (6), `keyword.other` (5), and `invalid.illegal.yield` (1) patterns.
 
 - [ ] **Step 6: Commit**
 
