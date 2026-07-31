@@ -109,6 +109,39 @@ describe("FoundryScript language client", () => {
     ]);
   });
 
+  it("isolates capability state from notification and callback aliases", () => {
+    const outputChannel = {
+      appendLine: vi.fn(),
+    } as unknown as vscode.OutputChannel;
+    const onCapabilities = vi.fn();
+    const client = new FoundryScriptLanguageClient({
+      endpoint: { host: "127.0.0.1", port: 6005 },
+      outputChannel,
+      onCapabilities,
+    });
+    const capabilities: FoundryCapabilities = {
+      native_classes: [{ name: "Node", inherits: "Object" }],
+    };
+    languageClientMock.notificationHandlers.get(
+      "foundry_script/capabilities",
+    )?.(capabilities);
+
+    capabilities.native_classes[0].name = "Mutated input";
+    const callbackCapabilities = onCapabilities.mock.calls[0]?.[0] as
+      | FoundryCapabilities
+      | undefined;
+    if (callbackCapabilities === undefined) {
+      throw new Error("capabilities callback was not invoked");
+    }
+    callbackCapabilities.native_classes[0].inherits = "Mutated callback";
+    const returnedCapabilities = client.capabilities;
+    returnedCapabilities.native_classes[0].name = "Mutated getter";
+
+    expect(client.capabilities).toEqual({
+      native_classes: [{ name: "Node", inherits: "Object" }],
+    });
+  });
+
   it("records the requested server workspace and forwards the notification", () => {
     const outputChannel = {
       appendLine: vi.fn(),

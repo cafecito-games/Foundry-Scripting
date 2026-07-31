@@ -32,6 +32,16 @@ const changeWorkspaceNotification = new NotificationType<ChangeWorkspaceParams>(
   CHANGE_WORKSPACE_NOTIFICATION,
 );
 
+function copyCapabilities(
+  capabilities: FoundryCapabilities,
+): FoundryCapabilities {
+  return {
+    native_classes: capabilities.native_classes.map((nativeClass) => ({
+      ...nativeClass,
+    })),
+  };
+}
+
 export interface FoundryScriptLanguageClientOptions {
   endpoint: TcpEndpoint;
   outputChannel: vscode.OutputChannel;
@@ -63,11 +73,11 @@ export class FoundryScriptLanguageClient extends LanguageClient {
     );
 
     this.onNotification(capabilitiesNotification, (capabilities) => {
-      this.currentCapabilities = capabilities;
+      this.currentCapabilities = copyCapabilities(capabilities);
       writeLog(outputChannel, "info", "lsp.capabilities.received", {
         nativeClassCount: capabilities.native_classes.length,
       });
-      onCapabilities?.(capabilities);
+      onCapabilities?.(copyCapabilities(this.currentCapabilities));
     });
     this.onNotification(changeWorkspaceNotification, (params) => {
       this.currentServerWorkspacePath = params.path;
@@ -79,9 +89,7 @@ export class FoundryScriptLanguageClient extends LanguageClient {
   }
 
   get capabilities(): FoundryCapabilities {
-    return {
-      native_classes: [...this.currentCapabilities.native_classes],
-    };
+    return copyCapabilities(this.currentCapabilities);
   }
 
   get serverWorkspacePath(): string | undefined {
