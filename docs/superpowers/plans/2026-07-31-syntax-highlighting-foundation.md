@@ -26,6 +26,25 @@ Two deliberate departures from the issue text. Both are recorded here so they ar
 
 `.fs` is F#'s conventional extension. Users with Ionide installed will see a conflict. This is resolved by the user with `files.associations`, and Task 7 documents it in the README. Do not try to solve it in the grammar.
 
+## Negative scope assertions must be fully qualified
+
+`vscode-tmgrammar-test`'s negative assertion form (`^^^ - some.scope`) does an **exact string match**, not a TextMate scope-selector prefix match. The implementation is a literal `excludedScopes.filter(s => token.scopes.includes(s))` in `node_modules/vscode-tmgrammar-test/dist/unit/index.js`.
+
+Because this grammar always emits fully-qualified names, an assertion like `- constant.numeric` can **never fail** — the bare string `"constant.numeric"` is never an element of the scopes array, whether or not the bug it guards against is present. Such an assertion is silently vacuous and reads exactly like a passing test.
+
+Verified: re-introducing the `tup.0` bug (dropping the integer pattern's nested lookbehind) left `- constant.numeric` green, while `- constant.numeric.integer.foundryscript` correctly failed.
+
+**Every negative assertion must name the exact scope the buggy grammar would emit**, e.g. `- constant.numeric.integer.foundryscript`, `- storage.modifier.async.foundryscript`, `- keyword.declaration.extend.foundryscript`.
+
+**And every negative assertion must be proven load-bearing** by temporarily breaking the grammar so the guarded property is violated, confirming the assertion fails, then restoring. A negative assertion nobody has seen fail is not evidence of anything.
+
+Two further ways an assertion silently checks nothing, both found the hard way:
+
+- **An indented `#` is not an assertion at all.** `isLineAssertion` requires `s.startsWith(commentToken)`, so a leading space makes the line parse as ordinary source. The `#` must be in column 1.
+- **A pure-negative assertion selecting zero tokens passes silently.** The runner guards the empty-selection case with `if (xs.length === 0 && requiredScopes.length > 0)`, so a positive assertion with drifted carets fails loudly while a negative one is inert. Carets drifting past the end of the source line are the usual cause.
+
+Task 6 adds a mechanical scan for the last of these.
+
 ## File Structure
 
 | File | Responsibility |
@@ -314,11 +333,15 @@ Closes #1"
 
 - [ ] **Step 1: Write the failing test**
 
-The indentation rules are regexes in a JSON file, which makes them directly testable without the VS Code host. Create `src/language-configuration.test.ts`:
+The indentation rules are regexes in a JSON file, which makes them directly testable without the VS Code host.
+
+Note the plain default import rather than `with { type: "json" }`. Import attributes require `module` to be `esnext`/`node18`/`node20`/`nodenext`/`preserve`, and this project is on `Node16`; `resolveJsonModule` handles the plain form. This was established in Task 1.
+
+Create `src/language-configuration.test.ts`:
 
 ```ts
 import { describe, expect, it } from "vitest";
-import configuration from "../language-configuration.json" with { type: "json" };
+import configuration from "../language-configuration.json";
 
 const increaseIndent = new RegExp(configuration.indentationRules.increaseIndentPattern);
 const decreaseIndent = new RegExp(configuration.indentationRules.decreaseIndentPattern);
@@ -337,6 +360,19 @@ describe("increaseIndentPattern", () => {
     "        nested_if_deeply_indented:",
     "extend int uses Describable:",
     "func f():  # trailing comment",
+    // Match arms (GRAMMAR.md 6.1) - patterns are arbitrary expressions, which is
+    // why increaseIndentPattern cannot be a keyword list.
+    "    Idle:",
+    "    1, 2, 3:",
+    "    _:",
+    "    [first, second]:",
+    "    Message.Move(x, y) when x > 0:",
+    // Property accessors (GRAMMAR.md 4.4) and whole-file enums (3.2).
+    "    get:",
+    "    set(value):",
+    "enum Direction:",
+    // Multi-line lambda (GRAMMAR.md 5.3).
+    "var handler = func(x: int) -> int:",
   ];
 
   for (const line of increases) {
@@ -350,6 +386,11 @@ describe("increaseIndentPattern", () => {
     "var health: int = 100",
     "# a comment ending in a colon:",
     "return",
+    "signal died(cause: String)",
+    "var slice = items[1:2]",
+    "var label = \"a:\"",
+    "var choice = 1 if ready else 2",
+    "var inline = func(x): return x * 2",
   ];
 
   for (const line of doesNotIncrease) {
@@ -371,6 +412,27 @@ describe("decreaseIndentPattern", () => {
   it("does not decrease indent on an ordinary statement", () => {
     expect(decreaseIndent.test("    health -= 1")).toBe(false);
   });
+
+  // Must stay symmetric with increaseIndentPattern. If only the increase side
+  // allowed trailing comments, this line would indent its body but never dedent
+  // itself, leaving the block a level too deep.
+  it("decreases indent on else with a trailing comment", () => {
+    expect(decreaseIndent.test("    else:  # handle default")).toBe(true);
+  });
+
+  it("decreases indent on elif with a trailing comment", () => {
+    expect(decreaseIndent.test("    elif ready:  # nearly dead")).toBe(true);
+  });
+
+  // The trailing colon is required on purpose: without it, a wrapped ternary
+  // such as `    else b)` would wrongly dedent.
+  it("does not decrease indent before the colon is typed", () => {
+    expect(decreaseIndent.test("    else")).toBe(false);
+  });
+
+  it("does not decrease indent on a wrapped ternary continuation", () => {
+    expect(decreaseIndent.test("    else b)")).toBe(false);
+  });
 });
 ```
 
@@ -381,7 +443,11 @@ Expected: FAIL — `Cannot find module '../language-configuration.json'`
 
 - [ ] **Step 3: Create `language-configuration.json`**
 
-The `increaseIndentPattern` requires a `:` at end of line, optionally followed by a comment. Excluding a `:` that is inside braces is what keeps dictionary literals from triggering it.
+Both indentation patterns require a `:` as the last non-comment character on the line. There is no brace awareness — what keeps `var mapping = { "a": 1 }` from matching is simply that its `:` is not at end of line.
+
+`increaseIndentPattern` is deliberately **keyword-free**, unlike Python's or Ruby's configurations. A keyword list cannot express FoundryScript's match arms, whose patterns are arbitrary expressions (`GRAMMAR.md` §6.1) — `Message.Move(x, y) when x > 0:` has no leading keyword to match on. The same permissiveness covers property accessors (`get:`, `set(value):`), `enum Dir:`, and multi-line lambdas. Do not "tidy" this into a keyword list.
+
+Both patterns allow the same trailing-comment suffix `(#.*)?`. They must stay symmetric: if only the increase pattern allowed comments, `else:  # note` would indent its body while never dedenting itself, putting the whole block one level too deep — and because `decreaseIndentPattern` also feeds *Reindent Lines* and indent-on-paste, that corrupts entire files rather than just live typing.
 
 ```json
 {
@@ -398,8 +464,13 @@ The `increaseIndentPattern` requires a `:` at end of line, optionally followed b
     { "open": "[", "close": "]" },
     { "open": "(", "close": ")" },
     { "open": "\"", "close": "\"", "notIn": ["string", "comment"] },
-    { "open": "'", "close": "'", "notIn": ["string", "comment"] }
+    { "open": "'", "close": "'", "notIn": ["string", "comment"] },
+    { "open": "r\"", "close": "\"", "notIn": ["string", "comment"] },
+    { "open": "r'", "close": "'", "notIn": ["string", "comment"] }
   ],
+  "folding": {
+    "offSide": true
+  },
   "surroundingPairs": [
     ["{", "}"],
     ["[", "]"],
@@ -409,7 +480,7 @@ The `increaseIndentPattern` requires a `:` at end of line, optionally followed b
   ],
   "indentationRules": {
     "increaseIndentPattern": "^(?!\\s*#).*:\\s*(#.*)?$",
-    "decreaseIndentPattern": "^\\s*(else|elif)\\b.*:\\s*$"
+    "decreaseIndentPattern": "^\\s*(else|elif)\\b.*:\\s*(#.*)?$"
   },
   "onEnterRules": [
     {
@@ -508,7 +579,27 @@ var e = r"raw\nnot_escape"
 
 var f = """triple quoted"""
 #       ^^^ punctuation.definition.string.begin.foundryscript
+
+var g = '''triple single'''
+#       ^^^ punctuation.definition.string.begin.foundryscript
+
+var h = "bad \q escape"
+#            ^^ invalid.illegal.unknown-escape.foundryscript
+
+var bad = "unterminated
+var after = 1
+#           ^ constant.numeric.integer.foundryscript
+
+var cont = "a\
+b"
+# <- string.quoted.foundryscript
+
+var rawc = r"a\
+var after2 = 1
+#            ^ constant.numeric.integer.foundryscript
 ```
+
+The last two cases are a matched pair guarding the line-continuation carve-out in `#string-short`. A non-raw string with a trailing backslash **must** continue onto the next line (`GRAMMAR.md` §2.6.2 lists line continuation among the escapes valid in non-raw strings). A raw string with the same trailing backslash **must not** — that backslash is literal content, so the string still ends at the newline. Bounding short strings without this carve-out silently breaks every continued string in the corpus.
 
 The triple-quoted case is deliberately kept on one line. An assertion line placed inside an open multiline string is ambiguous — it is both a scope assertion and string content — so multiline string behavior is left to the corpus check in Task 6 instead.
 
@@ -540,7 +631,18 @@ var f = 1e10
 var g = 1..2
 #       ^ constant.numeric.integer.foundryscript
 #          ^ constant.numeric.integer.foundryscript
+
+var t = tup.0
+#           ^ - constant.numeric.integer.foundryscript
 ```
+
+The last two cases are a matched pair and must stay together. `1..2` pins that the range operator's second dot still permits an integer; `tup.0` pins, via a **negative** assertion, that single-dot member access does not. Together they are what stops someone simplifying the integer pattern's nested lookbehind back to `(?<!\w)` — which would keep the `1..2` case green while silently breaking tuple index access.
+
+Three further assertions in `strings.fs` are load-bearing in the same way:
+
+- `invalid.illegal.unknown-escape` is the exact scope Task 6's corpus gate keys on. Without an assertion, renaming or dropping it leaves every test green while the gate silently stops catching anything.
+- The unterminated-string case pins that a short string is line-bounded. If it leaks, the following line's `1` scopes as string rather than a number. This matters beyond highlighting: a leaked string converts downstream code to `string.quoted`, which **suppresses** any genuine `invalid.illegal` below it, so Task 6 would pass vacuously on that file.
+- `'''` covers the triple-single-quote form, which is otherwise untested.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -575,15 +677,18 @@ Create `syntaxes/foundryscript.tmLanguage.json`:
       ]
     },
     "strings": {
+      "comment": "GRAMMAR.md 2.6.2 splits short_string (single-line by construction) from long_string (triple-quoted, multiline). The two are separate rules here so an unterminated short string cannot swallow the rest of the file. ORDER IS LOAD-BEARING TWICE: raw before non-raw, or the r prefix falls outside the string scope; triple before short, or a \"\"\" opener is consumed as an empty \"\" followed by a stray quote.",
       "patterns": [
-        { "include": "#string-raw" },
-        { "include": "#string-quoted" }
+        { "include": "#string-raw-triple" },
+        { "include": "#string-raw-short" },
+        { "include": "#string-triple" },
+        { "include": "#string-short" }
       ]
     },
-    "string-raw": {
-      "comment": "GRAMMAR.md 2.6.2 - raw strings: backslash is literal except \\\" \\' \\\\",
+    "string-raw-triple": {
+      "comment": "GRAMMAR.md 2.6.2 long_string with the raw prefix. Backslash is literal except \\\" \\' \\\\.",
       "name": "string.quoted.raw.foundryscript",
-      "begin": "\\b(r)(\"\"\"|'''|\"|')",
+      "begin": "\\b(r)(\"\"\"|''')",
       "beginCaptures": {
         "1": { "name": "storage.type.string.foundryscript" },
         "2": { "name": "punctuation.definition.string.begin.foundryscript" }
@@ -599,10 +704,29 @@ Create `syntaxes/foundryscript.tmLanguage.json`:
         }
       ]
     },
-    "string-quoted": {
-      "comment": "GRAMMAR.md 2.6.2 - & is StringName, ^ is NodePath",
+    "string-raw-short": {
+      "comment": "GRAMMAR.md 2.6.2 short_string with the raw prefix. Ends at an explicit newline so an unterminated string cannot leak into following lines. Unlike #string-short there is NO line-continuation carve-out: 2.6.2 lists line continuation among the escapes valid in NON-raw strings only, so a trailing backslash in a raw string is literal content and the string still ends. The unterminated tail is deliberately left UNSCOPED rather than marked invalid.illegal, so that scope keeps a single unambiguous meaning for the Task 6 corpus gate.",
+      "name": "string.quoted.raw.foundryscript",
+      "begin": "\\b(r)(\"|')",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.foundryscript" },
+        "2": { "name": "punctuation.definition.string.begin.foundryscript" }
+      },
+      "end": "(\\2)|\\n",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.string.end.foundryscript" }
+      },
+      "patterns": [
+        {
+          "name": "constant.character.escape.foundryscript",
+          "match": "\\\\[\"'\\\\]"
+        }
+      ]
+    },
+    "string-triple": {
+      "comment": "GRAMMAR.md 2.6.2 long_string. & is StringName, ^ is NodePath.",
       "name": "string.quoted.foundryscript",
-      "begin": "(&|\\^)?(\"\"\"|'''|\"|')",
+      "begin": "(&|\\^)?(\"\"\"|''')",
       "beginCaptures": {
         "1": { "name": "storage.type.string.foundryscript" },
         "2": { "name": "punctuation.definition.string.begin.foundryscript" }
@@ -610,6 +734,22 @@ Create `syntaxes/foundryscript.tmLanguage.json`:
       "end": "\\2",
       "endCaptures": {
         "0": { "name": "punctuation.definition.string.end.foundryscript" }
+      },
+      "patterns": [
+        { "include": "#string-escapes" }
+      ]
+    },
+    "string-short": {
+      "comment": "GRAMMAR.md 2.6.2 short_string. Ends at an explicit newline, EXCEPT one preceded by a backslash - that is the line-continuation escape (2.6.2), so the string legitimately spans lines. Matching \\n literally rather than using $ is required: Oniguruma's $ also matches AFTER the trailing newline, where a (?<!\\\\) lookbehind sees the newline instead of the backslash and the carve-out silently fails.",
+      "name": "string.quoted.foundryscript",
+      "begin": "(&|\\^)?(\"|')",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.foundryscript" },
+        "2": { "name": "punctuation.definition.string.begin.foundryscript" }
+      },
+      "end": "(\\2)|(?<!\\\\)\\n",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.string.end.foundryscript" }
       },
       "patterns": [
         { "include": "#string-escapes" }
@@ -631,20 +771,23 @@ Create `syntaxes/foundryscript.tmLanguage.json`:
       "comment": "GRAMMAR.md 2.6.1. The (?<![\\w.]) guard keeps tuple index access (t.0) and member chains from lexing as floats; the (?!\\.) guard keeps 1..2 from lexing 1. as a float.",
       "patterns": [
         {
+          "comment": "The (?<!\\.) guard matches the integer pattern's: a digit after a PERIOD lexes as decimal integer only (GRAMMAR.md 2.6.1), so t.0x1 must not scope as hex.",
           "name": "constant.numeric.hex.foundryscript",
-          "match": "\\b0[xX][0-9A-Fa-f](?:_?[0-9A-Fa-f])*\\b"
+          "match": "(?<!\\.)\\b0[xX][0-9A-Fa-f](?:_?[0-9A-Fa-f])*\\b"
         },
         {
+          "comment": "See the hex pattern's note on the (?<!\\.) guard.",
           "name": "constant.numeric.binary.foundryscript",
-          "match": "\\b0[bB][01](?:_?[01])*\\b"
+          "match": "(?<!\\.)\\b0[bB][01](?:_?[01])*\\b"
         },
         {
           "name": "constant.numeric.float.foundryscript",
           "match": "(?<![\\w.])(?:\\d(?:_?\\d)*\\.(?!\\.)(?:\\d(?:_?\\d)*)?(?:[eE][+-]?\\d(?:_?\\d)*)?|\\.(?!\\.)\\d(?:_?\\d)*(?:[eE][+-]?\\d(?:_?\\d)*)?|\\d(?:_?\\d)*[eE][+-]?\\d(?:_?\\d)*)"
         },
         {
+          "comment": "The guard must reject a digit after a SINGLE dot (tuple index access `t.0`, GRAMMAR.md 2.6.1) while accepting one after the SECOND dot of a range operator (`1..2`). A plain (?<![\\w.]) rejects both, which wrongly leaves the 2 in 1..2 unscoped.",
           "name": "constant.numeric.integer.foundryscript",
-          "match": "(?<![\\w.])\\d(?:_?\\d)*\\b"
+          "match": "(?<!\\w)(?<!(?<!\\.)\\.)\\d(?:_?\\d)*\\b"
         }
       ]
     }
@@ -765,11 +908,34 @@ annotation my_marker targets CLASS, METHOD
 #                            ^^^^^^^^^^^^^ support.constant.target.foundryscript
 
 var extend = 1
-#   ^^^^^^ - keyword
+#   ^^^^^^ - keyword.declaration.extend.foundryscript
 
 var async = 2
-#   ^^^^^ - storage.modifier
+#   ^^^^^ - storage.modifier.async.foundryscript
+
+    get:
+#   ^^^ storage.modifier.accessor.foundryscript
+
+    get():
+#   ^^^ storage.modifier.accessor.foundryscript
+
+    set(value):
+#   ^^^ storage.modifier.accessor.foundryscript
+
+    get = get_health
+#   ^^^ storage.modifier.accessor.foundryscript
+
+var get = 5
+#   ^^^ - storage.modifier.accessor.foundryscript
+
+    dict = {get = 1}
+#           ^^^ - storage.modifier.accessor.foundryscript
+
+    obj.set = 3
+#       ^^^ - storage.modifier.accessor.foundryscript
 ```
+
+The accessor cases are a matched set. GRAMMAR.md §4.4 defines four accessor forms — `get:`, `get():`, `set(value):`, and the pointer style `get = method` — and all four must scope. The three negative cases pin the reason the pattern is anchored to line start: without that anchor it fires on any identifier named `get` or `set` followed by `=`, which is ordinary legal code.
 
 The final two cases are the point of this file: `extend` and `async` are ordinary identifiers outside their declaration positions (`GRAMMAR.md` §2.5, §4.7, §4.8).
 
@@ -887,9 +1053,9 @@ Then add these entries to `repository`:
           "match": "\\basync\\b(?=(?:\\s+(?:static|final|abstract))*\\s+func\\b)"
         },
         {
-          "comment": "GRAMMAR.md 4.4 property accessors. LIMITATION: a dictionary key literally named get or set followed by a colon is a false positive.",
+          "comment": "GRAMMAR.md 4.4 property accessors, covering all four forms: get:, get():, set(value):, and the pointer style get = method. Anchored to the start of the line because accessors occupy their own line in a property_block; without that anchor this fires on any identifier named get or set followed by = -- `var get = 5`, `func f(get = 1)`, `{get = 1}`, `obj.set = 3` all false-positive. LIMITATION: the single-line inline_property form (`var x: int = 1: get = a, set = b`) is missed, since those accessors are mid-line. A false negative is the safer direction.",
           "name": "storage.modifier.accessor.foundryscript",
-          "match": "\\b(?:get|set)\\b(?=\\s*[:=])"
+          "match": "^\\s*(?:get|set)\\b(?=\\s*(?:\\([^)]*\\))?\\s*[:=])"
         }
       ]
     },
@@ -911,7 +1077,7 @@ If `var extend = 1` fails by scoping `extend` as a keyword, the `^` anchor was d
 
 Open `~/CafecitoGames/Foundry/modules/foundry_script/GRAMMAR.md` §2.5 and confirm every keyword in the fenced block appears in exactly one alternation in `#keywords`, and that no word appears there which §2.5 does not list. This is the manual stand-in for the drift check that issue #5 automates.
 
-Expected: 40 keywords accounted for across the `keyword.control`, `keyword.declaration`, `storage.modifier`, `keyword.operator.word`, `keyword.other`, and `invalid.illegal.yield` patterns.
+Expected: **44** keywords accounted for across the `keyword.control` (13), `keyword.declaration` (14), `storage.modifier` (5), `keyword.operator.word` (6), `keyword.other` (5), and `invalid.illegal.yield` (1) patterns.
 
 - [ ] **Step 6: Commit**
 
@@ -1022,7 +1188,11 @@ Replace the top-level `patterns` array with:
   ],
 ```
 
-`#node-paths` precedes `#strings` so that `$"quoted/path"` scopes its `$` before the string rule consumes the quote. `#declarations` precedes `#keywords` so the two-token forms win.
+**Only one of these orderings is load-bearing: `#declarations` before `#keywords`.** Both match at the keyword's start position, so list order is what breaks the tie; swapping them costs `class Foo:`, `func f():`, and `extends Node2D` their entity scopes.
+
+`#node-paths` before `#strings` looks load-bearing but is not. The quoted-path rule `([$%])(?=["'])` matches at the `$`, strictly left of the `"` where `#strings` would begin, so TextMate's leftmost rule decides regardless of list order. Verified by permuting the array: swapping those two changes nothing. Do not treat this as a constraint, and do not diagnose a broken `$"quoted/path"` by looking at it.
+
+`#node-paths` must also match the **whole path as one unit**, not segment by segment. `GRAMMAR.md` §5.5 accepts a broad set of keywords as node names, so `$Player/for` is a legal path. Matching the full path from the `$` means TextMate's leftmost rule hands the entire span to `#node-paths` before `#keywords` can reach the `for`. Segment-wise matching would leave keyword highlighting bleeding into path components.
 
 Add to `repository`:
 
@@ -1062,23 +1232,23 @@ Add to `repository`:
       ]
     },
     "builtin-types": {
-      "comment": "GRAMMAR.md 7. Matched by name rather than by position: a general `identifier: Type` rule produces too many false positives against dictionary literals and match arms. User-defined types in annotation position stay unscoped until semanticTokens lands (cafecito-games/Foundry#1418).",
+      "comment": "GRAMMAR.md 7 plus the engine's full Variant set (core/variant/variant.h). The boundary is deliberate: the 14 names GRAMMAR.md itself lists, plus every Variant type -- not an arbitrary subset, so a reader can predict what is here. Matched BY NAME rather than by position, because a general `identifier: Type` rule cannot be told apart from a dictionary literal or a match arm and false-positives constantly. ACCEPTED COST of name matching: a user-defined class or a local variable named Color, Type, or int is painted as a builtin. User-defined types in annotation position stay unscoped until semanticTokens lands (cafecito-games/Foundry#1418).",
       "name": "support.type.builtin.foundryscript",
-      "match": "\\b(?:int|float|bool|String|StringName|NodePath|Array|Dictionary|Callable|AsyncCallable|Signal|Coroutine|Type|Variant|Vector2|Vector2i|Vector3|Vector3i|Color|Rect2|Rect2i|Transform2D|Transform3D|Basis|Quaternion|Plane|AABB|RID)\\b"
+      "match": "\\b(?:int|float|bool|String|StringName|NodePath|Array|Dictionary|Callable|AsyncCallable|Signal|Coroutine|Type|Variant|Object|RID|Vector2|Vector2i|Vector3|Vector3i|Vector4|Vector4i|Rect2|Rect2i|Transform2D|Transform3D|Projection|Basis|Quaternion|Plane|AABB|Color|PackedByteArray|PackedInt32Array|PackedInt64Array|PackedFloat32Array|PackedFloat64Array|PackedStringArray|PackedVector2Array|PackedVector3Array|PackedVector4Array|PackedColorArray)\\b"
     },
     "node-paths": {
       "comment": "GRAMMAR.md 5.5 get-node expressions.",
       "patterns": [
         {
-          "comment": "Quoted form: scope the sigil, then let #strings handle the literal.",
-          "match": "([$%])(?=[\"'])",
+          "comment": "Quoted form: scope the sigil, then let #strings handle the literal. Carries the same % left boundary as the bare form -- see its comment.",
+          "match": "([$]|(?<![\\w)\\]])%)(?=[\"'])",
           "captures": {
             "1": { "name": "keyword.operator.getnode.foundryscript" }
           }
         },
         {
-          "comment": "Bare form, including the leading-% unique-name marker on any segment.",
-          "match": "([$%])(%?[A-Za-z_]\\w*(?:/%?[A-Za-z_]\\w*)*)",
+          "comment": "Bare form, including the leading-% unique-name marker on any segment. The whole path is matched as ONE unit, not segment by segment: 5.5 accepts keywords as node names, so `$Player/for` is legal, and matching the full span from the sigil lets TextMate's leftmost rule hand it to this rule before #keywords can reach the `for`. The % branch carries a left boundary because 2.8 gives % double duty as modulo -- without it `x%y`, `arr[0]%n` and `f(1)%n` all paint a node path onto valid arithmetic. LIMITATION: `x %y` (space before, none after) is still mis-scoped; distinguishing it needs variable-length lookbehind, which Oniguruma does not support.",
+          "match": "([$]|(?<![\\w)\\]])%)(%?[A-Za-z_]\\w*(?:/%?[A-Za-z_]\\w*)*)",
           "captures": {
             "1": { "name": "keyword.operator.getnode.foundryscript" },
             "2": { "name": "variable.other.nodepath.foundryscript" }
@@ -1093,7 +1263,7 @@ Add to `repository`:
 Run: `npx vscode-tmgrammar-test "tests/grammar/**/*.fs"`
 Expected: PASS — all eight files green.
 
-If `$"quoted/path"` fails, `#node-paths` is not ordered before `#strings`. If `class_name Player` scopes `Player` as plain text, `#declarations` is not ordered before `#keywords`.
+If `class_name Player` scopes `Player` as plain text, `#declarations` is not ordered before `#keywords` — that is the one top-level ordering that matters. A broken `$"quoted/path"` is NOT an ordering problem; look at the `#node-paths` quoted-form pattern itself.
 
 - [ ] **Step 5: Verify visually**
 
@@ -1119,7 +1289,7 @@ Closes #3"
 - Modify: `.github/workflows/ci.yml`
 
 **Acceptance Criteria:**
-- [ ] Tokenizes every `.fs` file under `$FOUNDRY_ENGINE_PATH`
+- [ ] Tokenizes every `.fs` file under `$FOUNDRY_ENGINE_PATH`, excluding duplicate worktrees and deliberately-invalid error fixtures
 - [ ] Fails with file and line when any token scopes `invalid.illegal.*`, except `invalid.illegal.yield` which is a correct classification
 - [ ] Skips cleanly with a clear message when `FOUNDRY_ENGINE_PATH` is unset
 - [ ] Runs in CI without an engine checkout and does not fail the build
@@ -1138,10 +1308,13 @@ Create `scripts/check-corpus.mjs`:
 import { readFile, readdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
-import * as oniguruma from "vscode-oniguruma";
-import * as textmate from "vscode-textmate";
 
+// vscode-oniguruma and vscode-textmate are CommonJS. A namespace import yields a
+// module wrapper whose members are not callable (`oniguruma.loadWASM is not a
+// function`), so require them explicitly.
 const require = createRequire(import.meta.url);
+const oniguruma = require("vscode-oniguruma");
+const textmate = require("vscode-textmate");
 
 const enginePath = process.env.FOUNDRY_ENGINE_PATH;
 if (!enginePath) {
@@ -1189,7 +1362,14 @@ async function* findScripts(directory) {
   for (const entry of entries) {
     const full = path.join(directory, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === ".git" || entry.name === "bin" || entry.name === "thirdparty") {
+      // .worktrees and .test_scratch hold duplicate checkouts of the same
+      // engine, which inflate the scan ~8x and report every finding once per
+      // copy. `errors` directories hold ~827 deliberately-invalid parser,
+      // analyzer and runtime fixtures -- this gate's whole premise is that the
+      // corpus is VALID FoundryScript, so an invalid escape there is the
+      // fixture doing its job, not a grammar bug.
+      const SKIP = [".git", "bin", "thirdparty", ".worktrees", ".test_scratch", "errors"];
+      if (SKIP.includes(entry.name)) {
         continue;
       }
       yield* findScripts(full);
@@ -1214,6 +1394,11 @@ for await (const file of findScripts(enginePath)) {
   let ruleStack = textmate.INITIAL;
   let lineNumber = 0;
 
+  // The \r? is load-bearing, not cosmetic. A CR surviving into the line text
+  // turns a line-continuation backslash into invalid.illegal.unknown-escape and
+  // cascades into the following line, so a CRLF checkout would fail this gate on
+  // valid engine code. Real VS Code is unaffected -- getLineContent() strips the
+  // full EOL -- so this only bites tooling that splits a file itself.
   for (const line of source.split(/\r?\n/)) {
     lineNumber += 1;
     const result = grammar.tokenizeLine(line, ruleStack);
@@ -1255,7 +1440,11 @@ console.log("No unexpected invalid scopes.");
 Run: `FOUNDRY_ENGINE_PATH=~/CafecitoGames/Foundry node scripts/check-corpus.mjs`
 Expected: `Scanned <N> .fs files.` followed by `No unexpected invalid scopes.`, exit 0.
 
-The engine has roughly 2,135 `.fs` files outside worktrees, so expect a count in that range.
+Expect roughly **1,326** files: the checkout holds 2,155 `.fs` files outside worktrees, of which ~827 are deliberately-invalid fixtures under `tests/scripts/{parser,analyzer,runtime}/errors/` and are skipped.
+
+**Settled question — escapes inside triple-quoted strings.** `GRAMMAR.md` §2.6.2 is ambiguous here: its EBNF gives `long_string` a content production admitting any character with no escape rule, while its prose says escapes apply to "non-raw strings" (which a long string is). This matters because if escapes did *not* apply, every engine docstring containing a stray backslash would scope `invalid.illegal.unknown-escape` and false-fail this gate.
+
+Resolved against the reference implementation: in `modules/foundry_script/fs_tokenizer.cpp` the escape branch is gated on `is_raw` **only**, never on `is_multiline`. Escapes therefore do apply inside triple-quoted strings, `#string-triple` correctly includes `#string-escapes`, and an invalid escape in a docstring is a genuine lexer error — so flagging it here is a true positive. Do not "fix" it by dropping the include.
 
 - [ ] **Step 3: Fix any grammar bugs the corpus surfaces**
 
@@ -1267,6 +1456,84 @@ For each distinct failure, add a scope assertion to the relevant file in `tests/
 
 Run: `node scripts/check-corpus.mjs`
 Expected: the skip message, exit 0.
+
+- [ ] **Step 4b: Add the negative-assertion vacuity scan**
+
+Create `scripts/check-assertions.mjs`. It replicates the runner's own assertion parsing and fails if any negative assertion selects zero tokens — the silent-pass case described in the negative-assertion policy section above.
+
+**The parsing here is subtle and a naive version is itself vacuous.** `vscode-tmgrammar-test` treats a lone `-` as a separator between required and excluded scopes (`^^^ - some.scope`), not as a per-token prefix. Splitting the trailing text on whitespace and testing each token for a leading `-` misclassifies every assertion in this codebase, because they are all written `- scope.name` with a space — so the scan silently detects no negative assertions at all and always passes. Derive the parsing from `vscode-tmgrammar-test/dist/unit/parsing.js`, not from intuition.
+
+```js
+import { readFile, readdir } from "node:fs/promises";
+
+// Mirrors vscode-tmgrammar-test's own parsing (parseScopeAssertion in
+// vscode-tmgrammar-test/dist/unit/parsing.js): an assertion line must start
+// with the comment token in column 1, and a lone "-" separates required
+// scopes from excluded ones, e.g. "^^^ - some.scope" is a pure negative
+// assertion with no required scopes. Scopes before the "-" are joined with
+// whitespace, not prefixed per-token, so splitting the trailing text on
+// whitespace and checking each token for a leading "-" (as a naive read of
+// the assertion syntax might do) misclassifies every assertion in this
+// codebase, since they are all written as "- scope.name" with a space.
+const SUFFIX = /^((?:\s*\w[-\w.]*)*)(?:\s*-)?((?:\s*\w[-\w.]*)*)\s*$/;
+
+const directory = new URL("../tests/grammar/", import.meta.url);
+const failures = [];
+
+for (const name of (await readdir(directory)).filter((f) => f.endsWith(".fs"))) {
+  const lines = (await readFile(new URL(name, directory), "utf8")).split(/\r?\n/);
+  let previousSource = "";
+
+  for (const [index, line] of lines.entries()) {
+    if (!line.startsWith("#")) {
+      previousSource = line;
+      continue;
+    }
+
+    const rest = line.slice(1);
+    const arrowMatch = /^\s*<-\s*(.*)$/.exec(rest);
+    const caretMatch = !arrowMatch && /^(\s*)(\^+)\s*(.*)$/.exec(rest);
+
+    if (!arrowMatch && !caretMatch) {
+      // An ordinary comment, not an assertion line.
+      previousSource = line;
+      continue;
+    }
+
+    const suffix = arrowMatch ? arrowMatch[1] : caretMatch[3];
+    const suffixMatch = SUFFIX.exec(suffix);
+    if (!suffixMatch) continue;
+
+    const [, scopes, exclusions] = suffixMatch;
+    if (scopes.trim() !== "" || exclusions.trim() === "") continue;
+
+    const from = arrowMatch ? 0 : caretMatch[1].length;
+    const to = arrowMatch ? 1 : from + caretMatch[2].length;
+    if (from >= previousSource.length) {
+      failures.push(
+        `${name}:${index + 1} negative assertion selects no tokens ` +
+          `(columns ${from}-${to}, source line is ${previousSource.length} chars)`,
+      );
+    }
+  }
+}
+
+if (failures.length > 0) {
+  console.error(`${failures.length} inert negative assertion(s):\n`);
+  for (const failure of failures) console.error(`  ${failure}`);
+  process.exit(1);
+}
+
+console.log("All negative assertions select at least one token.");
+```
+
+Wire it into `package.json`:
+
+```json
+    "test:grammar": "vscode-tmgrammar-test \"tests/grammar/**/*.fs\" && node scripts/check-assertions.mjs",
+```
+
+Verify it works by temporarily pushing one negative assertion's carets past the end of its source line, confirming the scan fails, then restoring.
 
 - [ ] **Step 5: Add to CI**
 
