@@ -1,3 +1,5 @@
+import path from "node:path";
+
 export type FoundryLintSeverity = "error" | "warning" | "note";
 
 export interface FoundryLintPosition {
@@ -137,4 +139,3 @@ function positiveInteger(value: unknown, label: string): number {
   }
   return value;
 }
-import path from "node:path";
