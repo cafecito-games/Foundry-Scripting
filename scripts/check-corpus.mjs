@@ -55,7 +55,14 @@ async function* findScripts(directory) {
   for (const entry of entries) {
     const full = path.join(directory, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === ".git" || entry.name === "bin" || entry.name === "thirdparty") {
+      // .worktrees and .test_scratch hold duplicate checkouts of the same
+      // engine, which inflate the scan ~8x and report every finding once per
+      // copy. `errors` directories hold ~827 deliberately-invalid parser,
+      // analyzer and runtime fixtures -- this gate's whole premise is that the
+      // corpus is VALID FoundryScript, so an invalid escape there is the
+      // fixture doing its job, not a grammar bug.
+      const SKIP = [".git", "bin", "thirdparty", ".worktrees", ".test_scratch", "errors"];
+      if (SKIP.includes(entry.name)) {
         continue;
       }
       yield* findScripts(full);
