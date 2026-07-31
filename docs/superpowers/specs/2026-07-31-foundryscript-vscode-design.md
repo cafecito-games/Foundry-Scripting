@@ -1,7 +1,7 @@
 # FoundryScript for VS Code — Design
 
 **Date:** 2026-07-31
-**Status:** Approved, pending implementation plan
+**Status:** §§1, 3, 4 delivered (PR #23). §2, §5, §6 revised after engine investigation — see the marked sections.
 
 ## Purpose
 
@@ -23,7 +23,7 @@ design is only correct while these remain true.
 | Capability | Location |
 |---|---|
 | Language server (TCP) | `modules/foundry_script/language_server/` |
-| Headless LSP command | `foundry lsp serve --port N --path <project>` (`main/cli_parser.cpp:942`) |
+| Headless LSP command | `foundry lsp serve --port N --project <dir>` (`main/cli_parser.cpp:942`) |
 | Structured lint output | `foundry script lint --format=json\|sarif` (`modules/foundry_script/fs_lint.cpp:185`) |
 | Debug adapter | `editor/debugger/debug_adapter/` |
 | Per-test result data | `ScriptTestExecutionResult` (`modules/foundry_script/fs_script_test_execution.h:43`) |
@@ -100,19 +100,27 @@ Add `FSTextDocument::semanticTokens`, registered alongside the existing document
 methods in `fs_language_protocol.cpp` and advertised in the `initialize` result. The
 analyzer already computes every fact required; this is plumbing, not new analysis.
 
-**Legend:** `namespace`, `class`, `interface` (traits), `struct` (tuples), `enum`,
-`enumMember`, `type`, `typeParameter`, `function`, `method`, `property`, `variable`,
-`parameter`, `decorator` (annotations), `keyword`.
+**Superseded — the legend is engine-owned.** This design originally proposed a legend
+here. [Foundry#1418](https://github.com/cafecito-games/Foundry/issues/1418) has since
+split the work into [#1425](https://github.com/cafecito-games/Foundry/issues/1425)
+(transport, legend, UTF-16 encoding) and
+[#1426](https://github.com/cafecito-games/Foundry/issues/1426) (classification), and
+established that **the server advertises the legend**. The extension consumes it and must
+not maintain a second ordered copy. It does contribute the custom `final` modifier the
+server contract requires.
 
-**Modifiers:** `declaration`, `static`, `abstract`, `final`, `async`, `readonly`
-(constants), `defaultLibrary` (native classes).
+The engine also established that this is more than registering an LSP method: it needs
+new protocol types, UTF-16 position encoding, and source-span correlation driven by the
+AST. Tracked for the extension side in
+[Foundry-Scripting#17](https://github.com/cafecito-games/Foundry-Scripting/issues/17).
 
 This makes the cases the TextMate grammar can only guess at exact: `extend` versus
 `extends`, `async`, `annotation`/`targets`, generic argument lists versus comparison
 operators, and namespace-qualified type references.
 
-`semanticTokens/full/delta` is out of scope; full refresh is acceptable at
-FoundryScript file sizes.
+Full-document only. Range requests, delta refreshes, and server-initiated refresh
+notifications are explicit non-goals of #1418 v1, which matches this design's original
+intent.
 
 ## 3. Connection lifecycle
 
@@ -124,7 +132,7 @@ FoundryScript file sizes.
 
 ### Modes
 
-- **spawn** — launch `foundry lsp serve --port <ephemeral> --path <project>`, wait for
+- **spawn** — launch `foundry lsp serve --port <ephemeral> --project <dir>`, wait for
   the port to accept connections, then connect. `ServerOptions` is a function returning
   a `StreamInfo` built from `net.connect`, since the server speaks TCP rather than
   stdio.
@@ -163,25 +171,38 @@ A debug configuration provider contributing launch type `foundryscript`, with tw
 configurations: `launch` (start the project via `project run`, then attach) and
 `attach`, both targeting the existing DAP server.
 
-**Open risk:** the DAP server is editor-hosted, and no `dap serve` CLI command was
-found analogous to `lsp serve`. If debugging proves to require a running editor, it is
-editor-attached-only until a matching CLI command is added to the engine. **A spike
-must resolve this before the launch configuration shape is committed to.**
+**Open risk, now tracked upstream.** The DAP server is editor-hosted and no `dap serve`
+command exists analogous to `lsp serve`. The engine has taken this on as
+[Foundry#1427](https://github.com/cafecito-games/Foundry/issues/1427), which will select
+the tooling-host topology before any command is implemented. It also surfaced a
+constraint this design missed: the DAP server already runs inside a headless full-editor
+host, and **separate LSP and DAP processes can collide because both editor plugins start
+together**. So the launch-configuration shape stays uncommitted, and the extension's
+debugging issue is deferred until #1427 picks a topology.
 
 ## 6. Test Explorer
 
-`project test --runner <runner>` invokes a user-supplied runner, and `test run` is the
-engine's own doctest suite. Neither exposes per-test-case results over a stable
-interface, although `ScriptTestExecutionResult` carries the required data internally
-(status, message, timing).
+**Superseded. The approach proposed here was rejected, correctly.**
 
-Test Explorer integration therefore requires a structured-output flag on
-`project test`, mirroring what `script lint --format=json` already does. This is an
-engine change and is **in scope**.
+This design asked the engine for `project test --format=json`, mirroring
+`script lint --format=json`. [Foundry#1418](https://github.com/cafecito-games/Foundry/issues/1418)
+rejected it on a point this design got wrong: `project test` intentionally hosts an
+arbitrary `ScriptRunner.run(args) -> int`, so **the engine does not know test discovery
+or pass/fail semantics**, and `ScriptTestExecutionResult` is not a per-test result model.
+Adding a JSON flag without runner participation would have put framework policy into the
+engine.
 
-This is the least-defined component in the design. It is scoped as a spike — determine
-the output schema and the runner's reporting path — before implementation, unlike §§1–4
-which are ready to plan directly.
+The replacement is a framework-neutral **Foundry Test Adapter Protocol v1** —
+JSONL discovery plus streaming TAP13 execution — specified in
+[Foundry#1428](https://github.com/cafecito-games/Foundry/issues/1428), with
+[FoundryLib#11](https://github.com/cafecito-games/FoundryLib/issues/11) as the reference
+implementation. Responsibility splits three ways: the engine owns the normative protocol
+and validator, test frameworks own discovery and result semantics, and the extension
+negotiates capabilities and translates events into VS Code's testing UI.
+
+Extension-side work is [Foundry-Scripting#18](https://github.com/cafecito-games/Foundry-Scripting/issues/18)
+and its children (#19 adapter negotiation, #20 discovery, #21 refresh/cancellation
+hardening, #22 running selected tests from streaming TAP13).
 
 ## Testing strategy
 
@@ -193,8 +214,10 @@ which are ready to plan directly.
 - **diagnostics/** — source arbitration tested directly: LSP-connected, LSP-absent, and
   transition between them, asserting no duplicate entries.
 - **tasks/** — CLI output parsing tested against captured `--format=json` fixtures.
-- **Engine changes** — `semanticTokens` covered by the module's existing LSP test
-  harness (`modules/foundry_script/tests/test_lsp.h`).
+- **Engine changes** — owned by the engine repository under
+  [Foundry#1418](https://github.com/cafecito-games/Foundry/issues/1418)'s sub-issues, not
+  by this design. Note that #1424 makes **this repository's grammar scope tests the
+  acceptance gate for the engine's generated grammar**.
 
 ## Out of scope
 
