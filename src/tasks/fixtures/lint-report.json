@@ -1,0 +1,31 @@
+{
+  "diagnostics": [
+    {
+      "message": "Annotation \"@my_custom\" does not precede a valid target, so it will have no effect.",
+      "path": "res://tests/grammar/annotations.fs",
+      "range": {
+        "endColumn": 17,
+        "endLine": 9,
+        "startColumn": 1,
+        "startLine": 9
+      },
+      "ruleId": "parse-error",
+      "severity": "error",
+      "source": "foundry_script"
+    },
+    {
+      "message": "Empty script file.",
+      "path": "res://tests/grammar/comments.fs",
+      "range": {
+        "endColumn": 37,
+        "endLine": 1,
+        "startColumn": 1,
+        "startLine": 1
+      },
+      "ruleId": "EMPTY_FILE",
+      "severity": "warning",
+      "source": "foundry_script"
+    }
+  ],
+  "version": 1
+}

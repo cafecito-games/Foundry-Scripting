@@ -2,6 +2,7 @@ import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process"
 import type { FoundryTaskCommand } from "./command.js";
 
 export type FoundryTaskProcessErrorKind = "missing_engine" | "spawn_failed";
+export type FoundryTaskProcessStream = "stdout" | "stderr";
 
 export class FoundryTaskProcessError extends Error {
   constructor(
@@ -15,7 +16,7 @@ export class FoundryTaskProcessError extends Error {
 }
 
 export interface FoundryTaskProcessSink {
-  write(text: string): void;
+  write(text: string, stream: FoundryTaskProcessStream): void;
   close(exitCode: number | undefined): void;
   fail(error: FoundryTaskProcessError): void;
 }
@@ -67,10 +68,10 @@ export class FoundryTaskProcess {
 
     this.child = child;
     child.stdout?.on("data", (data: Buffer | string) => {
-      this.sink.write(this.stdoutText.convert(data));
+      this.sink.write(this.stdoutText.convert(data), "stdout");
     });
     child.stderr?.on("data", (data: Buffer | string) => {
-      this.sink.write(this.stderrText.convert(data));
+      this.sink.write(this.stderrText.convert(data), "stderr");
     });
     child.once("error", (error) => {
       this.fail(error);

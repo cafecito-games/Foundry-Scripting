@@ -3,6 +3,11 @@ import { PassThrough } from "node:stream";
 import type { ChildProcess } from "node:child_process";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as vscode from "vscode";
+import capturedFixtureJson from "./fixtures/lint-report.json";
+import type {
+  DiagnosticsUnit,
+  SourcedDiagnostics,
+} from "../diagnostics/index.js";
 
 const providerMock = vi.hoisted(() => ({
   configuration: new Map<string, unknown>(),
@@ -10,6 +15,7 @@ const providerMock = vi.hoisted(() => ({
   showErrorMessage: vi.fn(),
   executeCommand: vi.fn(),
   registerTaskProvider: vi.fn(),
+  DiagnosticSeverity: { Error: 0, Warning: 1, Information: 2, Hint: 3 },
 }));
 
 vi.mock("vscode", () => {
@@ -45,10 +51,44 @@ vi.mock("vscode", () => {
     ) {}
   }
 
+  class Position {
+    constructor(
+      readonly line: number,
+      readonly character: number,
+    ) {}
+  }
+
+  class Range {
+    constructor(
+      readonly start: Position,
+      readonly end: Position,
+    ) {}
+  }
+
+  class Diagnostic {
+    source: string | undefined;
+    code: string | number | undefined;
+    constructor(
+      readonly range: Range,
+      readonly message: string,
+      readonly severity: number,
+    ) {}
+  }
+
   return {
     EventEmitter,
     CustomExecution,
     Task,
+    Position,
+    Range,
+    Diagnostic,
+    DiagnosticSeverity: providerMock.DiagnosticSeverity,
+    Uri: {
+      file: (fsPath: string) => ({
+        fsPath,
+        toString: () => `file://${fsPath}`,
+      }),
+    },
     TaskScope: { Workspace: 1 },
     TaskGroup: { Build: { id: "build" }, Test: { id: "test" } },
     workspace: {
@@ -78,9 +118,26 @@ class FakeChildProcess extends NodeEventEmitter {
   exitCode: number | null = null;
   readonly kill = vi.fn(() => true);
 
+  complete(code: number | null): void {
+    this.exitCode = code;
+    this.emit("close", code, null);
+  }
+
   asChildProcess(): ChildProcess {
     return this as unknown as ChildProcess;
   }
+}
+
+const capturedFixture = JSON.stringify(capturedFixtureJson);
+
+function createDiagnosticsHarness() {
+  const accept = vi.fn<(update: SourcedDiagnostics) => void>();
+  const diagnostics: DiagnosticsUnit = {
+    accept: (update) => accept(update),
+    setLanguageServerConnected: vi.fn(),
+    dispose: vi.fn(),
+  };
+  return { diagnostics, accept };
 }
 
 function taskTerminal(task: vscode.Task): Promise<vscode.Pseudoterminal> {
@@ -111,13 +168,15 @@ describe("Foundry task provider", () => {
     expect(context.subscriptions).toHaveLength(1);
 
     const provider = new FoundryTaskProvider();
-    expect(provider.provideTasks().map((task) => task.definition)).toEqual([
+    const tasks = provider.provideTasks();
+    expect(tasks.map((task) => task.definition)).toEqual([
       { type: FOUNDRY_TASK_TYPE, command: "build" },
       { type: FOUNDRY_TASK_TYPE, command: "lint" },
       { type: FOUNDRY_TASK_TYPE, command: "test" },
       { type: FOUNDRY_TASK_TYPE, command: "format" },
       { type: FOUNDRY_TASK_TYPE, command: "run" },
     ]);
+    expect(tasks.every((task) => task.problemMatchers.length === 0)).toBe(true);
   });
 
   it("resolves valid tasks.json definitions without replacing the definition", () => {
@@ -245,6 +304,127 @@ describe("Foundry task provider", () => {
     expect(providerMock.executeCommand).toHaveBeenCalledWith(
       "workbench.action.openSettings",
       "foundryScript.enginePath",
+    );
+  });
+
+  it("captures only lint stdout while preserving ordered terminal output", async () => {
+    providerMock.configuration.set("enginePath", "/opt/foundry");
+    providerMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game" },
+    });
+    const child = new FakeChildProcess();
+    const { diagnostics, accept } = createDiagnosticsHarness();
+    const provider = new FoundryTaskProvider({
+      diagnostics,
+      spawnProcess: () => child.asChildProcess(),
+    });
+    const lintTask = provider
+      .provideTasks()
+      .find((task) => task.definition.command === "lint");
+    const terminal = await taskTerminal(lintTask as vscode.Task);
+    const writes: string[] = [];
+    terminal.onDidWrite((text) => writes.push(text));
+
+    terminal.open(undefined);
+    const split = Math.floor(capturedFixture.length / 2);
+    child.stdout.write(capturedFixture.slice(0, split));
+    child.stderr.write("ordinary stderr\n");
+    child.stdout.write(capturedFixture.slice(split));
+    await Promise.resolve();
+    child.complete(1);
+
+    expect(writes.join("")).toBe(
+      `${capturedFixture.slice(0, split)}ordinary stderr\r\n${capturedFixture.slice(split)}`,
+    );
+    expect(accept).toHaveBeenCalledTimes(2);
+    expect(accept.mock.calls.map(([update]) => update.source)).toEqual([
+      "cli",
+      "cli",
+    ]);
+  });
+
+  it.each([
+    { name: "command failure", exitCode: 2, output: capturedFixture },
+    { name: "cancellation", exitCode: null, output: capturedFixture },
+  ])("does not publish lint diagnostics after $name", async (testCase) => {
+    providerMock.workspaceFolders.push({ uri: { fsPath: "/game" } });
+    const child = new FakeChildProcess();
+    const { diagnostics, accept } = createDiagnosticsHarness();
+    const provider = new FoundryTaskProvider({
+      diagnostics,
+      spawnProcess: () => child.asChildProcess(),
+    });
+    const lintTask = provider
+      .provideTasks()
+      .find((task) => task.definition.command === "lint");
+    const terminal = await taskTerminal(lintTask as vscode.Task);
+    terminal.open(undefined);
+    child.stdout.write(testCase.output);
+    await Promise.resolve();
+    if (testCase.exitCode === null) {
+      terminal.close();
+    }
+    child.complete(testCase.exitCode);
+
+    expect(accept).not.toHaveBeenCalled();
+  });
+
+  it("reports malformed successful lint output without clearing diagnostics", async () => {
+    providerMock.workspaceFolders.push({ uri: { fsPath: "/game" } });
+    const child = new FakeChildProcess();
+    const { diagnostics, accept } = createDiagnosticsHarness();
+    const provider = new FoundryTaskProvider({
+      diagnostics,
+      spawnProcess: () => child.asChildProcess(),
+    });
+    const lintTask = provider
+      .provideTasks()
+      .find((task) => task.definition.command === "lint");
+    const terminal = await taskTerminal(lintTask as vscode.Task);
+    const closes: Array<number | void> = [];
+    terminal.onDidClose?.((code) => closes.push(code));
+    terminal.open(undefined);
+    child.stdout.write("not JSON");
+    await Promise.resolve();
+
+    child.complete(0);
+    await Promise.resolve();
+
+    expect(accept).not.toHaveBeenCalled();
+    expect(providerMock.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining("Could not ingest Foundry lint JSON"),
+    );
+    expect(closes).toEqual([1]);
+  });
+
+  it("does not parse lint JSON after the child process fails to spawn", async () => {
+    providerMock.workspaceFolders.push({ uri: { fsPath: "/game" } });
+    const child = new FakeChildProcess();
+    const { diagnostics, accept } = createDiagnosticsHarness();
+    const provider = new FoundryTaskProvider({
+      diagnostics,
+      spawnProcess: () => child.asChildProcess(),
+    });
+    const lintTask = provider
+      .provideTasks()
+      .find((task) => task.definition.command === "lint");
+    const terminal = await taskTerminal(lintTask as vscode.Task);
+    terminal.open(undefined);
+
+    child.emit(
+      "error",
+      Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }),
+    );
+    await Promise.resolve();
+
+    expect(accept).not.toHaveBeenCalled();
+    expect(providerMock.showErrorMessage).toHaveBeenCalledTimes(1);
+    expect(providerMock.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining("Configure foundryScript.enginePath"),
+      "Open Settings",
+    );
+    expect(providerMock.showErrorMessage).not.toHaveBeenCalledWith(
+      expect.stringContaining("Could not ingest Foundry lint JSON"),
     );
   });
 });
