@@ -314,11 +314,15 @@ Closes #1"
 
 - [ ] **Step 1: Write the failing test**
 
-The indentation rules are regexes in a JSON file, which makes them directly testable without the VS Code host. Create `src/language-configuration.test.ts`:
+The indentation rules are regexes in a JSON file, which makes them directly testable without the VS Code host.
+
+Note the plain default import rather than `with { type: "json" }`. Import attributes require `module` to be `esnext`/`node18`/`node20`/`nodenext`/`preserve`, and this project is on `Node16`; `resolveJsonModule` handles the plain form. This was established in Task 1.
+
+Create `src/language-configuration.test.ts`:
 
 ```ts
 import { describe, expect, it } from "vitest";
-import configuration from "../language-configuration.json" with { type: "json" };
+import configuration from "../language-configuration.json";
 
 const increaseIndent = new RegExp(configuration.indentationRules.increaseIndentPattern);
 const decreaseIndent = new RegExp(configuration.indentationRules.decreaseIndentPattern);
