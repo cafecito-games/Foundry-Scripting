@@ -97,6 +97,37 @@ describe("FoundryScript language client", () => {
     });
   });
 
+  it("routes LSP diagnostics to the shared unit without invoking the default writer", () => {
+    const onDiagnostics = vi.fn();
+    new FoundryScriptLanguageClient({
+      endpoint: { host: "127.0.0.1", port: 6005 },
+      outputChannel: { appendLine: vi.fn() } as unknown as vscode.OutputChannel,
+      onDiagnostics,
+    });
+    const clientOptions = languageClientMock.constructorCalls[0]?.[3] as
+      | {
+          middleware?: {
+            handleDiagnostics?: (
+              uri: vscode.Uri,
+              diagnostics: vscode.Diagnostic[],
+              next: (
+                uri: vscode.Uri,
+                diagnostics: vscode.Diagnostic[],
+              ) => void,
+            ) => void;
+          };
+        }
+      | undefined;
+    const uri = { fsPath: "/game/player.fs" } as vscode.Uri;
+    const diagnostics = [{ message: "from LSP" }] as vscode.Diagnostic[];
+    const next = vi.fn();
+
+    clientOptions?.middleware?.handleDiagnostics?.(uri, diagnostics, next);
+
+    expect(onDiagnostics).toHaveBeenCalledWith(uri, diagnostics);
+    expect(next).not.toHaveBeenCalled();
+  });
+
   it("records native class capabilities and forwards the notification", () => {
     const outputChannel = {
       appendLine: vi.fn(),

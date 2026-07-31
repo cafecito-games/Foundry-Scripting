@@ -33,8 +33,17 @@ const extensionMock = vi.hoisted(() => ({
   stop: vi.fn(),
   reconnectNow: vi.fn(),
   createConnectionManager: vi.fn(),
+  diagnosticsUnit: {
+    accept: vi.fn(),
+    setLanguageServerConnected: vi.fn(),
+    dispose: vi.fn(),
+  },
+  diagnosticCollection: { dispose: vi.fn() },
+  createDiagnosticCollection: vi.fn(),
+  createDiagnosticsUnit: vi.fn(),
   taskProviderDisposable: { dispose: vi.fn() },
   registerTaskProvider: vi.fn(),
+  registerFoundryTaskProvider: vi.fn(),
 }));
 
 vi.mock("vscode", () => ({
@@ -61,10 +70,21 @@ vi.mock("vscode", () => ({
     registerTaskProvider: extensionMock.registerTaskProvider,
   },
   StatusBarAlignment: { Left: 1 },
+  languages: {
+    createDiagnosticCollection: extensionMock.createDiagnosticCollection,
+  },
 }));
 
 vi.mock("./client/runtime.js", () => ({
   createConnectionManager: extensionMock.createConnectionManager,
+}));
+
+vi.mock("./diagnostics/index.js", () => ({
+  createDiagnosticsUnit: extensionMock.createDiagnosticsUnit,
+}));
+
+vi.mock("./tasks/provider.js", () => ({
+  registerFoundryTaskProvider: extensionMock.registerFoundryTaskProvider,
 }));
 
 import { activate, deactivate } from "./extension.js";
@@ -101,6 +121,18 @@ describe("extension entry point", () => {
         return { dispose: () => extensionMock.registeredCommands.delete(command) };
       },
     );
+    extensionMock.registerFoundryTaskProvider.mockReset();
+    extensionMock.createDiagnosticCollection.mockReset();
+    extensionMock.createDiagnosticCollection.mockReturnValue(
+      extensionMock.diagnosticCollection,
+    );
+    extensionMock.createDiagnosticsUnit.mockReset();
+    extensionMock.createDiagnosticsUnit.mockImplementation(
+      (createCollection: () => unknown) => {
+        createCollection();
+        return extensionMock.diagnosticsUnit;
+      },
+    );
     extensionMock.start = vi.fn().mockResolvedValue(undefined);
     extensionMock.stop = vi.fn().mockResolvedValue(undefined);
     extensionMock.reconnectNow = vi.fn().mockResolvedValue(undefined);
@@ -127,6 +159,7 @@ describe("extension entry point", () => {
       extensionMock.outputChannel,
       "/workspace/game",
       expect.any(Function),
+      extensionMock.diagnosticsUnit,
     );
     expect(extensionMock.start).toHaveBeenCalledWith({
       settings: {
@@ -148,13 +181,16 @@ describe("extension entry point", () => {
 
     expect(extensionMock.createConnectionManager).not.toHaveBeenCalled();
     expect(extensionMock.start).not.toHaveBeenCalled();
-    expect(extensionMock.registerTaskProvider).toHaveBeenCalledWith(
-      "foundryscript",
-      expect.anything(),
+    expect(extensionMock.registerFoundryTaskProvider).toHaveBeenCalledWith(
+      context,
+      extensionMock.diagnosticsUnit,
     );
-    expect(context.subscriptions).toContain(extensionMock.taskProviderDisposable);
     expect(extensionMock.statusItem.show).toHaveBeenCalledOnce();
     expect(extensionMock.statusItem.text).toContain("Off");
+    expect(extensionMock.createDiagnosticCollection).toHaveBeenCalledWith(
+      "foundryscript",
+    );
+    expect(context.subscriptions).toContain(extensionMock.diagnosticsUnit);
   });
 
   it("reports a missing project without attempting a connection", async () => {
@@ -337,6 +373,9 @@ describe("package.json manifest", () => {
       type: "string",
       enum: ["build", "lint", "test", "format", "run"],
     });
+    expect(JSON.stringify(packageManifest.contributes)).not.toMatch(
+      /problemMatchers?/,
+    );
   });
 
   it("contributes the status bar connection command", () => {

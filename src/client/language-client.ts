@@ -56,6 +56,10 @@ export interface FoundryScriptLanguageClientOptions {
   signal?: AbortSignal;
   onCapabilities?: (capabilities: FoundryCapabilities) => void;
   onChangeWorkspace?: (params: ChangeWorkspaceParams) => void;
+  onDiagnostics?: (
+    uri: vscode.Uri,
+    diagnostics: readonly vscode.Diagnostic[],
+  ) => void;
   workspaceMismatchHandler?: WorkspaceMismatchHandler;
 }
 
@@ -69,6 +73,7 @@ export class FoundryScriptLanguageClient extends LanguageClient {
     signal,
     onCapabilities,
     onChangeWorkspace,
+    onDiagnostics,
     workspaceMismatchHandler,
   }: FoundryScriptLanguageClientOptions) {
     let dispatchChangeWorkspace:
@@ -115,6 +120,15 @@ export class FoundryScriptLanguageClient extends LanguageClient {
           error: () => ({ action: ErrorAction.Continue, handled: true }),
           closed: () => ({ action: CloseAction.DoNotRestart, handled: true }),
         },
+        ...(onDiagnostics === undefined
+          ? {}
+          : {
+              middleware: {
+                handleDiagnostics: (uri, diagnostics): void => {
+                  onDiagnostics(uri, diagnostics);
+                },
+              },
+            }),
       },
     );
 

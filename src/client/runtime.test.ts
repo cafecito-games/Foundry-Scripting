@@ -8,6 +8,7 @@ interface CapturedManagerOptions {
 
 interface CapturedClientOptions {
   signal?: AbortSignal;
+  onDiagnostics?: (uri: unknown, diagnostics: readonly unknown[]) => void;
   workspaceMismatchHandler?: {
     handleServerWorkspace: (path: string) => Promise<void>;
   };
@@ -47,6 +48,18 @@ vi.mock("./language-client.js", () => ({
 }));
 
 import { createConnectionManager } from "./runtime.js";
+import type {
+  DiagnosticsUnit,
+  SourcedDiagnostics,
+} from "../diagnostics/index.js";
+
+function noopDiagnostics(): DiagnosticsUnit {
+  return {
+    accept: vi.fn(),
+    setLanguageServerConnected: vi.fn(),
+    dispose: vi.fn(),
+  };
+}
 
 describe("connection runtime", () => {
   beforeEach(() => {
@@ -64,6 +77,7 @@ describe("connection runtime", () => {
       outputChannel,
       "/workspace/editor-project",
       onStateChange,
+      noopDiagnostics(),
     );
     const signal = new AbortController().signal;
 
@@ -72,7 +86,9 @@ describe("connection runtime", () => {
       signal,
     );
     const options = runtimeMock.clientOptions[0];
-    expect(runtimeMock.managerOptions[0]?.onStateChange).toBe(onStateChange);
+    const state = { kind: "connected" };
+    runtimeMock.managerOptions[0]?.onStateChange?.(state);
+    expect(onStateChange).toHaveBeenCalledWith(state);
     expect(runtimeMock.managerOptions[0]?.output).toBe(outputChannel);
     expect(options?.signal).toBe(signal);
 
@@ -88,5 +104,40 @@ describe("connection runtime", () => {
       "vscode.openFolder",
       { scheme: "file", fsPath: "/workspace/server-project" },
     );
+  });
+
+  it("routes LSP diagnostics and connection state through the shared unit", () => {
+    const accept = vi.fn<(update: SourcedDiagnostics) => void>();
+    const setLanguageServerConnected = vi.fn<(connected: boolean) => void>();
+    const diagnostics: DiagnosticsUnit = {
+      accept: (update) => accept(update),
+      setLanguageServerConnected: (connected) =>
+        setLanguageServerConnected(connected),
+      dispose: vi.fn(),
+    };
+    createConnectionManager(
+      { appendLine: vi.fn() } as never,
+      "/workspace/game",
+      vi.fn(),
+      diagnostics,
+    );
+
+    runtimeMock.managerOptions[0]?.onStateChange?.({ kind: "connected" });
+    runtimeMock.managerOptions[0]?.onStateChange?.({ kind: "retrying" });
+    const signal = new AbortController().signal;
+    runtimeMock.managerOptions[0]?.createClient(
+      { host: "127.0.0.1", port: 6005 },
+      signal,
+    );
+    const uri = { fsPath: "/workspace/game/player.fs" };
+    const lspDiagnostics = [{ message: "LSP error" }];
+    runtimeMock.clientOptions[0]?.onDiagnostics?.(uri, lspDiagnostics);
+
+    expect(setLanguageServerConnected.mock.calls).toEqual([[true], [false]]);
+    expect(accept).toHaveBeenCalledWith({
+      source: "lsp",
+      uri,
+      diagnostics: lspDiagnostics,
+    });
   });
 });

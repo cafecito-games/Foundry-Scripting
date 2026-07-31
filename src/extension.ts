@@ -10,6 +10,7 @@ import {
 import { HostStartupFailure } from "./client/host-launcher.js";
 import { writeLog } from "./client/logging.js";
 import { createConnectionManager } from "./client/runtime.js";
+import { createDiagnosticsUnit } from "./diagnostics/index.js";
 import { registerFoundryTaskProvider } from "./tasks/provider.js";
 
 let activeConnectionManager: ConnectionManager | undefined;
@@ -45,7 +46,11 @@ async function showStartupError(error: unknown): Promise<void> {
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  registerFoundryTaskProvider(context);
+  const diagnostics = createDiagnosticsUnit(() =>
+    vscode.languages.createDiagnosticCollection("foundryscript"),
+  );
+  context.subscriptions.push(diagnostics);
+  registerFoundryTaskProvider(context, diagnostics);
   const outputChannel = vscode.window.createOutputChannel("FoundryScript LSP");
   context.subscriptions.push(outputChannel);
   const settings = readConnectionSettings();
@@ -97,6 +102,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     outputChannel,
     project,
     (state) => statusController.update(state),
+    diagnostics,
   );
   activeConnectionManager = manager;
   context.subscriptions.push({
