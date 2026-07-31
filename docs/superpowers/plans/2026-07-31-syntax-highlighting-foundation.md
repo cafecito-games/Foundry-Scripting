@@ -1289,7 +1289,7 @@ Closes #3"
 - Modify: `.github/workflows/ci.yml`
 
 **Acceptance Criteria:**
-- [ ] Tokenizes every `.fs` file under `$FOUNDRY_ENGINE_PATH`
+- [ ] Tokenizes every `.fs` file under `$FOUNDRY_ENGINE_PATH`, excluding duplicate worktrees and deliberately-invalid error fixtures
 - [ ] Fails with file and line when any token scopes `invalid.illegal.*`, except `invalid.illegal.yield` which is a correct classification
 - [ ] Skips cleanly with a clear message when `FOUNDRY_ENGINE_PATH` is unset
 - [ ] Runs in CI without an engine checkout and does not fail the build
@@ -1362,7 +1362,14 @@ async function* findScripts(directory) {
   for (const entry of entries) {
     const full = path.join(directory, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === ".git" || entry.name === "bin" || entry.name === "thirdparty") {
+      // .worktrees and .test_scratch hold duplicate checkouts of the same
+      // engine, which inflate the scan ~8x and report every finding once per
+      // copy. `errors` directories hold ~827 deliberately-invalid parser,
+      // analyzer and runtime fixtures -- this gate's whole premise is that the
+      // corpus is VALID FoundryScript, so an invalid escape there is the
+      // fixture doing its job, not a grammar bug.
+      const SKIP = [".git", "bin", "thirdparty", ".worktrees", ".test_scratch", "errors"];
+      if (SKIP.includes(entry.name)) {
         continue;
       }
       yield* findScripts(full);
@@ -1433,7 +1440,7 @@ console.log("No unexpected invalid scopes.");
 Run: `FOUNDRY_ENGINE_PATH=~/CafecitoGames/Foundry node scripts/check-corpus.mjs`
 Expected: `Scanned <N> .fs files.` followed by `No unexpected invalid scopes.`, exit 0.
 
-The engine has roughly 2,135 `.fs` files outside worktrees, so expect a count in that range.
+Expect roughly **1,326** files: the checkout holds 2,155 `.fs` files outside worktrees, of which ~827 are deliberately-invalid fixtures under `tests/scripts/{parser,analyzer,runtime}/errors/` and are skipped.
 
 **Settled question — escapes inside triple-quoted strings.** `GRAMMAR.md` §2.6.2 is ambiguous here: its EBNF gives `long_string` a content production admitting any character with no escape rule, while its prose says escapes apply to "non-raw strings" (which a long string is). This matters because if escapes did *not* apply, every engine docstring containing a stray backslash would scope `invalid.illegal.unknown-escape` and false-fail this gate.
 
@@ -1452,15 +1459,23 @@ Expected: the skip message, exit 0.
 
 - [ ] **Step 4b: Add the negative-assertion vacuity scan**
 
-Create `scripts/check-assertions.mjs`. It replicates the runner's own token-selection filter and fails if any negative assertion selects zero tokens — the silent-pass case described in the negative-assertion policy section above.
+Create `scripts/check-assertions.mjs`. It replicates the runner's own assertion parsing and fails if any negative assertion selects zero tokens — the silent-pass case described in the negative-assertion policy section above.
+
+**The parsing here is subtle and a naive version is itself vacuous.** `vscode-tmgrammar-test` treats a lone `-` as a separator between required and excluded scopes (`^^^ - some.scope`), not as a per-token prefix. Splitting the trailing text on whitespace and testing each token for a leading `-` misclassifies every assertion in this codebase, because they are all written `- scope.name` with a space — so the scan silently detects no negative assertions at all and always passes. Derive the parsing from `vscode-tmgrammar-test/dist/unit/parsing.js`, not from intuition.
 
 ```js
 import { readFile, readdir } from "node:fs/promises";
-import path from "node:path";
 
-// Mirrors vscode-tmgrammar-test's own parsing: an assertion line must start
-// with the comment token in column 1, and its carets index the line above.
-const ASSERTION = /^#\s*(?:(<-)|(\^+))\s*(.*)$/;
+// Mirrors vscode-tmgrammar-test's own parsing (parseScopeAssertion in
+// vscode-tmgrammar-test/dist/unit/parsing.js): an assertion line must start
+// with the comment token in column 1, and a lone "-" separates required
+// scopes from excluded ones, e.g. "^^^ - some.scope" is a pure negative
+// assertion with no required scopes. Scopes before the "-" are joined with
+// whitespace, not prefixed per-token, so splitting the trailing text on
+// whitespace and checking each token for a leading "-" (as a naive read of
+// the assertion syntax might do) misclassifies every assertion in this
+// codebase, since they are all written as "- scope.name" with a space.
+const SUFFIX = /^((?:\s*\w[-\w.]*)*)(?:\s*-)?((?:\s*\w[-\w.]*)*)\s*$/;
 
 const directory = new URL("../tests/grammar/", import.meta.url);
 const failures = [];
@@ -1470,17 +1485,30 @@ for (const name of (await readdir(directory)).filter((f) => f.endsWith(".fs"))) 
   let previousSource = "";
 
   for (const [index, line] of lines.entries()) {
-    const match = ASSERTION.exec(line);
-    if (!match) {
-      if (!line.startsWith("#")) previousSource = line;
+    if (!line.startsWith("#")) {
+      previousSource = line;
       continue;
     }
 
-    const [, arrow, carets, scopes] = match;
-    if (!scopes.trim().split(/\s+/).every((s) => s.startsWith("-"))) continue;
+    const rest = line.slice(1);
+    const arrowMatch = /^\s*<-\s*(.*)$/.exec(rest);
+    const caretMatch = !arrowMatch && /^(\s*)(\^+)\s*(.*)$/.exec(rest);
 
-    const from = arrow ? 0 : line.indexOf("^");
-    const to = arrow ? 1 : from + carets.length;
+    if (!arrowMatch && !caretMatch) {
+      // An ordinary comment, not an assertion line.
+      previousSource = line;
+      continue;
+    }
+
+    const suffix = arrowMatch ? arrowMatch[1] : caretMatch[3];
+    const suffixMatch = SUFFIX.exec(suffix);
+    if (!suffixMatch) continue;
+
+    const [, scopes, exclusions] = suffixMatch;
+    if (scopes.trim() !== "" || exclusions.trim() === "") continue;
+
+    const from = arrowMatch ? 0 : caretMatch[1].length;
+    const to = arrowMatch ? 1 : from + caretMatch[2].length;
     if (from >= previousSource.length) {
       failures.push(
         `${name}:${index + 1} negative assertion selects no tokens ` +
