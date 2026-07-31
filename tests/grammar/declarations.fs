@@ -41,3 +41,6 @@ func f() -> Dictionary[String, int]:
 #           ^^^^^^^^^^ support.type.builtin.foundryscript
 #                      ^^^^^^ support.type.builtin.foundryscript
 #                              ^^^ support.type.builtin.foundryscript
+
+var v: Vector4 = null
+#      ^^^^^^^ support.type.builtin.foundryscript

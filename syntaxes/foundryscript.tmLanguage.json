@@ -341,16 +341,16 @@
       ]
     },
     "builtin-types": {
-      "comment": "GRAMMAR.md 7. Matched by name rather than by position: a general `identifier: Type` rule produces too many false positives against dictionary literals and match arms. User-defined types in annotation position stay unscoped until semanticTokens lands (cafecito-games/Foundry#1418).",
+      "comment": "GRAMMAR.md 7 plus the engine's full Variant set (core/variant/variant.h). The boundary is deliberate: the 14 names GRAMMAR.md itself lists, plus every Variant type -- not an arbitrary subset, so a reader can predict what is here. Matched BY NAME rather than by position, because a general `identifier: Type` rule cannot be told apart from a dictionary literal or a match arm and false-positives constantly. ACCEPTED COST of name matching: a user-defined class or a local variable named Color, Type, or int is painted as a builtin. User-defined types in annotation position stay unscoped until semanticTokens lands (cafecito-games/Foundry#1418).",
       "name": "support.type.builtin.foundryscript",
-      "match": "\\b(?:int|float|bool|String|StringName|NodePath|Array|Dictionary|Callable|AsyncCallable|Signal|Coroutine|Type|Variant|Vector2|Vector2i|Vector3|Vector3i|Color|Rect2|Rect2i|Transform2D|Transform3D|Basis|Quaternion|Plane|AABB|RID)\\b"
+      "match": "\\b(?:int|float|bool|String|StringName|NodePath|Array|Dictionary|Callable|AsyncCallable|Signal|Coroutine|Type|Variant|Object|RID|Vector2|Vector2i|Vector3|Vector3i|Vector4|Vector4i|Rect2|Rect2i|Transform2D|Transform3D|Projection|Basis|Quaternion|Plane|AABB|Color|PackedByteArray|PackedInt32Array|PackedInt64Array|PackedFloat32Array|PackedFloat64Array|PackedStringArray|PackedVector2Array|PackedVector3Array|PackedVector4Array|PackedColorArray)\\b"
     },
     "node-paths": {
       "comment": "GRAMMAR.md 5.5 get-node expressions.",
       "patterns": [
         {
-          "comment": "Quoted form: scope the sigil, then let #strings handle the literal.",
-          "match": "([$%])(?=[\"'])",
+          "comment": "Quoted form: scope the sigil, then let #strings handle the literal. Carries the same % left boundary as the bare form -- see its comment.",
+          "match": "([$]|(?<![\\w)\\]])%)(?=[\"'])",
           "captures": {
             "1": {
               "name": "keyword.operator.getnode.foundryscript"
@@ -358,8 +358,8 @@
           }
         },
         {
-          "comment": "Bare form, including the leading-% unique-name marker on any segment.",
-          "match": "([$%])(%?[A-Za-z_]\\w*(?:/%?[A-Za-z_]\\w*)*)",
+          "comment": "Bare form, including the leading-% unique-name marker on any segment. The whole path is matched as ONE unit, not segment by segment: 5.5 accepts keywords as node names, so `$Player/for` is legal, and matching the full span from the sigil lets TextMate's leftmost rule hand it to this rule before #keywords can reach the `for`. The % branch carries a left boundary because 2.8 gives % double duty as modulo -- without it `x%y`, `arr[0]%n` and `f(1)%n` all paint a node path onto valid arithmetic. LIMITATION: `x %y` (space before, none after) is still mis-scoped; distinguishing it needs variable-length lookbehind, which Oniguruma does not support.",
+          "match": "([$]|(?<![\\w)\\]])%)(%?[A-Za-z_]\\w*(?:/%?[A-Za-z_]\\w*)*)",
           "captures": {
             "1": {
               "name": "keyword.operator.getnode.foundryscript"

@@ -22,3 +22,15 @@ var g = $Node/class
 
 var h = %Unique/match
 #               ^^^^^ - keyword.control.foundryscript
+
+var b = x%y
+#        ^ - keyword.operator.getnode.foundryscript
+
+var b = arr[0]%n
+#             ^ - keyword.operator.getnode.foundryscript
+
+var u = %Unique
+#       ^ keyword.operator.getnode.foundryscript
+
+var u = $%Unique/child
+#        ^^^^^^^^^^^^^ variable.other.nodepath.foundryscript
