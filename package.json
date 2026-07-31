@@ -1,0 +1,67 @@
+{
+  "name": "foundryscript",
+  "displayName": "FoundryScript",
+  "description": "FoundryScript language support for Visual Studio Code",
+  "version": "0.1.0",
+  "publisher": "cafecito-games",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cafecito-games/Foundry-Scripting.git"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "languages": [
+      {
+        "id": "foundryscript",
+        "aliases": [
+          "FoundryScript",
+          "foundryscript"
+        ],
+        "extensions": [
+          ".fs"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "foundryscript",
+        "scopeName": "source.foundryscript",
+        "path": "./syntaxes/foundryscript.tmLanguage.json"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "npm run test:unit",
+    "test:unit": "vitest run",
+    "test:grammar": "vscode-tmgrammar-test \"tests/grammar/**/*.fs\"",
+    "test:corpus": "node scripts/check-corpus.mjs",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.90.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.24.0",
+    "eslint": "^9.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.0.0",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.1.0",
+    "vscode-tmgrammar-test": "^0.1.3"
+  }
+}
