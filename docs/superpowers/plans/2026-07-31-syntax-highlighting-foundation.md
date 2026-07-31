@@ -695,8 +695,9 @@ Create `syntaxes/foundryscript.tmLanguage.json`:
           "match": "(?<![\\w.])(?:\\d(?:_?\\d)*\\.(?!\\.)(?:\\d(?:_?\\d)*)?(?:[eE][+-]?\\d(?:_?\\d)*)?|\\.(?!\\.)\\d(?:_?\\d)*(?:[eE][+-]?\\d(?:_?\\d)*)?|\\d(?:_?\\d)*[eE][+-]?\\d(?:_?\\d)*)"
         },
         {
+          "comment": "The guard must reject a digit after a SINGLE dot (tuple index access `t.0`, GRAMMAR.md 2.6.1) while accepting one after the SECOND dot of a range operator (`1..2`). A plain (?<![\\w.]) rejects both, which wrongly leaves the 2 in 1..2 unscoped.",
           "name": "constant.numeric.integer.foundryscript",
-          "match": "(?<![\\w.])\\d(?:_?\\d)*\\b"
+          "match": "(?<!\\w)(?<!(?<!\\.)\\.)\\d(?:_?\\d)*\\b"
         }
       ]
     }
@@ -1190,10 +1191,13 @@ Create `scripts/check-corpus.mjs`:
 import { readFile, readdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
-import * as oniguruma from "vscode-oniguruma";
-import * as textmate from "vscode-textmate";
 
+// vscode-oniguruma and vscode-textmate are CommonJS. A namespace import yields a
+// module wrapper whose members are not callable (`oniguruma.loadWASM is not a
+// function`), so require them explicitly.
 const require = createRequire(import.meta.url);
+const oniguruma = require("vscode-oniguruma");
+const textmate = require("vscode-textmate");
 
 const enginePath = process.env.FOUNDRY_ENGINE_PATH;
 if (!enginePath) {
