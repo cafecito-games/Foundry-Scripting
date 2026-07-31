@@ -112,6 +112,7 @@ export async function allocateLoopbackPort(): Promise<number> {
 
 export type HostStartupFailureKind =
   | "missing_engine"
+  | "spawn_failed"
   | "process_exit"
   | "readiness_timeout"
   | "port_conflict";
@@ -130,6 +131,13 @@ function startupFailureMessage(details: HostStartupFailureDetails): string {
         `Foundry executable "${details.enginePath}" was not found while ` +
         `starting ${target}. Check foundryScript.enginePath.`
       );
+    case "spawn_failed": {
+      const spawnError = details.cause as NodeJS.ErrnoException | undefined;
+      const reason = [spawnError?.code, spawnError?.message]
+        .filter((value): value is string => Boolean(value))
+        .join(": ");
+      return `Could not start Foundry for ${target}${reason === "" ? "." : `: ${reason}.`}`;
+    }
     case "process_exit":
       return (
         `Foundry exited with code ${String(details.exitCode)} before the ` +
@@ -244,6 +252,15 @@ function isEnginePathError(code: string | undefined): boolean {
   return code === "ENOENT" || code === "EACCES" || code === "ENOTDIR";
 }
 
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted !== true) {
+    return;
+  }
+  const error = new Error("Foundry tooling host startup was cancelled.");
+  error.name = "AbortError";
+  throw error;
+}
+
 async function stopChild(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null) {
     return;
@@ -280,7 +297,9 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
   }
 
   async launch(request: HostLaunchRequest): Promise<OwnedToolingHost> {
+    throwIfAborted(request.signal);
     const port = await this.allocatePort();
+    throwIfAborted(request.signal);
     const commandRequest = { ...request, port };
     const command = this.buildCommand(commandRequest);
     this.log("info", "lsp.host.launching", {
@@ -298,7 +317,11 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
     } catch (error) {
       throw new HostStartupFailure({
         ...commandRequest,
-        kind: "missing_engine",
+        kind:
+          isEnginePathError((error as NodeJS.ErrnoException).code) ||
+          (error as NodeJS.ErrnoException).code === "ERR_INVALID_ARG_VALUE"
+            ? "missing_engine"
+            : "spawn_failed",
         cause: error,
       });
     }
@@ -319,6 +342,7 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
         child,
         commandRequest,
         state,
+        request.signal,
       );
       this.log("info", "lsp.host.ready", {
         project: readiness.project,
@@ -345,9 +369,11 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
     child: ChildProcess,
     request: LegacyLspCommandRequest,
     state: StartupState,
+    signal: AbortSignal | undefined,
   ): Promise<ToolingHostReadiness> {
     const deadline = Date.now() + this.timeoutMs;
     while (Date.now() < deadline) {
+      throwIfAborted(signal);
       if (state.readiness !== undefined) {
         return state.readiness;
       }
@@ -357,7 +383,7 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
           kind:
             isEnginePathError(state.spawnError.code)
               ? "missing_engine"
-              : "process_exit",
+              : "spawn_failed",
           cause: state.spawnError,
         });
       }

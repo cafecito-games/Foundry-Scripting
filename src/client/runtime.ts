@@ -7,8 +7,8 @@ export function createConnectionManager(
   outputChannel: vscode.OutputChannel,
 ): ConnectionManager {
   return new ConnectionManager({
-    createClient: (endpoint) =>
-      new FoundryScriptLanguageClient({ endpoint, outputChannel }),
+    createClient: (endpoint, signal) =>
+      new FoundryScriptLanguageClient({ endpoint, outputChannel, signal }),
     launcher: new FoundryHostLauncher({ output: outputChannel }),
   });
 }

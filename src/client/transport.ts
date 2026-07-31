@@ -21,6 +21,7 @@ export interface TcpEndpoint {
 export interface TcpServerOptions extends TcpEndpoint {
   output: LogOutput;
   interceptNotification?: NotificationInterceptor;
+  signal?: AbortSignal;
 }
 
 export type TcpServerOptionsFactory = () => Promise<
@@ -32,11 +33,22 @@ export function createTcpServerOptions({
   port,
   output,
   interceptNotification,
+  signal,
 }: TcpServerOptions): TcpServerOptionsFactory {
   return () => {
     writeLog(output, "info", "lsp.socket.connecting", { host, port });
 
     const socket = net.connect({ host, port });
+    const abort = () => {
+      const error = new Error("Foundry language server connection was cancelled.");
+      error.name = "AbortError";
+      socket.destroy(error);
+    };
+    if (signal?.aborted === true) {
+      abort();
+    } else {
+      signal?.addEventListener("abort", abort, { once: true });
+    }
     socket.on("connect", () => {
       writeLog(output, "info", "lsp.socket.connected", { host, port });
     });
@@ -49,6 +61,7 @@ export function createTcpServerOptions({
       });
     });
     socket.on("close", (hadError) => {
+      signal?.removeEventListener("abort", abort);
       writeLog(output, hadError ? "error" : "info", "lsp.socket.closed", {
         host,
         port,

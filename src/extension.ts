@@ -67,6 +67,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   try {
     await manager.start({ settings, project });
   } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      return;
+    }
     writeLog(outputChannel, "error", "lsp.connection.failed", {
       project,
       message: error instanceof Error ? error.message : String(error),

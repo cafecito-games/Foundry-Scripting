@@ -30,6 +30,7 @@ export interface OwnedToolingHost {
 export interface HostLaunchRequest {
   enginePath: string;
   project: string;
+  signal?: AbortSignal;
 }
 
 export interface ToolingHostLauncher {
@@ -55,7 +56,7 @@ export class ConnectionFailure extends Error {
 }
 
 export interface ConnectionManagerOptions {
-  createClient(endpoint: TcpEndpoint): LanguageClientHandle;
+  createClient(endpoint: TcpEndpoint, signal: AbortSignal): LanguageClientHandle;
   launcher: ToolingHostLauncher;
 }
 
@@ -84,9 +85,24 @@ async function stopAfterFailedStart(client: LanguageClientHandle): Promise<void>
   }
 }
 
+function throwIfAborted(signal: AbortSignal): void {
+  if (!signal.aborted) {
+    return;
+  }
+  const error = new Error("Foundry language server startup was cancelled.");
+  error.name = "AbortError";
+  throw error;
+}
+
+interface PendingStart {
+  controller: AbortController;
+  promise: Promise<void>;
+}
+
 export class ConnectionManager {
   private activeClient: LanguageClientHandle | undefined;
   private activeHost: OwnedToolingHost | undefined;
+  private pendingStart: PendingStart | undefined;
 
   constructor(private readonly options: ConnectionManagerOptions) {}
 
@@ -98,29 +114,54 @@ export class ConnectionManager {
   }
 
   async start({ settings, project }: StartConnectionOptions): Promise<void> {
+    const controller = new AbortController();
+    const promise = this.startConnection(settings, project, controller.signal);
+    const pending = { controller, promise };
+    this.pendingStart = pending;
+    try {
+      await promise;
+    } finally {
+      if (this.pendingStart === pending) {
+        this.pendingStart = undefined;
+      }
+    }
+  }
+
+  private async startConnection(
+    settings: ConnectionSettings,
+    project: string,
+    signal: AbortSignal,
+  ): Promise<void> {
     if (settings.mode === "off") {
       return;
     }
     if (settings.mode === "attach") {
-      await this.attach(settings.port, project);
+      await this.attach(settings.port, project, signal);
       return;
     }
     if (settings.mode === "spawn") {
-      await this.spawn(settings.enginePath, project);
+      await this.spawn(settings.enginePath, project, signal);
       return;
     }
 
     try {
-      await this.attach(settings.port, project);
+      await this.attach(settings.port, project, signal);
     } catch (error) {
+      throwIfAborted(signal);
       if (!(error instanceof ConnectionFailure) || error.kind !== "tcp_refused") {
         throw error;
       }
-      await this.spawn(settings.enginePath, project);
+      await this.spawn(settings.enginePath, project, signal);
     }
   }
 
   async stop(): Promise<void> {
+    const pending = this.pendingStart;
+    pending?.controller.abort();
+    if (pending !== undefined) {
+      await pending.promise.catch(() => undefined);
+    }
+
     const client = this.activeClient;
     const host = this.activeHost;
     this.activeClient = undefined;
@@ -137,10 +178,16 @@ export class ConnectionManager {
     }
   }
 
-  private async attach(port: number, project: string): Promise<void> {
-    const client = this.options.createClient({ host: "127.0.0.1", port });
+  private async attach(
+    port: number,
+    project: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    throwIfAborted(signal);
+    const client = this.options.createClient({ host: "127.0.0.1", port }, signal);
     try {
       await client.start();
+      throwIfAborted(signal);
       this.activeClient = client;
     } catch (error) {
       await stopAfterFailedStart(client);
@@ -151,10 +198,20 @@ export class ConnectionManager {
     }
   }
 
-  private async spawn(enginePath: string, project: string): Promise<void> {
-    const host = await this.options.launcher.launch({ enginePath, project });
+  private async spawn(
+    enginePath: string,
+    project: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    throwIfAborted(signal);
+    const host = await this.options.launcher.launch({
+      enginePath,
+      project,
+      signal,
+    });
     try {
-      await this.attach(host.readiness.lspPort, project);
+      throwIfAborted(signal);
+      await this.attach(host.readiness.lspPort, project, signal);
       this.activeHost = host;
     } catch (error) {
       await host.stop();

@@ -43,6 +43,20 @@ function createHost(lspPort = 49152): OwnedToolingHost & {
   };
 }
 
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolvePromise: ((value: T) => void) | undefined;
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return {
+    promise,
+    resolve: (value) => resolvePromise?.(value),
+  };
+}
+
 describe("connection modes", () => {
   const endpoints: TcpEndpoint[] = [];
   const clients: LanguageClientHandle[] = [];
@@ -115,10 +129,10 @@ describe("connection modes", () => {
       project: "/workspace/game",
     });
 
-    expect(launchHost).toHaveBeenCalledWith({
+    expect(launchHost).toHaveBeenCalledWith(expect.objectContaining({
       enginePath: "/opt/foundry",
       project: "/workspace/game",
-    });
+    }));
     expect(endpoints).toEqual([{ host: "127.0.0.1", port: 49152 }]);
     expect(manager.ownedToolingHost).toEqual(host.readiness);
 
@@ -261,5 +275,49 @@ describe("connection modes", () => {
     await expect(manager.stop()).rejects.toBe(shutdownError);
 
     expect(host.stop).toHaveBeenCalledOnce();
+  });
+
+  it("cancels startup and terminates a host that becomes ready after stop", async () => {
+    const pendingHost = deferred<OwnedToolingHost>();
+    const host = createHost(49156);
+    launchHost.mockReturnValue(pendingHost.promise);
+    const manager = managerWith([createSuccessfulClient()]);
+
+    const starting = manager
+      .start({
+        settings: { mode: "spawn", port: 6005, enginePath: "foundry" },
+        project: "/workspace/game",
+      })
+      .catch((error: unknown) => error);
+    const stopping = manager.stop();
+    pendingHost.resolve(host);
+
+    const startFailure = await starting;
+    await stopping;
+    expect(startFailure).toMatchObject({ name: "AbortError" });
+    expect(host.stop).toHaveBeenCalledOnce();
+    expect(endpoints).toEqual([]);
+  });
+
+  it("cancels a client that finishes starting after stop begins", async () => {
+    const pendingStart = deferred<void>();
+    const client = createSuccessfulClient();
+    client.start.mockReturnValue(pendingStart.promise);
+    const manager = managerWith([client]);
+
+    const starting = manager
+      .start({
+        settings: { mode: "attach", port: 6005, enginePath: "foundry" },
+        project: "/workspace/game",
+      })
+      .catch((error: unknown) => error);
+    await Promise.resolve();
+    const stopping = manager.stop();
+    pendingStart.resolve(undefined);
+
+    const startFailure = await starting;
+    await stopping;
+    expect(startFailure).toMatchObject({ name: "AbortError" });
+    expect(client.stop).toHaveBeenCalledOnce();
   });
 });

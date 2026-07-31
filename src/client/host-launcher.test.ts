@@ -272,6 +272,32 @@ describe("host launch abstraction", () => {
     ).rejects.toMatchObject({ kind: "missing_engine" });
   });
 
+  it("reports a non-path spawn error without inventing an exit code", async () => {
+    const child = new FakeChildProcess();
+    const launcher = new FoundryHostLauncher({
+      allocatePort: () => Promise.resolve(49152),
+      spawnProcess: () => {
+        queueMicrotask(() => {
+          child.emit(
+            "error",
+            Object.assign(new Error("spawn foundry EMFILE"), { code: "EMFILE" }),
+          );
+        });
+        return child.asChildProcess();
+      },
+      timeoutMs: 100,
+      pollIntervalMs: 5,
+    });
+
+    const failure = await launcher
+      .launch({ enginePath: "foundry", project: "/workspace/game" })
+      .catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ kind: "spawn_failed" });
+    expect((failure as Error).message).toContain("EMFILE");
+    expect((failure as Error).message).not.toContain("undefined");
+  });
+
   it("distinguishes process exit before readiness", async () => {
     const child = new FakeChildProcess();
     const launcher = new FoundryHostLauncher({
@@ -330,5 +356,27 @@ describe("host launch abstraction", () => {
         project: "/workspace/game",
       }),
     ).rejects.toMatchObject({ kind: "readiness_timeout", port: 49153 });
+  });
+
+  it("terminates a child when startup is aborted during readiness", async () => {
+    const child = new FakeChildProcess();
+    const controller = new AbortController();
+    const launcher = new FoundryHostLauncher({
+      allocatePort: () => Promise.resolve(49152),
+      spawnProcess: () => child.asChildProcess(),
+      timeoutMs: 50,
+      pollIntervalMs: 5,
+    });
+
+    const launching = launcher.launch({
+      enginePath: "foundry",
+      project: "/workspace/game",
+      signal: controller.signal,
+    });
+    await Promise.resolve();
+    controller.abort();
+
+    await expect(launching).rejects.toMatchObject({ name: "AbortError" });
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
   });
 });

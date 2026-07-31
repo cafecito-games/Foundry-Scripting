@@ -10,9 +10,16 @@ the gradually-typed scripting language of the Foundry engine.
   and custom annotation declarations.
 - Comment toggling, bracket matching, off-side folding, and indentation for
   FoundryScript's indentation-sensitive block structure.
+- Language intelligence over the Foundry engine's language-server protocol, including
+  completion, hover, go-to-definition, and diagnostics.
 
-Language intelligence (completion, hover, go-to-definition, diagnostics) arrives in a
-later release and will require the `foundry` binary. Nothing in this release does.
+By default the extension starts `foundry lsp serve` for the open workspace, so `foundry`
+must be on `PATH` or configured with `foundryScript.enginePath`. Set
+`foundryScript.lsp.mode` to `attach` to connect to an already-running editor/tool host,
+`auto` to attach first and spawn only when the configured port refuses the connection,
+or `off` to keep syntax highlighting without starting or connecting to Foundry. Attach
+and auto use `foundryScript.lsp.port` (default `6005`). Hosts spawned by the extension
+are stopped with it; externally started hosts are never terminated by the extension.
 
 ## Installation
 
