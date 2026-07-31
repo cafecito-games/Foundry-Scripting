@@ -26,6 +26,18 @@ Two deliberate departures from the issue text. Both are recorded here so they ar
 
 `.fs` is F#'s conventional extension. Users with Ionide installed will see a conflict. This is resolved by the user with `files.associations`, and Task 7 documents it in the README. Do not try to solve it in the grammar.
 
+## Negative scope assertions must be fully qualified
+
+`vscode-tmgrammar-test`'s negative assertion form (`^^^ - some.scope`) does an **exact string match**, not a TextMate scope-selector prefix match. The implementation is a literal `excludedScopes.filter(s => token.scopes.includes(s))` in `node_modules/vscode-tmgrammar-test/dist/unit/index.js`.
+
+Because this grammar always emits fully-qualified names, an assertion like `- constant.numeric` can **never fail** — the bare string `"constant.numeric"` is never an element of the scopes array, whether or not the bug it guards against is present. Such an assertion is silently vacuous and reads exactly like a passing test.
+
+Verified: re-introducing the `tup.0` bug (dropping the integer pattern's nested lookbehind) left `- constant.numeric` green, while `- constant.numeric.integer.foundryscript` correctly failed.
+
+**Every negative assertion must name the exact scope the buggy grammar would emit**, e.g. `- constant.numeric.integer.foundryscript`, `- storage.modifier.async.foundryscript`, `- keyword.declaration.extend.foundryscript`.
+
+**And every negative assertion must be proven load-bearing** by temporarily breaking the grammar so the guarded property is violated, confirming the assertion fails, then restoring. A negative assertion nobody has seen fail is not evidence of anything.
+
 ## File Structure
 
 | File | Responsibility |
@@ -614,7 +626,7 @@ var g = 1..2
 #          ^ constant.numeric.integer.foundryscript
 
 var t = tup.0
-#           ^ - constant.numeric
+#           ^ - constant.numeric.integer.foundryscript
 ```
 
 The last two cases are a matched pair and must stay together. `1..2` pins that the range operator's second dot still permits an integer; `tup.0` pins, via a **negative** assertion, that single-dot member access does not. Together they are what stops someone simplifying the integer pattern's nested lookbehind back to `(?<!\w)` — which would keep the `1..2` case green while silently breaking tuple index access.
@@ -889,10 +901,10 @@ annotation my_marker targets CLASS, METHOD
 #                            ^^^^^^^^^^^^^ support.constant.target.foundryscript
 
 var extend = 1
-#   ^^^^^^ - keyword
+#   ^^^^^^ - keyword.declaration.extend.foundryscript
 
 var async = 2
-#   ^^^^^ - storage.modifier
+#   ^^^^^ - storage.modifier.async.foundryscript
 
     get:
 #   ^^^ storage.modifier.accessor.foundryscript
@@ -907,13 +919,13 @@ var async = 2
 #   ^^^ storage.modifier.accessor.foundryscript
 
 var get = 5
-#   ^^^ - storage.modifier
+#   ^^^ - storage.modifier.accessor.foundryscript
 
     dict = {get = 1}
-#           ^^^ - storage.modifier
+#           ^^^ - storage.modifier.accessor.foundryscript
 
     obj.set = 3
-#       ^^^ - storage.modifier
+#       ^^^ - storage.modifier.accessor.foundryscript
 ```
 
 The accessor cases are a matched set. GRAMMAR.md §4.4 defines four accessor forms — `get:`, `get():`, `set(value):`, and the pointer style `get = method` — and all four must scope. The three negative cases pin the reason the pattern is anchored to line start: without that anchor it fires on any identifier named `get` or `set` followed by `=`, which is ordinary legal code.
