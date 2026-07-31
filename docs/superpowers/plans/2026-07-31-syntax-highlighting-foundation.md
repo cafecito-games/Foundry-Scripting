@@ -341,6 +341,19 @@ describe("increaseIndentPattern", () => {
     "        nested_if_deeply_indented:",
     "extend int uses Describable:",
     "func f():  # trailing comment",
+    // Match arms (GRAMMAR.md 6.1) - patterns are arbitrary expressions, which is
+    // why increaseIndentPattern cannot be a keyword list.
+    "    Idle:",
+    "    1, 2, 3:",
+    "    _:",
+    "    [first, second]:",
+    "    Message.Move(x, y) when x > 0:",
+    // Property accessors (GRAMMAR.md 4.4) and whole-file enums (3.2).
+    "    get:",
+    "    set(value):",
+    "enum Direction:",
+    // Multi-line lambda (GRAMMAR.md 5.3).
+    "var handler = func(x: int) -> int:",
   ];
 
   for (const line of increases) {
@@ -354,6 +367,11 @@ describe("increaseIndentPattern", () => {
     "var health: int = 100",
     "# a comment ending in a colon:",
     "return",
+    "signal died(cause: String)",
+    "var slice = items[1:2]",
+    "var label = \"a:\"",
+    "var choice = 1 if ready else 2",
+    "var inline = func(x): return x * 2",
   ];
 
   for (const line of doesNotIncrease) {
@@ -375,6 +393,27 @@ describe("decreaseIndentPattern", () => {
   it("does not decrease indent on an ordinary statement", () => {
     expect(decreaseIndent.test("    health -= 1")).toBe(false);
   });
+
+  // Must stay symmetric with increaseIndentPattern. If only the increase side
+  // allowed trailing comments, this line would indent its body but never dedent
+  // itself, leaving the block a level too deep.
+  it("decreases indent on else with a trailing comment", () => {
+    expect(decreaseIndent.test("    else:  # handle default")).toBe(true);
+  });
+
+  it("decreases indent on elif with a trailing comment", () => {
+    expect(decreaseIndent.test("    elif ready:  # nearly dead")).toBe(true);
+  });
+
+  // The trailing colon is required on purpose: without it, a wrapped ternary
+  // such as `    else b)` would wrongly dedent.
+  it("does not decrease indent before the colon is typed", () => {
+    expect(decreaseIndent.test("    else")).toBe(false);
+  });
+
+  it("does not decrease indent on a wrapped ternary continuation", () => {
+    expect(decreaseIndent.test("    else b)")).toBe(false);
+  });
 });
 ```
 
@@ -385,7 +424,11 @@ Expected: FAIL — `Cannot find module '../language-configuration.json'`
 
 - [ ] **Step 3: Create `language-configuration.json`**
 
-The `increaseIndentPattern` requires a `:` at end of line, optionally followed by a comment. Excluding a `:` that is inside braces is what keeps dictionary literals from triggering it.
+Both indentation patterns require a `:` as the last non-comment character on the line. There is no brace awareness — what keeps `var mapping = { "a": 1 }` from matching is simply that its `:` is not at end of line.
+
+`increaseIndentPattern` is deliberately **keyword-free**, unlike Python's or Ruby's configurations. A keyword list cannot express FoundryScript's match arms, whose patterns are arbitrary expressions (`GRAMMAR.md` §6.1) — `Message.Move(x, y) when x > 0:` has no leading keyword to match on. The same permissiveness covers property accessors (`get:`, `set(value):`), `enum Dir:`, and multi-line lambdas. Do not "tidy" this into a keyword list.
+
+Both patterns allow the same trailing-comment suffix `(#.*)?`. They must stay symmetric: if only the increase pattern allowed comments, `else:  # note` would indent its body while never dedenting itself, putting the whole block one level too deep — and because `decreaseIndentPattern` also feeds *Reindent Lines* and indent-on-paste, that corrupts entire files rather than just live typing.
 
 ```json
 {
@@ -402,8 +445,13 @@ The `increaseIndentPattern` requires a `:` at end of line, optionally followed b
     { "open": "[", "close": "]" },
     { "open": "(", "close": ")" },
     { "open": "\"", "close": "\"", "notIn": ["string", "comment"] },
-    { "open": "'", "close": "'", "notIn": ["string", "comment"] }
+    { "open": "'", "close": "'", "notIn": ["string", "comment"] },
+    { "open": "r\"", "close": "\"", "notIn": ["string", "comment"] },
+    { "open": "r'", "close": "'", "notIn": ["string", "comment"] }
   ],
+  "folding": {
+    "offSide": true
+  },
   "surroundingPairs": [
     ["{", "}"],
     ["[", "]"],
@@ -413,7 +461,7 @@ The `increaseIndentPattern` requires a `:` at end of line, optionally followed b
   ],
   "indentationRules": {
     "increaseIndentPattern": "^(?!\\s*#).*:\\s*(#.*)?$",
-    "decreaseIndentPattern": "^\\s*(else|elif)\\b.*:\\s*$"
+    "decreaseIndentPattern": "^\\s*(else|elif)\\b.*:\\s*(#.*)?$"
   },
   "onEnterRules": [
     {
