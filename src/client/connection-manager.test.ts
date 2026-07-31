@@ -320,4 +320,25 @@ describe("connection modes", () => {
     expect(startFailure).toMatchObject({ name: "AbortError" });
     expect(client.stop).toHaveBeenCalledOnce();
   });
+
+  it("rejects a second start instead of orphaning the active connection", async () => {
+    const firstClient = createSuccessfulClient();
+    const unusedClient = createSuccessfulClient();
+    const manager = managerWith([firstClient, unusedClient]);
+    await manager.start({
+      settings: { mode: "attach", port: 6005, enginePath: "foundry" },
+      project: "/workspace/game",
+    });
+
+    await expect(
+      manager.start({
+        settings: { mode: "attach", port: 6006, enginePath: "foundry" },
+        project: "/workspace/other",
+      }),
+    ).rejects.toThrow("already active");
+
+    expect(unusedClient.start).not.toHaveBeenCalled();
+    await manager.stop();
+    expect(firstClient.stop).toHaveBeenCalledOnce();
+  });
 });

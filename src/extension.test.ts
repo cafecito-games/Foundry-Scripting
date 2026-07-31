@@ -77,6 +77,7 @@ describe("extension entry point", () => {
 
     expect(extensionMock.createConnectionManager).toHaveBeenCalledWith(
       extensionMock.outputChannel,
+      "/workspace/game",
     );
     expect(extensionMock.start).toHaveBeenCalledWith({
       settings: {
@@ -143,6 +144,22 @@ describe("extension entry point", () => {
     await deactivate();
 
     expect(extensionMock.stop).toHaveBeenCalledOnce();
+  });
+
+  it("cleans up and forgets a connection manager after cancelled startup", async () => {
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game" },
+    });
+    const cancellation = new Error("cancelled");
+    cancellation.name = "AbortError";
+    extensionMock.start.mockRejectedValue(cancellation);
+
+    await activate(createContext());
+    expect(extensionMock.stop).toHaveBeenCalledOnce();
+    await deactivate();
+
+    expect(extensionMock.stop).toHaveBeenCalledOnce();
+    expect(extensionMock.showErrorMessage).not.toHaveBeenCalled();
   });
 });
 

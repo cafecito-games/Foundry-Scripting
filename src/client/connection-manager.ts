@@ -114,6 +114,13 @@ export class ConnectionManager {
   }
 
   async start({ settings, project }: StartConnectionOptions): Promise<void> {
+    if (
+      this.pendingStart !== undefined ||
+      this.activeClient !== undefined ||
+      this.activeHost !== undefined
+    ) {
+      throw new Error("A Foundry language server connection is already active.");
+    }
     const controller = new AbortController();
     const promise = this.startConnection(settings, project, controller.signal);
     const pending = { controller, promise };

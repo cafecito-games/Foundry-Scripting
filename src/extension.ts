@@ -56,7 +56,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return;
   }
 
-  const manager = createConnectionManager(outputChannel);
+  const manager = createConnectionManager(outputChannel, project);
   activeConnectionManager = manager;
   context.subscriptions.push({
     dispose: () => {
@@ -68,6 +68,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await manager.start({ settings, project });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
+      if (activeConnectionManager === manager) {
+        activeConnectionManager = undefined;
+      }
+      await manager.stop();
       return;
     }
     writeLog(outputChannel, "error", "lsp.connection.failed", {
