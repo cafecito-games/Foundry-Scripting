@@ -7,6 +7,9 @@
       "include": "#comments"
     },
     {
+      "include": "#node-paths"
+    },
+    {
       "include": "#strings"
     },
     {
@@ -16,7 +19,13 @@
       "include": "#contextual-keywords"
     },
     {
+      "include": "#declarations"
+    },
+    {
       "include": "#annotations"
+    },
+    {
+      "include": "#builtin-types"
     },
     {
       "include": "#keywords"
@@ -280,6 +289,87 @@
       "comment": "GRAMMAR.md 2.7 - @ plus identifier is a single ANNOTATION token.",
       "name": "entity.name.function.decorator.foundryscript",
       "match": "@[A-Za-z_]\\w*"
+    },
+    "declarations": {
+      "comment": "GRAMMAR.md 3.1, 3.2, 3.3, 4.2, 4.5. Two-token forms so the declared name scopes as an entity.",
+      "patterns": [
+        {
+          "match": "\\b(namespace|import)\\s+([A-Za-z_]\\w*(?:\\.[A-Za-z_]\\w*)*)",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.foundryscript"
+            },
+            "2": {
+              "name": "entity.name.namespace.foundryscript"
+            }
+          }
+        },
+        {
+          "match": "\\b(class_name|trait_name|enum_name|tuple_name|class|trait|enum)\\s+([A-Za-z_]\\w*)",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.foundryscript"
+            },
+            "2": {
+              "name": "entity.name.type.foundryscript"
+            }
+          }
+        },
+        {
+          "comment": "GRAMMAR.md 3.3. The string form (extends \"res://base.fs\") is left to #strings.",
+          "match": "\\b(extends|uses)\\s+([A-Za-z_]\\w*(?:\\.[A-Za-z_]\\w*)*)",
+          "captures": {
+            "1": {
+              "name": "storage.modifier.foundryscript"
+            },
+            "2": {
+              "name": "entity.name.type.foundryscript"
+            }
+          }
+        },
+        {
+          "match": "\\b(func)\\s+([A-Za-z_]\\w*)",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.foundryscript"
+            },
+            "2": {
+              "name": "entity.name.function.foundryscript"
+            }
+          }
+        }
+      ]
+    },
+    "builtin-types": {
+      "comment": "GRAMMAR.md 7. Matched by name rather than by position: a general `identifier: Type` rule produces too many false positives against dictionary literals and match arms. User-defined types in annotation position stay unscoped until semanticTokens lands (cafecito-games/Foundry#1418).",
+      "name": "support.type.builtin.foundryscript",
+      "match": "\\b(?:int|float|bool|String|StringName|NodePath|Array|Dictionary|Callable|AsyncCallable|Signal|Coroutine|Type|Variant|Vector2|Vector2i|Vector3|Vector3i|Color|Rect2|Rect2i|Transform2D|Transform3D|Basis|Quaternion|Plane|AABB|RID)\\b"
+    },
+    "node-paths": {
+      "comment": "GRAMMAR.md 5.5 get-node expressions.",
+      "patterns": [
+        {
+          "comment": "Quoted form: scope the sigil, then let #strings handle the literal.",
+          "match": "([$%])(?=[\"'])",
+          "captures": {
+            "1": {
+              "name": "keyword.operator.getnode.foundryscript"
+            }
+          }
+        },
+        {
+          "comment": "Bare form, including the leading-% unique-name marker on any segment.",
+          "match": "([$%])(%?[A-Za-z_]\\w*(?:/%?[A-Za-z_]\\w*)*)",
+          "captures": {
+            "1": {
+              "name": "keyword.operator.getnode.foundryscript"
+            },
+            "2": {
+              "name": "variable.other.nodepath.foundryscript"
+            }
+          }
+        }
+      ]
     }
   }
 }
