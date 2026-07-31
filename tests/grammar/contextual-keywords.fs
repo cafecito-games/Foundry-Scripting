@@ -58,3 +58,24 @@ func async_handler():
 
 extended = 1
 # <- - keyword
+
+    get:
+#   ^^^ storage.modifier.accessor.foundryscript
+
+    get():
+#   ^^^ storage.modifier.accessor.foundryscript
+
+    set(value):
+#   ^^^ storage.modifier.accessor.foundryscript
+
+    get = get_health
+#   ^^^ storage.modifier.accessor.foundryscript
+
+var get = 5
+#   ^^^ - storage.modifier
+
+    dict = {get = 1}
+#           ^^^ - storage.modifier
+
+    obj.set = 3
+#       ^^^ - storage.modifier
