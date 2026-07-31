@@ -11,13 +11,14 @@ export default [
       parser: tseslintParser,
       parserOptions: {
         project: "./tsconfig.json",
+        tsconfigRootDir: import.meta.dirname,
       },
     },
     plugins: {
       "@typescript-eslint": tseslintPlugin,
     },
     rules: {
-      ...tseslintPlugin.configs.recommended.rules,
+      ...tseslintPlugin.configs["recommended-type-checked"].rules,
       "@typescript-eslint/no-unused-vars": [
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
