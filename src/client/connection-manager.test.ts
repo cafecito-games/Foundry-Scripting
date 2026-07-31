@@ -1,31 +1,43 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ConnectionFailure,
   ConnectionManager,
+  type ConnectionState,
   type LanguageClientHandle,
   type OwnedToolingHost,
   type ToolingHostLauncher,
 } from "./connection-manager.js";
 import type { TcpEndpoint } from "./transport.js";
 
-function createClient(startError?: unknown): LanguageClientHandle & {
+interface TestClient extends LanguageClientHandle {
   start: ReturnType<typeof vi.fn>;
   stop: ReturnType<typeof vi.fn>;
-} {
+  fireUnexpectedStop: () => void;
+}
+
+function testClient(start: ReturnType<typeof vi.fn>): TestClient {
+  const stopListeners = new Set<() => void>();
   return {
-    start: vi.fn().mockRejectedValueOnce(startError).mockResolvedValue(undefined),
+    start,
     stop: vi.fn().mockResolvedValue(undefined),
+    onUnexpectedStop: (listener: () => void) => {
+      stopListeners.add(listener);
+      return { dispose: () => stopListeners.delete(listener) };
+    },
+    fireUnexpectedStop: () => {
+      for (const listener of stopListeners) listener();
+    },
   };
 }
 
-function createSuccessfulClient(): LanguageClientHandle & {
-  start: ReturnType<typeof vi.fn>;
-  stop: ReturnType<typeof vi.fn>;
-} {
-  return {
-    start: vi.fn().mockResolvedValue(undefined),
-    stop: vi.fn().mockResolvedValue(undefined),
-  };
+function createClient(startError?: unknown): TestClient {
+  return testClient(
+    vi.fn().mockRejectedValueOnce(startError).mockResolvedValue(undefined),
+  );
+}
+
+function createSuccessfulClient(): TestClient {
+  return testClient(vi.fn().mockResolvedValue(undefined));
 }
 
 function createHost(lspPort = 49152): OwnedToolingHost & {
@@ -57,17 +69,31 @@ function deferred<T>(): {
   };
 }
 
+function connectionRefused(): Error & { code: string } {
+  return Object.assign(new Error("connect ECONNREFUSED"), {
+    code: "ECONNREFUSED",
+  });
+}
+
 describe("connection modes", () => {
   const endpoints: TcpEndpoint[] = [];
   const clients: LanguageClientHandle[] = [];
+  const states: ConnectionState[] = [];
+  const output = { appendLine: vi.fn() };
   let launchHost: ReturnType<typeof vi.fn>;
   let launcher: ToolingHostLauncher;
 
   beforeEach(() => {
     endpoints.length = 0;
     clients.length = 0;
+    states.length = 0;
+    output.appendLine.mockClear();
     launchHost = vi.fn();
     launcher = { launch: launchHost };
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   function managerWith(clientQueue: LanguageClientHandle[]): ConnectionManager {
@@ -82,6 +108,8 @@ describe("connection modes", () => {
         return client;
       },
       launcher,
+      onStateChange: (state) => states.push(state),
+      output,
     });
   }
 
@@ -95,6 +123,7 @@ describe("connection modes", () => {
 
     expect(endpoints).toEqual([]);
     expect(launchHost).not.toHaveBeenCalled();
+    expect(states).toEqual([{ kind: "off" }]);
   });
 
   it("attach connects to the configured loopback port without owning a host", async () => {
@@ -135,6 +164,7 @@ describe("connection modes", () => {
     }));
     expect(endpoints).toEqual([{ host: "127.0.0.1", port: 49152 }]);
     expect(manager.ownedToolingHost).toEqual(host.readiness);
+    expect(states).toEqual([{ kind: "spawning" }, { kind: "connected" }]);
 
     await manager.stop();
     expect(client.stop).toHaveBeenCalledOnce();
@@ -240,6 +270,7 @@ describe("connection modes", () => {
     });
     expect((failure as Error).message).toContain("/workspace/game");
     expect((failure as Error).message).toContain("6100");
+    expect(states.at(-1)).toEqual({ kind: "disconnected" });
   });
 
   it("cleans up an owned host when its language client cannot start", async () => {
@@ -340,5 +371,142 @@ describe("connection modes", () => {
     expect(unusedClient.start).not.toHaveBeenCalled();
     await manager.stop();
     expect(firstClient.stop).toHaveBeenCalledOnce();
+  });
+
+  it("publishes loss immediately and reconnects on the exact first backoff", async () => {
+    vi.useFakeTimers();
+    const firstClient = createSuccessfulClient();
+    const secondClient = createSuccessfulClient();
+    const manager = managerWith([firstClient, secondClient]);
+    await manager.start({
+      settings: { mode: "attach", port: 6005, enginePath: "foundry" },
+      project: "/workspace/game",
+    });
+
+    firstClient.fireUnexpectedStop();
+    expect(states.at(-1)).toEqual({
+      kind: "retrying",
+      attempt: 1,
+      maxAttempts: 5,
+      delayMs: 500,
+    });
+    await vi.advanceTimersByTimeAsync(499);
+    expect(secondClient.start).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(secondClient.start).toHaveBeenCalledOnce();
+    expect(states.at(-1)).toEqual({ kind: "connected" });
+    await manager.stop();
+  });
+
+  it("exhausts five attempts and leaves no hidden retry", async () => {
+    vi.useFakeTimers();
+    const firstClient = createSuccessfulClient();
+    const failedClients = Array.from({ length: 5 }, () =>
+      createClient(connectionRefused()),
+    );
+    const manager = managerWith([firstClient, ...failedClients]);
+    await manager.start({
+      settings: { mode: "attach", port: 6005, enginePath: "foundry" },
+      project: "/workspace/game",
+    });
+
+    firstClient.fireUnexpectedStop();
+    await vi.advanceTimersByTimeAsync(15_500);
+
+    expect(states.at(-1)).toEqual({ kind: "disconnected" });
+    expect(clients).toHaveLength(6);
+    const records = output.appendLine.mock.calls.map(
+      ([line]) => JSON.parse(String(line)) as { event?: string; attempt?: number },
+    );
+    expect(records.filter((record) => record.event === "lsp.connection.retry_scheduled"))
+      .toHaveLength(5);
+    expect(records.at(-1)).toMatchObject({
+      event: "lsp.connection.retry_exhausted",
+      attempt: 5,
+    });
+    await vi.runAllTimersAsync();
+    expect(clients).toHaveLength(6);
+    await manager.stop();
+  });
+
+  it("manual reconnect cancels the timer and starts immediately", async () => {
+    vi.useFakeTimers();
+    const firstClient = createSuccessfulClient();
+    const secondClient = createSuccessfulClient();
+    const manager = managerWith([firstClient, secondClient]);
+    await manager.start({
+      settings: { mode: "attach", port: 6005, enginePath: "foundry" },
+      project: "/workspace/game",
+    });
+    firstClient.fireUnexpectedStop();
+
+    await manager.reconnectNow();
+
+    expect(secondClient.start).toHaveBeenCalledOnce();
+    expect(states.at(-1)).toEqual({ kind: "connected" });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(clients).toHaveLength(2);
+    await manager.stop();
+  });
+
+  it("still retries when cleanup of the dead client fails", async () => {
+    vi.useFakeTimers();
+    const firstClient = createSuccessfulClient();
+    firstClient.stop.mockRejectedValue(new Error("dead client cleanup failed"));
+    const secondClient = createSuccessfulClient();
+    const manager = managerWith([firstClient, secondClient]);
+    await manager.start({
+      settings: { mode: "attach", port: 6005, enginePath: "foundry" },
+      project: "/workspace/game",
+    });
+
+    firstClient.fireUnexpectedStop();
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(secondClient.start).toHaveBeenCalledOnce();
+    expect(states.at(-1)).toEqual({ kind: "connected" });
+    await manager.stop();
+  });
+
+  it("replaces only its owned spawned host after server loss", async () => {
+    vi.useFakeTimers();
+    const firstClient = createSuccessfulClient();
+    const secondClient = createSuccessfulClient();
+    const firstHost = createHost(49160);
+    const secondHost = createHost(49161);
+    launchHost.mockResolvedValueOnce(firstHost).mockResolvedValueOnce(secondHost);
+    const manager = managerWith([firstClient, secondClient]);
+    await manager.start({
+      settings: { mode: "spawn", port: 6005, enginePath: "foundry" },
+      project: "/workspace/game",
+    });
+
+    firstClient.fireUnexpectedStop();
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(firstHost.stop).toHaveBeenCalledOnce();
+    expect(launchHost).toHaveBeenCalledTimes(2);
+    expect(manager.ownedToolingHost?.lspPort).toBe(49161);
+    await manager.stop();
+    expect(secondHost.stop).toHaveBeenCalledOnce();
+  });
+
+  it("cancels a pending reconnect when the manager stops", async () => {
+    vi.useFakeTimers();
+    const firstClient = createSuccessfulClient();
+    const unusedClient = createSuccessfulClient();
+    const manager = managerWith([firstClient, unusedClient]);
+    await manager.start({
+      settings: { mode: "attach", port: 6005, enginePath: "foundry" },
+      project: "/workspace/game",
+    });
+
+    firstClient.fireUnexpectedStop();
+    await manager.stop();
+    await vi.runAllTimersAsync();
+
+    expect(unusedClient.start).not.toHaveBeenCalled();
+    expect(clients).toHaveLength(1);
   });
 });
