@@ -560,6 +560,16 @@ var e = r"raw\nnot_escape"
 
 var f = """triple quoted"""
 #       ^^^ punctuation.definition.string.begin.foundryscript
+
+var g = '''triple single'''
+#       ^^^ punctuation.definition.string.begin.foundryscript
+
+var h = "bad \q escape"
+#            ^^ invalid.illegal.unknown-escape.foundryscript
+
+var bad = "unterminated
+var after = 1
+#           ^ constant.numeric.integer.foundryscript
 ```
 
 The triple-quoted case is deliberately kept on one line. An assertion line placed inside an open multiline string is ambiguous — it is both a scope assertion and string content — so multiline string behavior is left to the corpus check in Task 6 instead.
@@ -592,7 +602,18 @@ var f = 1e10
 var g = 1..2
 #       ^ constant.numeric.integer.foundryscript
 #          ^ constant.numeric.integer.foundryscript
+
+var t = tup.0
+#           ^ - constant.numeric
 ```
+
+The last two cases are a matched pair and must stay together. `1..2` pins that the range operator's second dot still permits an integer; `tup.0` pins, via a **negative** assertion, that single-dot member access does not. Together they are what stops someone simplifying the integer pattern's nested lookbehind back to `(?<!\w)` — which would keep the `1..2` case green while silently breaking tuple index access.
+
+Three further assertions in `strings.fs` are load-bearing in the same way:
+
+- `invalid.illegal.unknown-escape` is the exact scope Task 6's corpus gate keys on. Without an assertion, renaming or dropping it leaves every test green while the gate silently stops catching anything.
+- The unterminated-string case pins that a short string is line-bounded. If it leaks, the following line's `1` scopes as string rather than a number. This matters beyond highlighting: a leaked string converts downstream code to `string.quoted`, which **suppresses** any genuine `invalid.illegal` below it, so Task 6 would pass vacuously on that file.
+- `'''` covers the triple-single-quote form, which is otherwise untested.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -627,15 +648,18 @@ Create `syntaxes/foundryscript.tmLanguage.json`:
       ]
     },
     "strings": {
+      "comment": "GRAMMAR.md 2.6.2 splits short_string (single-line by construction) from long_string (triple-quoted, multiline). The two are separate rules here so an unterminated short string cannot swallow the rest of the file. ORDER IS LOAD-BEARING TWICE: raw before non-raw, or the r prefix falls outside the string scope; triple before short, or a \"\"\" opener is consumed as an empty \"\" followed by a stray quote.",
       "patterns": [
-        { "include": "#string-raw" },
-        { "include": "#string-quoted" }
+        { "include": "#string-raw-triple" },
+        { "include": "#string-raw-short" },
+        { "include": "#string-triple" },
+        { "include": "#string-short" }
       ]
     },
-    "string-raw": {
-      "comment": "GRAMMAR.md 2.6.2 - raw strings: backslash is literal except \\\" \\' \\\\",
+    "string-raw-triple": {
+      "comment": "GRAMMAR.md 2.6.2 long_string with the raw prefix. Backslash is literal except \\\" \\' \\\\.",
       "name": "string.quoted.raw.foundryscript",
-      "begin": "\\b(r)(\"\"\"|'''|\"|')",
+      "begin": "\\b(r)(\"\"\"|''')",
       "beginCaptures": {
         "1": { "name": "storage.type.string.foundryscript" },
         "2": { "name": "punctuation.definition.string.begin.foundryscript" }
@@ -651,10 +675,29 @@ Create `syntaxes/foundryscript.tmLanguage.json`:
         }
       ]
     },
-    "string-quoted": {
-      "comment": "GRAMMAR.md 2.6.2 - & is StringName, ^ is NodePath",
+    "string-raw-short": {
+      "comment": "GRAMMAR.md 2.6.2 short_string with the raw prefix. The end alternation terminates at end of line so an unterminated string cannot leak into following lines. The unterminated tail is deliberately left UNSCOPED rather than marked invalid.illegal, so that scope keeps a single unambiguous meaning for the Task 6 corpus gate. Escaped quotes are consumed by the inner pattern before end is tested.",
+      "name": "string.quoted.raw.foundryscript",
+      "begin": "\\b(r)(\"|')",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.foundryscript" },
+        "2": { "name": "punctuation.definition.string.begin.foundryscript" }
+      },
+      "end": "(\\2)|$",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.string.end.foundryscript" }
+      },
+      "patterns": [
+        {
+          "name": "constant.character.escape.foundryscript",
+          "match": "\\\\[\"'\\\\]"
+        }
+      ]
+    },
+    "string-triple": {
+      "comment": "GRAMMAR.md 2.6.2 long_string. & is StringName, ^ is NodePath.",
       "name": "string.quoted.foundryscript",
-      "begin": "(&|\\^)?(\"\"\"|'''|\"|')",
+      "begin": "(&|\\^)?(\"\"\"|''')",
       "beginCaptures": {
         "1": { "name": "storage.type.string.foundryscript" },
         "2": { "name": "punctuation.definition.string.begin.foundryscript" }
@@ -662,6 +705,22 @@ Create `syntaxes/foundryscript.tmLanguage.json`:
       "end": "\\2",
       "endCaptures": {
         "0": { "name": "punctuation.definition.string.end.foundryscript" }
+      },
+      "patterns": [
+        { "include": "#string-escapes" }
+      ]
+    },
+    "string-short": {
+      "comment": "GRAMMAR.md 2.6.2 short_string. Line-bounded - see the note on #string-raw-short. The line-continuation escape in #string-escapes matches a trailing backslash, which is consumed before end is tested, so a continued string still spans lines correctly.",
+      "name": "string.quoted.foundryscript",
+      "begin": "(&|\\^)?(\"|')",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.foundryscript" },
+        "2": { "name": "punctuation.definition.string.begin.foundryscript" }
+      },
+      "end": "(\\2)|$",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.string.end.foundryscript" }
       },
       "patterns": [
         { "include": "#string-escapes" }
@@ -683,12 +742,14 @@ Create `syntaxes/foundryscript.tmLanguage.json`:
       "comment": "GRAMMAR.md 2.6.1. The (?<![\\w.]) guard keeps tuple index access (t.0) and member chains from lexing as floats; the (?!\\.) guard keeps 1..2 from lexing 1. as a float.",
       "patterns": [
         {
+          "comment": "The (?<!\\.) guard matches the integer pattern's: a digit after a PERIOD lexes as decimal integer only (GRAMMAR.md 2.6.1), so t.0x1 must not scope as hex.",
           "name": "constant.numeric.hex.foundryscript",
-          "match": "\\b0[xX][0-9A-Fa-f](?:_?[0-9A-Fa-f])*\\b"
+          "match": "(?<!\\.)\\b0[xX][0-9A-Fa-f](?:_?[0-9A-Fa-f])*\\b"
         },
         {
+          "comment": "See the hex pattern's note on the (?<!\\.) guard.",
           "name": "constant.numeric.binary.foundryscript",
-          "match": "\\b0[bB][01](?:_?[01])*\\b"
+          "match": "(?<!\\.)\\b0[bB][01](?:_?[01])*\\b"
         },
         {
           "name": "constant.numeric.float.foundryscript",
