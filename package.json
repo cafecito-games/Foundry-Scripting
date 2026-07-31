@@ -38,6 +38,13 @@
         "path": "./syntaxes/foundryscript.tmLanguage.json"
       }
     ],
+    "commands": [
+      {
+        "command": "foundryScript.connectionActions",
+        "title": "Show Language Server Connection Actions",
+        "category": "FoundryScript"
+      }
+    ],
     "taskDefinitions": [
       {
         "type": "foundryscript",

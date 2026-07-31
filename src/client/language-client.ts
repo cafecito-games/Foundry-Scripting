@@ -1,7 +1,11 @@
 import type * as vscode from "vscode";
 import {
+  CloseAction,
+  ErrorAction,
   LanguageClient,
   NotificationType,
+  State,
+  type StateChangeEvent,
 } from "vscode-languageclient/node";
 import { writeLog } from "./logging.js";
 import {
@@ -107,6 +111,10 @@ export class FoundryScriptLanguageClient extends LanguageClient {
           { scheme: "untitled", language: "foundryscript" },
         ],
         outputChannel,
+        errorHandler: {
+          error: () => ({ action: ErrorAction.Continue, handled: true }),
+          closed: () => ({ action: CloseAction.DoNotRestart, handled: true }),
+        },
       },
     );
 
@@ -135,6 +143,16 @@ export class FoundryScriptLanguageClient extends LanguageClient {
 
   get serverWorkspacePath(): string | undefined {
     return this.currentServerWorkspacePath;
+  }
+
+  onUnexpectedStop(listener: () => void): vscode.Disposable {
+    return this.onDidChangeState(
+      ({ oldState, newState }: StateChangeEvent): void => {
+        if (oldState === State.Running && newState === State.Stopped) {
+          listener();
+        }
+      },
+    );
   }
 }
 

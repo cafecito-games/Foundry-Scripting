@@ -3,6 +3,10 @@ import {
   type ConnectionManager,
   type ConnectionSettings,
 } from "./client/connection-manager.js";
+import {
+  CONNECTION_ACTIONS_COMMAND,
+  ConnectionStatusController,
+} from "./client/connection-status.js";
 import { HostStartupFailure } from "./client/host-launcher.js";
 import { writeLog } from "./client/logging.js";
 import { createConnectionManager } from "./client/runtime.js";
@@ -45,10 +49,41 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const outputChannel = vscode.window.createOutputChannel("FoundryScript LSP");
   context.subscriptions.push(outputChannel);
   const settings = readConnectionSettings();
+  const statusItem = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Left,
+    100,
+  );
+  const statusController = new ConnectionStatusController(statusItem, {
+    showQuickPick: (items, options) =>
+      vscode.window.showQuickPick(items, options),
+    reconnectNow: async () => {
+      if (activeConnectionManager !== undefined) {
+        await activeConnectionManager.reconnectNow();
+      } else {
+        await vscode.commands.executeCommand("vscode.openFolder");
+      }
+    },
+    openLog: () => outputChannel.show(),
+    openSettings: async () => {
+      await vscode.commands.executeCommand(
+        "workbench.action.openSettings",
+        "foundryScript.lsp.mode",
+      );
+    },
+  });
+  statusItem.show();
+  context.subscriptions.push(
+    statusItem,
+    vscode.commands.registerCommand(CONNECTION_ACTIONS_COMMAND, async () =>
+      statusController.showActions(),
+    ),
+  );
   if (settings.mode === "off") {
+    statusController.update({ kind: "off" });
     writeLog(outputChannel, "info", "lsp.connection.off");
     return;
   }
+  statusController.update({ kind: "disconnected" });
 
   const project = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (project === undefined) {
@@ -58,7 +93,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return;
   }
 
-  const manager = createConnectionManager(outputChannel, project);
+  const manager = createConnectionManager(
+    outputChannel,
+    project,
+    (state) => statusController.update(state),
+  );
   activeConnectionManager = manager;
   context.subscriptions.push({
     dispose: () => {
@@ -70,6 +109,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await manager.start({ settings, project });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
+      statusController.update({ kind: "disconnected" });
       if (activeConnectionManager === manager) {
         activeConnectionManager = undefined;
       }
@@ -80,8 +120,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       project,
       message: error instanceof Error ? error.message : String(error),
     });
-    activeConnectionManager = undefined;
-    await manager.stop();
+    statusController.update({ kind: "disconnected" });
     await showStartupError(error);
   }
 }

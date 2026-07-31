@@ -21,6 +21,12 @@ or `off` to keep syntax highlighting without starting or connecting to Foundry. 
 and auto use `foundryScript.lsp.port` (default `6005`). Hosts spawned by the extension
 are stopped with it; externally started hosts are never terminated by the extension.
 
+If a running language server disappears, the extension reports the loss in its
+status-bar item and retries five times with capped exponential backoff. Click the item
+to reconnect immediately or open the LSP log. After retries are exhausted it rests in
+Disconnected until you reconnect manually. Off mode stays visible but never starts or
+connects to Foundry; click it to open connection settings or the log.
+
 ## Installation
 
 Download the `.vsix` from a release or a CI build artifact, then:

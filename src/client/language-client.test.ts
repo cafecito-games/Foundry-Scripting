@@ -1,9 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as vscode from "vscode";
+import { CloseAction, State } from "vscode-languageclient/node";
 
 const languageClientMock = vi.hoisted(() => ({
   constructorCalls: [] as unknown[][],
   notificationHandlers: new Map<string, (params: unknown) => void>(),
+  stateHandlers: new Set<
+    (event: { oldState: State; newState: State }) => void
+  >(),
 }));
 const transportMock = vi.hoisted(() => ({
   options: [] as Array<{
@@ -12,6 +16,9 @@ const transportMock = vi.hoisted(() => ({
 }));
 
 vi.mock("vscode-languageclient/node", () => ({
+  CloseAction: { DoNotRestart: 1, Restart: 2 },
+  ErrorAction: { Continue: 1, Shutdown: 2 },
+  State: { Stopped: 1, Running: 2, Starting: 3 },
   NotificationType: class {
     constructor(public readonly method: string) {}
   },
@@ -27,6 +34,15 @@ vi.mock("vscode-languageclient/node", () => ({
       const method = typeof type === "string" ? type : type.method;
       languageClientMock.notificationHandlers.set(method, handler);
       return { dispose: () => undefined };
+    }
+
+    onDidChangeState(
+      handler: (event: { oldState: State; newState: State }) => void,
+    ) {
+      languageClientMock.stateHandlers.add(handler);
+      return {
+        dispose: () => languageClientMock.stateHandlers.delete(handler),
+      };
     }
   },
 }));
@@ -52,6 +68,7 @@ describe("FoundryScript language client", () => {
   beforeEach(() => {
     languageClientMock.constructorCalls.length = 0;
     languageClientMock.notificationHandlers.clear();
+    languageClientMock.stateHandlers.clear();
     transportMock.options.length = 0;
   });
 
@@ -270,5 +287,45 @@ describe("FoundryScript language client", () => {
     });
 
     expect(transportMock.options[0]?.interceptNotification).toBeUndefined();
+  });
+
+  it("disables the language client's implicit restart", async () => {
+    new FoundryScriptLanguageClient({
+      endpoint: { host: "127.0.0.1", port: 6005 },
+      outputChannel: { appendLine: vi.fn() } as unknown as vscode.OutputChannel,
+    });
+    const clientOptions = languageClientMock.constructorCalls[0]?.[3] as {
+      errorHandler?: {
+        closed: () =>
+          | { action: number; handled?: boolean }
+          | PromiseLike<{ action: number; handled?: boolean }>;
+      };
+    };
+
+    expect(await clientOptions.errorHandler?.closed()).toMatchObject({
+      action: CloseAction.DoNotRestart,
+      handled: true,
+    });
+  });
+
+  it("reports only an unexpected running-to-stopped transition", () => {
+    const client = new FoundryScriptLanguageClient({
+      endpoint: { host: "127.0.0.1", port: 6005 },
+      outputChannel: { appendLine: vi.fn() } as unknown as vscode.OutputChannel,
+    });
+    const stopped = vi.fn();
+
+    const subscription = client.onUnexpectedStop(stopped);
+    for (const handler of languageClientMock.stateHandlers) {
+      handler({ oldState: State.Starting, newState: State.Stopped });
+      handler({ oldState: State.Running, newState: State.Stopped });
+    }
+    expect(stopped).toHaveBeenCalledOnce();
+
+    subscription.dispose();
+    for (const handler of languageClientMock.stateHandlers) {
+      handler({ oldState: State.Running, newState: State.Stopped });
+    }
+    expect(stopped).toHaveBeenCalledOnce();
   });
 });
