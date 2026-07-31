@@ -23,4 +23,4 @@ var g = 1..2
 #          ^ constant.numeric.integer.foundryscript
 
 var t = tup.0
-#           ^ - constant.numeric
+#           ^ - constant.numeric.integer.foundryscript
