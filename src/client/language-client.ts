@@ -8,6 +8,10 @@ import {
   createTcpServerOptions,
   type TcpEndpoint,
 } from "./transport.js";
+import type {
+  ServerShowMessage,
+  WorkspaceMismatchHandler,
+} from "./workspace-mismatch.js";
 
 export const CAPABILITIES_NOTIFICATION = "foundry_script/capabilities";
 export const CHANGE_WORKSPACE_NOTIFICATION = "fs_client/changeWorkspace";
@@ -47,6 +51,7 @@ export interface FoundryScriptLanguageClientOptions {
   outputChannel: vscode.OutputChannel;
   onCapabilities?: (capabilities: FoundryCapabilities) => void;
   onChangeWorkspace?: (params: ChangeWorkspaceParams) => void;
+  workspaceMismatchHandler?: WorkspaceMismatchHandler;
 }
 
 export class FoundryScriptLanguageClient extends LanguageClient {
@@ -58,11 +63,41 @@ export class FoundryScriptLanguageClient extends LanguageClient {
     outputChannel,
     onCapabilities,
     onChangeWorkspace,
+    workspaceMismatchHandler,
   }: FoundryScriptLanguageClientOptions) {
+    let dispatchChangeWorkspace:
+      | ((params: ChangeWorkspaceParams) => void)
+      | undefined;
+    const interceptNotification =
+      workspaceMismatchHandler === undefined
+        ? undefined
+        : (method: string, params: unknown): boolean => {
+            if (method === "window/showMessage") {
+              return (
+                isServerShowMessage(params) &&
+                workspaceMismatchHandler.shouldSuppressServerMessage(params)
+              );
+            }
+            if (method === CHANGE_WORKSPACE_NOTIFICATION) {
+              if (!isChangeWorkspaceParams(params)) {
+                return false;
+              }
+              dispatchChangeWorkspace?.(params);
+              return true;
+            }
+            return false;
+          };
+
     super(
       "foundryScript",
       "FoundryScript Language Server",
-      createTcpServerOptions({ ...endpoint, output: outputChannel }),
+      createTcpServerOptions({
+        ...endpoint,
+        output: outputChannel,
+        ...(interceptNotification === undefined
+          ? {}
+          : { interceptNotification }),
+      }),
       {
         documentSelector: [
           { scheme: "file", language: "foundryscript" },
@@ -79,13 +114,16 @@ export class FoundryScriptLanguageClient extends LanguageClient {
       });
       onCapabilities?.(copyCapabilities(this.currentCapabilities));
     });
-    this.onNotification(changeWorkspaceNotification, (params) => {
+    const handleChangeWorkspace = (params: ChangeWorkspaceParams): void => {
       this.currentServerWorkspacePath = params.path;
       writeLog(outputChannel, "warn", "lsp.workspace.change_requested", {
         path: params.path,
       });
       onChangeWorkspace?.(params);
-    });
+      void workspaceMismatchHandler?.handleServerWorkspace(params.path);
+    };
+    dispatchChangeWorkspace = handleChangeWorkspace;
+    this.onNotification(changeWorkspaceNotification, handleChangeWorkspace);
   }
 
   get capabilities(): FoundryCapabilities {
@@ -95,4 +133,25 @@ export class FoundryScriptLanguageClient extends LanguageClient {
   get serverWorkspacePath(): string | undefined {
     return this.currentServerWorkspacePath;
   }
+}
+
+function isChangeWorkspaceParams(value: unknown): value is ChangeWorkspaceParams {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "path" in value &&
+    typeof value.path === "string" &&
+    value.path.length > 0
+  );
+}
+
+function isServerShowMessage(value: unknown): value is ServerShowMessage {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "type" in value &&
+    typeof value.type === "number" &&
+    "message" in value &&
+    typeof value.message === "string"
+  );
 }
