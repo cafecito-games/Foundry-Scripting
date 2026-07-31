@@ -15,6 +15,8 @@ const extensionMock = vi.hoisted(() => ({
   start: vi.fn(),
   stop: vi.fn(),
   createConnectionManager: vi.fn(),
+  taskProviderDisposable: { dispose: vi.fn() },
+  registerTaskProvider: vi.fn(),
 }));
 
 vi.mock("vscode", () => ({
@@ -33,6 +35,9 @@ vi.mock("vscode", () => ({
   },
   commands: {
     executeCommand: extensionMock.executeCommand,
+  },
+  tasks: {
+    registerTaskProvider: extensionMock.registerTaskProvider,
   },
 }));
 
@@ -55,6 +60,10 @@ describe("extension entry point", () => {
     extensionMock.outputChannel.dispose.mockClear();
     extensionMock.showErrorMessage.mockReset();
     extensionMock.executeCommand.mockReset();
+    extensionMock.registerTaskProvider.mockReset();
+    extensionMock.registerTaskProvider.mockReturnValue(
+      extensionMock.taskProviderDisposable,
+    );
     extensionMock.start = vi.fn().mockResolvedValue(undefined);
     extensionMock.stop = vi.fn().mockResolvedValue(undefined);
     extensionMock.createConnectionManager.mockReset();
@@ -92,11 +101,17 @@ describe("extension entry point", () => {
 
   it("off creates no connection manager and needs no workspace", async () => {
     extensionMock.configuration.set("lsp.mode", "off");
+    const context = createContext();
 
-    await activate(createContext());
+    await activate(context);
 
     expect(extensionMock.createConnectionManager).not.toHaveBeenCalled();
     expect(extensionMock.start).not.toHaveBeenCalled();
+    expect(extensionMock.registerTaskProvider).toHaveBeenCalledWith(
+      "foundryscript",
+      expect.anything(),
+    );
+    expect(context.subscriptions).toContain(extensionMock.taskProviderDisposable);
   });
 
   it("reports a missing project without attempting a connection", async () => {
@@ -196,6 +211,21 @@ describe("package.json manifest", () => {
     expect(properties["foundryScript.enginePath"]).toMatchObject({
       type: "string",
       default: "foundry",
+    });
+    expect(properties["foundryScript.test.runner"]).toMatchObject({
+      type: "string",
+      default: "",
+    });
+  });
+
+  it("contributes tasks.json definitions for the five Foundry CLI verbs", () => {
+    const [definition] = packageManifest.contributes.taskDefinitions;
+
+    expect(definition.type).toBe("foundryscript");
+    expect(definition.required).toEqual(["command"]);
+    expect(definition.properties.command).toMatchObject({
+      type: "string",
+      enum: ["build", "lint", "test", "format", "run"],
     });
   });
 });
