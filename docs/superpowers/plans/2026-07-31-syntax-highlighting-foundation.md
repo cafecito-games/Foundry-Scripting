@@ -1188,7 +1188,9 @@ Replace the top-level `patterns` array with:
   ],
 ```
 
-`#node-paths` precedes `#strings` so that `$"quoted/path"` scopes its `$` before the string rule consumes the quote. `#declarations` precedes `#keywords` so the two-token forms win.
+**Only one of these orderings is load-bearing: `#declarations` before `#keywords`.** Both match at the keyword's start position, so list order is what breaks the tie; swapping them costs `class Foo:`, `func f():`, and `extends Node2D` their entity scopes.
+
+`#node-paths` before `#strings` looks load-bearing but is not. The quoted-path rule `([$%])(?=["'])` matches at the `$`, strictly left of the `"` where `#strings` would begin, so TextMate's leftmost rule decides regardless of list order. Verified by permuting the array: swapping those two changes nothing. Do not treat this as a constraint, and do not diagnose a broken `$"quoted/path"` by looking at it.
 
 `#node-paths` must also match the **whole path as one unit**, not segment by segment. `GRAMMAR.md` §5.5 accepts a broad set of keywords as node names, so `$Player/for` is a legal path. Matching the full path from the `$` means TextMate's leftmost rule hands the entire span to `#node-paths` before `#keywords` can reach the `for`. Segment-wise matching would leave keyword highlighting bleeding into path components.
 
@@ -1230,23 +1232,23 @@ Add to `repository`:
       ]
     },
     "builtin-types": {
-      "comment": "GRAMMAR.md 7. Matched by name rather than by position: a general `identifier: Type` rule produces too many false positives against dictionary literals and match arms. User-defined types in annotation position stay unscoped until semanticTokens lands (cafecito-games/Foundry#1418).",
+      "comment": "GRAMMAR.md 7 plus the engine's full Variant set (core/variant/variant.h). The boundary is deliberate: the 14 names GRAMMAR.md itself lists, plus every Variant type -- not an arbitrary subset, so a reader can predict what is here. Matched BY NAME rather than by position, because a general `identifier: Type` rule cannot be told apart from a dictionary literal or a match arm and false-positives constantly. ACCEPTED COST of name matching: a user-defined class or a local variable named Color, Type, or int is painted as a builtin. User-defined types in annotation position stay unscoped until semanticTokens lands (cafecito-games/Foundry#1418).",
       "name": "support.type.builtin.foundryscript",
-      "match": "\\b(?:int|float|bool|String|StringName|NodePath|Array|Dictionary|Callable|AsyncCallable|Signal|Coroutine|Type|Variant|Vector2|Vector2i|Vector3|Vector3i|Color|Rect2|Rect2i|Transform2D|Transform3D|Basis|Quaternion|Plane|AABB|RID)\\b"
+      "match": "\\b(?:int|float|bool|String|StringName|NodePath|Array|Dictionary|Callable|AsyncCallable|Signal|Coroutine|Type|Variant|Object|RID|Vector2|Vector2i|Vector3|Vector3i|Vector4|Vector4i|Rect2|Rect2i|Transform2D|Transform3D|Projection|Basis|Quaternion|Plane|AABB|Color|PackedByteArray|PackedInt32Array|PackedInt64Array|PackedFloat32Array|PackedFloat64Array|PackedStringArray|PackedVector2Array|PackedVector3Array|PackedVector4Array|PackedColorArray)\\b"
     },
     "node-paths": {
       "comment": "GRAMMAR.md 5.5 get-node expressions.",
       "patterns": [
         {
-          "comment": "Quoted form: scope the sigil, then let #strings handle the literal.",
-          "match": "([$%])(?=[\"'])",
+          "comment": "Quoted form: scope the sigil, then let #strings handle the literal. Carries the same % left boundary as the bare form -- see its comment.",
+          "match": "([$]|(?<![\\w)\\]])%)(?=[\"'])",
           "captures": {
             "1": { "name": "keyword.operator.getnode.foundryscript" }
           }
         },
         {
-          "comment": "Bare form, including the leading-% unique-name marker on any segment.",
-          "match": "([$%])(%?[A-Za-z_]\\w*(?:/%?[A-Za-z_]\\w*)*)",
+          "comment": "Bare form, including the leading-% unique-name marker on any segment. The whole path is matched as ONE unit, not segment by segment: 5.5 accepts keywords as node names, so `$Player/for` is legal, and matching the full span from the sigil lets TextMate's leftmost rule hand it to this rule before #keywords can reach the `for`. The % branch carries a left boundary because 2.8 gives % double duty as modulo -- without it `x%y`, `arr[0]%n` and `f(1)%n` all paint a node path onto valid arithmetic. LIMITATION: `x %y` (space before, none after) is still mis-scoped; distinguishing it needs variable-length lookbehind, which Oniguruma does not support.",
+          "match": "([$]|(?<![\\w)\\]])%)(%?[A-Za-z_]\\w*(?:/%?[A-Za-z_]\\w*)*)",
           "captures": {
             "1": { "name": "keyword.operator.getnode.foundryscript" },
             "2": { "name": "variable.other.nodepath.foundryscript" }
@@ -1261,7 +1263,7 @@ Add to `repository`:
 Run: `npx vscode-tmgrammar-test "tests/grammar/**/*.fs"`
 Expected: PASS — all eight files green.
 
-If `$"quoted/path"` fails, `#node-paths` is not ordered before `#strings`. If `class_name Player` scopes `Player` as plain text, `#declarations` is not ordered before `#keywords`.
+If `class_name Player` scopes `Player` as plain text, `#declarations` is not ordered before `#keywords` — that is the one top-level ordering that matters. A broken `$"quoted/path"` is NOT an ordering problem; look at the `#node-paths` quoted-form pattern itself.
 
 - [ ] **Step 5: Verify visually**
 
