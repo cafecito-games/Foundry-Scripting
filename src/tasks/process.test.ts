@@ -39,7 +39,9 @@ const command: FoundryTaskCommand = {
 
 function createSink() {
   return {
-    write: vi.fn<(text: string) => void>(),
+    write: vi.fn<
+      (text: string, stream: "stdout" | "stderr") => void
+    >(),
     close: vi.fn<(exitCode: number | undefined) => void>(),
     fail: vi.fn<(error: FoundryTaskProcessError) => void>(),
   };
@@ -62,8 +64,8 @@ describe("Foundry task child process", () => {
 
     process.start();
     child.stdout.write("plain runner output\n");
-    child.stdout.write('TAP version 13\n{"status":"passed"}\n');
     child.stderr.write("runner warning\n");
+    child.stdout.write('TAP version 13\n{"status":"passed"}\n');
     await Promise.resolve();
 
     expect(spawnProcess).toHaveBeenCalledWith(
@@ -76,8 +78,13 @@ describe("Foundry task child process", () => {
       },
     );
     expect(sink.write.mock.calls.map(([text]) => text).join("")).toBe(
-      'plain runner output\r\nTAP version 13\r\n{"status":"passed"}\r\nrunner warning\r\n',
+      'plain runner output\r\nrunner warning\r\nTAP version 13\r\n{"status":"passed"}\r\n',
     );
+    expect(sink.write.mock.calls).toEqual([
+      ["plain runner output\r\n", "stdout"],
+      ["runner warning\r\n", "stderr"],
+      ['TAP version 13\r\n{"status":"passed"}\r\n', "stdout"],
+    ]);
   });
 
   it("preserves CRLF when a stream splits the pair across chunks", async () => {

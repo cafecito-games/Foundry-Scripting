@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import type { DiagnosticsUnit } from "../diagnostics/index.js";
 import {
   FOUNDRY_TASK_KINDS,
   FoundryTaskConfigurationError,
@@ -10,11 +11,29 @@ import {
   type FoundryTaskProcessError,
   type FoundryTaskProcessOptions,
 } from "./process.js";
+import {
+  FoundryLintDiagnosticsPublisher,
+  type FoundryLintRun,
+} from "./lint-diagnostics.js";
+import { LintReportError } from "./lint-report.js";
 
 export const FOUNDRY_TASK_TYPE = "foundryscript";
 
+export interface FoundryTaskProviderOptions extends FoundryTaskProcessOptions {
+  readonly diagnostics?: DiagnosticsUnit;
+}
+
 export class FoundryTaskProvider implements vscode.TaskProvider {
-  constructor(private readonly processOptions: FoundryTaskProcessOptions = {}) {}
+  private readonly lintPublisher: FoundryLintDiagnosticsPublisher | undefined;
+
+  constructor(
+    private readonly processOptions: FoundryTaskProviderOptions = {},
+  ) {
+    this.lintPublisher =
+      processOptions.diagnostics === undefined
+        ? undefined
+        : new FoundryLintDiagnosticsPublisher(processOptions.diagnostics);
+  }
 
   provideTasks(): vscode.Task[] {
     return FOUNDRY_TASK_KINDS.map((kind) =>
@@ -35,7 +54,14 @@ export class FoundryTaskProvider implements vscode.TaskProvider {
     kind: FoundryTaskKind,
   ): vscode.Task {
     const execution = new vscode.CustomExecution(
-      () => Promise.resolve(new FoundryTaskTerminal(kind, this.processOptions)),
+      () =>
+        Promise.resolve(
+          new FoundryTaskTerminal(
+            kind,
+            this.processOptions,
+            this.lintPublisher,
+          ),
+        ),
     );
     const task = new vscode.Task(
       definition,
@@ -56,11 +82,12 @@ export class FoundryTaskProvider implements vscode.TaskProvider {
 
 export function registerFoundryTaskProvider(
   context: vscode.ExtensionContext,
+  diagnostics?: DiagnosticsUnit,
 ): void {
   context.subscriptions.push(
     vscode.tasks.registerTaskProvider(
       FOUNDRY_TASK_TYPE,
-      new FoundryTaskProvider(),
+      new FoundryTaskProvider({ diagnostics }),
     ),
   );
 }
@@ -71,10 +98,12 @@ class FoundryTaskTerminal implements vscode.Pseudoterminal {
   readonly onDidWrite = this.writeEmitter.event;
   readonly onDidClose = this.closeEmitter.event;
   private process: FoundryTaskProcess | undefined;
+  private lintRun: FoundryLintRun | undefined;
 
   constructor(
     private readonly kind: FoundryTaskKind,
     private readonly processOptions: FoundryTaskProcessOptions,
+    private readonly lintPublisher: FoundryLintDiagnosticsPublisher | undefined,
   ) {}
 
   open(): void {
@@ -86,12 +115,23 @@ class FoundryTaskTerminal implements vscode.Pseudoterminal {
         project: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
         testRunner: configuration.get("test.runner", ""),
       });
+      this.lintRun =
+        this.kind === "lint"
+          ? this.lintPublisher?.beginRun(command.cwd)
+          : undefined;
       this.process = new FoundryTaskProcess(
         command,
         {
-          write: (text) => this.writeEmitter.fire(text),
+          write: (text, stream) => {
+            this.writeEmitter.fire(text);
+            if (stream === "stdout") {
+              this.lintRun?.appendStdout(text);
+            }
+          },
           fail: (error) => this.reportProcessError(error),
-          close: (exitCode) => this.closeEmitter.fire(exitCode),
+          close: (exitCode) => {
+            this.closeEmitter.fire(this.completeLintRun(exitCode));
+          },
         },
         this.processOptions,
       );
@@ -128,6 +168,21 @@ class FoundryTaskTerminal implements vscode.Pseudoterminal {
       return;
     }
     void vscode.window.showErrorMessage(error.message);
+  }
+
+  private completeLintRun(exitCode: number | undefined): number | undefined {
+    try {
+      this.lintRun?.complete(exitCode);
+      return exitCode;
+    } catch (error) {
+      if (!(error instanceof LintReportError)) {
+        throw error;
+      }
+      const message = `Could not ingest Foundry lint JSON: ${error.message}`;
+      this.writeEmitter.fire(`Error: ${message}\r\n`);
+      void vscode.window.showErrorMessage(message);
+      return 1;
+    }
   }
 }
 
