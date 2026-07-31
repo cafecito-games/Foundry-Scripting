@@ -1,0 +1,5 @@
+# Keep grammar fixtures and FoundryScript sources LF on every platform.
+# A stray CR reaching the TextMate scanner turns a line-continuation
+# backslash into invalid.illegal.unknown-escape and cascades from there.
+*.fs text eol=lf
+*.json text eol=lf

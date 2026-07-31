@@ -1341,6 +1341,11 @@ for await (const file of findScripts(enginePath)) {
   let ruleStack = textmate.INITIAL;
   let lineNumber = 0;
 
+  // The \r? is load-bearing, not cosmetic. A CR surviving into the line text
+  // turns a line-continuation backslash into invalid.illegal.unknown-escape and
+  // cascades into the following line, so a CRLF checkout would fail this gate on
+  // valid engine code. Real VS Code is unaffected -- getLineContent() strips the
+  // full EOL -- so this only bites tooling that splits a file itself.
   for (const line of source.split(/\r?\n/)) {
     lineNumber += 1;
     const result = grammar.tokenizeLine(line, ruleStack);
@@ -1383,6 +1388,10 @@ Run: `FOUNDRY_ENGINE_PATH=~/CafecitoGames/Foundry node scripts/check-corpus.mjs`
 Expected: `Scanned <N> .fs files.` followed by `No unexpected invalid scopes.`, exit 0.
 
 The engine has roughly 2,135 `.fs` files outside worktrees, so expect a count in that range.
+
+**Settled question — escapes inside triple-quoted strings.** `GRAMMAR.md` §2.6.2 is ambiguous here: its EBNF gives `long_string` a content production admitting any character with no escape rule, while its prose says escapes apply to "non-raw strings" (which a long string is). This matters because if escapes did *not* apply, every engine docstring containing a stray backslash would scope `invalid.illegal.unknown-escape` and false-fail this gate.
+
+Resolved against the reference implementation: in `modules/foundry_script/fs_tokenizer.cpp` the escape branch is gated on `is_raw` **only**, never on `is_multiline`. Escapes therefore do apply inside triple-quoted strings, `#string-triple` correctly includes `#string-escapes`, and an invalid escape in a docstring is a genuine lexer error — so flagging it here is a true positive. Do not "fix" it by dropping the include.
 
 - [ ] **Step 3: Fix any grammar bugs the corpus surfaces**
 

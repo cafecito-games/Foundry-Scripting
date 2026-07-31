@@ -19,7 +19,7 @@
     {
       "id": 3,
       "subject": "Task 3: Grammar test harness and lexical core",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         1
       ],
@@ -63,5 +63,5 @@
       "description": "**Goal:** An installable `.vsix` produced by CI on every PR, with a README that sets accurate expectations.\n\n**Files:**\n- Create: `.vscodeignore`, `README.md`, `LICENSE`\n- Modify: `.github/workflows/ci.yml`\n\n**Verify:** `npm run package && npx vsce ls`\n\nCloses #6.\n\n```json:metadata\n{\"files\": [\".vscodeignore\", \"README.md\", \"LICENSE\", \".github/workflows/ci.yml\"], \"verifyCommand\": \"npm run package && npx vsce ls\", \"acceptanceCriteria\": [\"vsix produced\", \"vsix excludes tests and sources\", \"real install highlights .fs files\", \"CI uploads vsix artifact\", \"README documents F# conflict\"], \"githubIssue\": 6}\n```"
     }
   ],
-  "lastUpdated": "2026-07-31T15:20:00Z"
+  "lastUpdated": "2026-07-31T16:10:00Z"
 }
