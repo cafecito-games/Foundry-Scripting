@@ -6,6 +6,7 @@ import {
 import { HostStartupFailure } from "./client/host-launcher.js";
 import { writeLog } from "./client/logging.js";
 import { createConnectionManager } from "./client/runtime.js";
+import { registerFoundryTaskProvider } from "./tasks/provider.js";
 
 let activeConnectionManager: ConnectionManager | undefined;
 
@@ -40,6 +41,7 @@ async function showStartupError(error: unknown): Promise<void> {
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  registerFoundryTaskProvider(context);
   const outputChannel = vscode.window.createOutputChannel("FoundryScript LSP");
   context.subscriptions.push(outputChannel);
   const settings = readConnectionSettings();

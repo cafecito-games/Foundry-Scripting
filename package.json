@@ -38,6 +38,27 @@
         "path": "./syntaxes/foundryscript.tmLanguage.json"
       }
     ],
+    "taskDefinitions": [
+      {
+        "type": "foundryscript",
+        "required": [
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "type": "string",
+            "enum": [
+              "build",
+              "lint",
+              "test",
+              "format",
+              "run"
+            ],
+            "description": "Foundry CLI command to run for the workspace project."
+          }
+        }
+      }
+    ],
     "configuration": {
       "title": "FoundryScript",
       "properties": {
@@ -62,7 +83,12 @@
         "foundryScript.enginePath": {
           "type": "string",
           "default": "foundry",
-          "description": "Path to the Foundry executable used to start the language server."
+          "description": "Path to the Foundry executable used by the language server and workspace tasks."
+        },
+        "foundryScript.test.runner": {
+          "type": "string",
+          "default": "",
+          "description": "Runner passed to foundry project test. Required by the FoundryScript test task."
         }
       }
     }
