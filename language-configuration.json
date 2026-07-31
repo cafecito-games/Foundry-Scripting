@@ -12,7 +12,9 @@
     { "open": "[", "close": "]" },
     { "open": "(", "close": ")" },
     { "open": "\"", "close": "\"", "notIn": ["string", "comment"] },
-    { "open": "'", "close": "'", "notIn": ["string", "comment"] }
+    { "open": "'", "close": "'", "notIn": ["string", "comment"] },
+    { "open": "r\"", "close": "\"", "notIn": ["string", "comment"] },
+    { "open": "r'", "close": "'", "notIn": ["string", "comment"] }
   ],
   "surroundingPairs": [
     ["{", "}"],
@@ -21,9 +23,12 @@
     ["\"", "\""],
     ["'", "'"]
   ],
+  "folding": {
+    "offSide": true
+  },
   "indentationRules": {
     "increaseIndentPattern": "^(?!\\s*#).*:\\s*(#.*)?$",
-    "decreaseIndentPattern": "^\\s*(else|elif)\\b.*:\\s*$"
+    "decreaseIndentPattern": "^\\s*(else|elif)\\b.*:\\s*(#.*)?$"
   },
   "onEnterRules": [
     {
