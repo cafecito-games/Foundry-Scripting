@@ -570,7 +570,17 @@ var h = "bad \q escape"
 var bad = "unterminated
 var after = 1
 #           ^ constant.numeric.integer.foundryscript
+
+var cont = "a\
+b"
+# <- string.quoted.foundryscript
+
+var rawc = r"a\
+var after2 = 1
+#            ^ constant.numeric.integer.foundryscript
 ```
+
+The last two cases are a matched pair guarding the line-continuation carve-out in `#string-short`. A non-raw string with a trailing backslash **must** continue onto the next line (`GRAMMAR.md` §2.6.2 lists line continuation among the escapes valid in non-raw strings). A raw string with the same trailing backslash **must not** — that backslash is literal content, so the string still ends at the newline. Bounding short strings without this carve-out silently breaks every continued string in the corpus.
 
 The triple-quoted case is deliberately kept on one line. An assertion line placed inside an open multiline string is ambiguous — it is both a scope assertion and string content — so multiline string behavior is left to the corpus check in Task 6 instead.
 
@@ -676,14 +686,14 @@ Create `syntaxes/foundryscript.tmLanguage.json`:
       ]
     },
     "string-raw-short": {
-      "comment": "GRAMMAR.md 2.6.2 short_string with the raw prefix. The end alternation terminates at end of line so an unterminated string cannot leak into following lines. The unterminated tail is deliberately left UNSCOPED rather than marked invalid.illegal, so that scope keeps a single unambiguous meaning for the Task 6 corpus gate. Escaped quotes are consumed by the inner pattern before end is tested.",
+      "comment": "GRAMMAR.md 2.6.2 short_string with the raw prefix. Ends at an explicit newline so an unterminated string cannot leak into following lines. Unlike #string-short there is NO line-continuation carve-out: 2.6.2 lists line continuation among the escapes valid in NON-raw strings only, so a trailing backslash in a raw string is literal content and the string still ends. The unterminated tail is deliberately left UNSCOPED rather than marked invalid.illegal, so that scope keeps a single unambiguous meaning for the Task 6 corpus gate.",
       "name": "string.quoted.raw.foundryscript",
       "begin": "\\b(r)(\"|')",
       "beginCaptures": {
         "1": { "name": "storage.type.string.foundryscript" },
         "2": { "name": "punctuation.definition.string.begin.foundryscript" }
       },
-      "end": "(\\2)|$",
+      "end": "(\\2)|\\n",
       "endCaptures": {
         "1": { "name": "punctuation.definition.string.end.foundryscript" }
       },
@@ -711,14 +721,14 @@ Create `syntaxes/foundryscript.tmLanguage.json`:
       ]
     },
     "string-short": {
-      "comment": "GRAMMAR.md 2.6.2 short_string. Line-bounded - see the note on #string-raw-short. The line-continuation escape in #string-escapes matches a trailing backslash, which is consumed before end is tested, so a continued string still spans lines correctly.",
+      "comment": "GRAMMAR.md 2.6.2 short_string. Ends at an explicit newline, EXCEPT one preceded by a backslash - that is the line-continuation escape (2.6.2), so the string legitimately spans lines. Matching \\n literally rather than using $ is required: Oniguruma's $ also matches AFTER the trailing newline, where a (?<!\\\\) lookbehind sees the newline instead of the backslash and the carve-out silently fails.",
       "name": "string.quoted.foundryscript",
       "begin": "(&|\\^)?(\"|')",
       "beginCaptures": {
         "1": { "name": "storage.type.string.foundryscript" },
         "2": { "name": "punctuation.definition.string.begin.foundryscript" }
       },
-      "end": "(\\2)|$",
+      "end": "(\\2)|(?<!\\\\)\\n",
       "endCaptures": {
         "1": { "name": "punctuation.definition.string.end.foundryscript" }
       },
