@@ -3,12 +3,24 @@
   "name": "FoundryScript",
   "scopeName": "source.foundryscript",
   "patterns": [
-    { "include": "#comments" },
-    { "include": "#strings" },
-    { "include": "#numbers" },
-    { "include": "#contextual-keywords" },
-    { "include": "#annotations" },
-    { "include": "#keywords" }
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#contextual-keywords"
+    },
+    {
+      "include": "#annotations"
+    },
+    {
+      "include": "#keywords"
+    }
   ],
   "repository": {
     "comments": {
@@ -26,10 +38,18 @@
     "strings": {
       "comment": "GRAMMAR.md 2.6.2 splits short_string (single-line by construction) from long_string (triple-quoted, multiline). The two are separate rules here so an unterminated short string cannot swallow the rest of the file. ORDER IS LOAD-BEARING TWICE: raw before non-raw, or the r prefix falls outside the string scope; triple before short, or a \"\"\" opener is consumed as an empty \"\" followed by a stray quote.",
       "patterns": [
-        { "include": "#string-raw-triple" },
-        { "include": "#string-raw-short" },
-        { "include": "#string-triple" },
-        { "include": "#string-short" }
+        {
+          "include": "#string-raw-triple"
+        },
+        {
+          "include": "#string-raw-short"
+        },
+        {
+          "include": "#string-triple"
+        },
+        {
+          "include": "#string-short"
+        }
       ]
     },
     "string-raw-triple": {
@@ -37,12 +57,18 @@
       "name": "string.quoted.raw.foundryscript",
       "begin": "\\b(r)(\"\"\"|''')",
       "beginCaptures": {
-        "1": { "name": "storage.type.string.foundryscript" },
-        "2": { "name": "punctuation.definition.string.begin.foundryscript" }
+        "1": {
+          "name": "storage.type.string.foundryscript"
+        },
+        "2": {
+          "name": "punctuation.definition.string.begin.foundryscript"
+        }
       },
       "end": "\\2",
       "endCaptures": {
-        "0": { "name": "punctuation.definition.string.end.foundryscript" }
+        "0": {
+          "name": "punctuation.definition.string.end.foundryscript"
+        }
       },
       "patterns": [
         {
@@ -56,12 +82,18 @@
       "name": "string.quoted.raw.foundryscript",
       "begin": "\\b(r)(\"|')",
       "beginCaptures": {
-        "1": { "name": "storage.type.string.foundryscript" },
-        "2": { "name": "punctuation.definition.string.begin.foundryscript" }
+        "1": {
+          "name": "storage.type.string.foundryscript"
+        },
+        "2": {
+          "name": "punctuation.definition.string.begin.foundryscript"
+        }
       },
       "end": "(\\2)|\\n",
       "endCaptures": {
-        "1": { "name": "punctuation.definition.string.end.foundryscript" }
+        "1": {
+          "name": "punctuation.definition.string.end.foundryscript"
+        }
       },
       "patterns": [
         {
@@ -75,15 +107,23 @@
       "name": "string.quoted.foundryscript",
       "begin": "(&|\\^)?(\"\"\"|''')",
       "beginCaptures": {
-        "1": { "name": "storage.type.string.foundryscript" },
-        "2": { "name": "punctuation.definition.string.begin.foundryscript" }
+        "1": {
+          "name": "storage.type.string.foundryscript"
+        },
+        "2": {
+          "name": "punctuation.definition.string.begin.foundryscript"
+        }
       },
       "end": "\\2",
       "endCaptures": {
-        "0": { "name": "punctuation.definition.string.end.foundryscript" }
+        "0": {
+          "name": "punctuation.definition.string.end.foundryscript"
+        }
       },
       "patterns": [
-        { "include": "#string-escapes" }
+        {
+          "include": "#string-escapes"
+        }
       ]
     },
     "string-short": {
@@ -91,15 +131,23 @@
       "name": "string.quoted.foundryscript",
       "begin": "(&|\\^)?(\"|')",
       "beginCaptures": {
-        "1": { "name": "storage.type.string.foundryscript" },
-        "2": { "name": "punctuation.definition.string.begin.foundryscript" }
+        "1": {
+          "name": "storage.type.string.foundryscript"
+        },
+        "2": {
+          "name": "punctuation.definition.string.begin.foundryscript"
+        }
       },
       "end": "(\\2)|(?<!\\\\)\\n",
       "endCaptures": {
-        "1": { "name": "punctuation.definition.string.end.foundryscript" }
+        "1": {
+          "name": "punctuation.definition.string.end.foundryscript"
+        }
       },
       "patterns": [
-        { "include": "#string-escapes" }
+        {
+          "include": "#string-escapes"
+        }
       ]
     },
     "string-escapes": {
@@ -139,7 +187,7 @@
       ]
     },
     "keywords": {
-      "comment": "GRAMMAR.md 2.5. Keep this list in sync with the tokenizer keyword table.",
+      "comment": "GRAMMAR.md 2.5. Keep this list in sync with the tokenizer keyword table. KNOWN OVER-MATCH, and the largest inaccuracy class in this grammar: 2.5 permits `match`, `when`, `uses` and PI/TAU/INF/NAN as ordinary identifiers, accepts a broad set of keywords as attribute names after `.`, and accepts them as node names inside a get-node path. So `var match = 1`, `obj.class`, and `$Player/for` all paint a keyword where the language has an identifier. A TextMate grammar cannot see parser context, so this is not fixable here -- textDocument/semanticTokens (cafecito-games/Foundry#1418) is the fix.",
       "patterns": [
         {
           "name": "keyword.control.foundryscript",
@@ -184,24 +232,36 @@
           "comment": "GRAMMAR.md 4.8. `extend` is root-only, so anchoring at column 0 doubles as the root check. LIMITATION: misses a conformance whose `uses` clause is on a line continuation.",
           "match": "^(extend)\\s+([A-Za-z_]\\w*(?:\\.[A-Za-z_]\\w*)*)\\s+(?=uses\\b)",
           "captures": {
-            "1": { "name": "keyword.declaration.extend.foundryscript" },
-            "2": { "name": "entity.name.type.foundryscript" }
+            "1": {
+              "name": "keyword.declaration.extend.foundryscript"
+            },
+            "2": {
+              "name": "entity.name.type.foundryscript"
+            }
           }
         },
         {
           "comment": "GRAMMAR.md 4.7. Root-only, same anchoring rationale as `extend`. LIMITATION: misses a declaration whose `targets` clause is on a line continuation.",
           "match": "^(annotation)\\s+([A-Za-z_]\\w*)",
           "captures": {
-            "1": { "name": "keyword.declaration.annotation.foundryscript" },
-            "2": { "name": "entity.name.function.annotation.foundryscript" }
+            "1": {
+              "name": "keyword.declaration.annotation.foundryscript"
+            },
+            "2": {
+              "name": "entity.name.function.annotation.foundryscript"
+            }
           }
         },
         {
           "comment": "GRAMMAR.md 4.7 target list. Target names are uppercase identifiers, so this is safe to match anywhere a `targets` clause shape appears.",
           "match": "\\b(targets)\\s+((?:CLASS|METHOD|VARIABLE|SIGNAL|CONSTANT|PARAMETER)(?:\\s*,\\s*(?:CLASS|METHOD|VARIABLE|SIGNAL|CONSTANT|PARAMETER))*)",
           "captures": {
-            "1": { "name": "keyword.other.targets.foundryscript" },
-            "2": { "name": "support.constant.target.foundryscript" }
+            "1": {
+              "name": "keyword.other.targets.foundryscript"
+            },
+            "2": {
+              "name": "support.constant.target.foundryscript"
+            }
           }
         },
         {
@@ -210,7 +270,7 @@
           "match": "\\basync\\b(?=(?:\\s+(?:static|final|abstract))*\\s+func\\b)"
         },
         {
-          "comment": "GRAMMAR.md 4.4 property accessors, covering all four forms: get:, get():, set(value):, and the pointer style get = method. Anchored to the start of the line because accessors occupy their own line in a property_block; without that anchor this fires on any identifier named get or set followed by = -- `var get = 5`, `func f(get = 1)`, `{get = 1}`, `obj.set = 3` all false-positive. LIMITATION: the single-line inline_property form (`var x: int = 1: get = a, set = b`) is missed, since those accessors are mid-line. A false negative is the safer direction.",
+          "comment": "GRAMMAR.md 4.4 property accessors, covering all four forms: get:, get():, set(value):, and the pointer style get = method. Anchored to the start of the line because accessors occupy their own line in a property_block. The anchor closes the SINGLE-LINE false positives (`var get = 5`, `func f(get = 1)`, `{get = 1}`, `obj.set = 3`). KNOWN FALSE POSITIVES that remain, all cosmetic and none emitting invalid.illegal: a multiline dictionary lua_entry or a multiline call_arg (5.5) puts `get = 1` at line start inside brackets, and a match arm (6.1) may be a call such as `get(k):`. Closing these needs bracket-tracking begin/end rules, which is out of proportion to a cosmetic mis-paint. KNOWN FALSE NEGATIVE: the single-line inline_property form (`var x: int = 1: get = a, set = b`). Exact classification comes from textDocument/semanticTokens (cafecito-games/Foundry#1418).",
           "name": "storage.modifier.accessor.foundryscript",
           "match": "^\\s*(?:get|set)\\b(?=\\s*(?:\\([^)]*\\))?\\s*[:=])"
         }

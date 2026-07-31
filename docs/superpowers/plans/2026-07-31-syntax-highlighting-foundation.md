@@ -38,6 +38,13 @@ Verified: re-introducing the `tup.0` bug (dropping the integer pattern's nested 
 
 **And every negative assertion must be proven load-bearing** by temporarily breaking the grammar so the guarded property is violated, confirming the assertion fails, then restoring. A negative assertion nobody has seen fail is not evidence of anything.
 
+Two further ways an assertion silently checks nothing, both found the hard way:
+
+- **An indented `#` is not an assertion at all.** `isLineAssertion` requires `s.startsWith(commentToken)`, so a leading space makes the line parse as ordinary source. The `#` must be in column 1.
+- **A pure-negative assertion selecting zero tokens passes silently.** The runner guards the empty-selection case with `if (xs.length === 0 && requiredScopes.length > 0)`, so a positive assertion with drifted carets fails loudly while a negative one is inert. Carets drifting past the end of the source line are the usual cause.
+
+Task 6 adds a mechanical scan for the last of these.
+
 ## File Structure
 
 | File | Responsibility |
@@ -1183,6 +1190,8 @@ Replace the top-level `patterns` array with:
 
 `#node-paths` precedes `#strings` so that `$"quoted/path"` scopes its `$` before the string rule consumes the quote. `#declarations` precedes `#keywords` so the two-token forms win.
 
+`#node-paths` must also match the **whole path as one unit**, not segment by segment. `GRAMMAR.md` §5.5 accepts a broad set of keywords as node names, so `$Player/for` is a legal path. Matching the full path from the `$` means TextMate's leftmost rule hands the entire span to `#node-paths` before `#keywords` can reach the `for`. Segment-wise matching would leave keyword highlighting bleeding into path components.
+
 Add to `repository`:
 
 ```json
@@ -1438,6 +1447,63 @@ For each distinct failure, add a scope assertion to the relevant file in `tests/
 
 Run: `node scripts/check-corpus.mjs`
 Expected: the skip message, exit 0.
+
+- [ ] **Step 4b: Add the negative-assertion vacuity scan**
+
+Create `scripts/check-assertions.mjs`. It replicates the runner's own token-selection filter and fails if any negative assertion selects zero tokens — the silent-pass case described in the negative-assertion policy section above.
+
+```js
+import { readFile, readdir } from "node:fs/promises";
+import path from "node:path";
+
+// Mirrors vscode-tmgrammar-test's own parsing: an assertion line must start
+// with the comment token in column 1, and its carets index the line above.
+const ASSERTION = /^#\s*(?:(<-)|(\^+))\s*(.*)$/;
+
+const directory = new URL("../tests/grammar/", import.meta.url);
+const failures = [];
+
+for (const name of (await readdir(directory)).filter((f) => f.endsWith(".fs"))) {
+  const lines = (await readFile(new URL(name, directory), "utf8")).split(/\r?\n/);
+  let previousSource = "";
+
+  for (const [index, line] of lines.entries()) {
+    const match = ASSERTION.exec(line);
+    if (!match) {
+      if (!line.startsWith("#")) previousSource = line;
+      continue;
+    }
+
+    const [, arrow, carets, scopes] = match;
+    if (!scopes.trim().split(/\s+/).every((s) => s.startsWith("-"))) continue;
+
+    const from = arrow ? 0 : line.indexOf("^");
+    const to = arrow ? 1 : from + carets.length;
+    if (from >= previousSource.length) {
+      failures.push(
+        `${name}:${index + 1} negative assertion selects no tokens ` +
+          `(columns ${from}-${to}, source line is ${previousSource.length} chars)`,
+      );
+    }
+  }
+}
+
+if (failures.length > 0) {
+  console.error(`${failures.length} inert negative assertion(s):\n`);
+  for (const failure of failures) console.error(`  ${failure}`);
+  process.exit(1);
+}
+
+console.log("All negative assertions select at least one token.");
+```
+
+Wire it into `package.json`:
+
+```json
+    "test:grammar": "vscode-tmgrammar-test \"tests/grammar/**/*.fs\" && node scripts/check-assertions.mjs",
+```
+
+Verify it works by temporarily pushing one negative assertion's carets past the end of its source line, confirming the scan fails, then restoring.
 
 - [ ] **Step 5: Add to CI**
 
