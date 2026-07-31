@@ -1,0 +1,14 @@
+.github/**
+.vscode/**
+docs/**
+scripts/**
+src/**
+tests/**
+node_modules/**
+.gitignore
+.gitattributes
+eslint.config.mjs
+esbuild.mjs
+tsconfig.json
+**/*.map
+**/*.test.ts
