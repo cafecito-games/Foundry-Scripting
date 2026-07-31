@@ -49,14 +49,14 @@
       ]
     },
     "string-raw-short": {
-      "comment": "GRAMMAR.md 2.6.2 short_string with the raw prefix. The end alternation terminates at end of line so an unterminated string cannot leak into following lines. The unterminated tail is deliberately left UNSCOPED rather than marked invalid.illegal, so that scope keeps a single unambiguous meaning for the Task 6 corpus gate. Escaped quotes are consumed by the inner pattern before end is tested.",
+      "comment": "GRAMMAR.md 2.6.2 short_string with the raw prefix. Ends at an explicit newline so an unterminated string cannot leak into following lines. Unlike #string-short there is NO line-continuation carve-out: 2.6.2 lists line continuation among the escapes valid in NON-raw strings only, so a trailing backslash in a raw string is literal content and the string still ends. The unterminated tail is deliberately left UNSCOPED rather than marked invalid.illegal, so that scope keeps a single unambiguous meaning for the Task 6 corpus gate.",
       "name": "string.quoted.raw.foundryscript",
       "begin": "\\b(r)(\"|')",
       "beginCaptures": {
         "1": { "name": "storage.type.string.foundryscript" },
         "2": { "name": "punctuation.definition.string.begin.foundryscript" }
       },
-      "end": "(\\2)|$",
+      "end": "(\\2)|\\n",
       "endCaptures": {
         "1": { "name": "punctuation.definition.string.end.foundryscript" }
       },
@@ -84,14 +84,14 @@
       ]
     },
     "string-short": {
-      "comment": "GRAMMAR.md 2.6.2 short_string. Line-bounded - see the note on #string-raw-short. The line-continuation escape in #string-escapes matches a trailing backslash, which is consumed before end is tested, so a continued string still spans lines correctly.",
+      "comment": "GRAMMAR.md 2.6.2 short_string. Ends at an explicit newline, EXCEPT one preceded by a backslash - that is the line-continuation escape (2.6.2), so the string legitimately spans lines. Matching \\n literally rather than using $ is required: Oniguruma's $ also matches AFTER the trailing newline, where a (?<!\\\\) lookbehind sees the newline instead of the backslash and the carve-out silently fails.",
       "name": "string.quoted.foundryscript",
       "begin": "(&|\\^)?(\"|')",
       "beginCaptures": {
         "1": { "name": "storage.type.string.foundryscript" },
         "2": { "name": "punctuation.definition.string.begin.foundryscript" }
       },
-      "end": "(\\2)|$",
+      "end": "(\\2)|(?<!\\\\)\\n",
       "endCaptures": {
         "1": { "name": "punctuation.definition.string.end.foundryscript" }
       },

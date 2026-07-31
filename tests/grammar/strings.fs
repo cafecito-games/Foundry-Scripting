@@ -29,3 +29,11 @@ var h = "bad \q escape"
 var bad = "unterminated
 var after = 1
 #           ^ constant.numeric.integer.foundryscript
+
+var cont = "a\
+b"
+# <- string.quoted.foundryscript
+
+var rawc = r"a\
+var after2 = 1
+#            ^ constant.numeric.integer.foundryscript
