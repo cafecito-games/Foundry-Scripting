@@ -376,6 +376,12 @@ describe("connection modes", () => {
   it("publishes loss immediately and reconnects on the exact first backoff", async () => {
     vi.useFakeTimers();
     const firstClient = createSuccessfulClient();
+    const stateSeenWhenCleanupStarts: Array<ConnectionState["kind"] | "none"> =
+      [];
+    firstClient.stop.mockImplementation(() => {
+      stateSeenWhenCleanupStarts.push(states.at(-1)?.kind ?? "none");
+      return Promise.resolve();
+    });
     const secondClient = createSuccessfulClient();
     const manager = managerWith([firstClient, secondClient]);
     await manager.start({
@@ -390,6 +396,7 @@ describe("connection modes", () => {
       maxAttempts: 5,
       delayMs: 500,
     });
+    expect(stateSeenWhenCleanupStarts).toEqual(["retrying"]);
     await vi.advanceTimersByTimeAsync(499);
     expect(secondClient.start).not.toHaveBeenCalled();
 
@@ -417,7 +424,12 @@ describe("connection modes", () => {
     expect(states.at(-1)).toEqual({ kind: "disconnected" });
     expect(clients).toHaveLength(6);
     const records = output.appendLine.mock.calls.map(
-      ([line]) => JSON.parse(String(line)) as { event?: string; attempt?: number },
+      ([line]) =>
+        JSON.parse(String(line)) as {
+          event?: string;
+          attempt?: number;
+          message?: string;
+        },
     );
     expect(records.filter((record) => record.event === "lsp.connection.retry_scheduled"))
       .toHaveLength(5);
@@ -425,6 +437,11 @@ describe("connection modes", () => {
       event: "lsp.connection.retry_exhausted",
       attempt: 5,
     });
+    const failures = records.filter(
+      (record) => record.event === "lsp.connection.retry_failed",
+    );
+    expect(failures).toHaveLength(5);
+    expect(failures[0]?.message).toContain("connection refused");
     await vi.runAllTimersAsync();
     expect(clients).toHaveLength(6);
     await manager.stop();

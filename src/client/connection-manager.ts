@@ -280,8 +280,9 @@ export class ConnectionManager {
       if (generation === this.generation) {
         this.publish({ kind: "connected" });
       }
-    } catch {
+    } catch (error) {
       if (generation === this.generation) {
+        this.logRetryFailure(1, error);
         this.scheduleRetry(2, generation, startOptions);
       }
     }
@@ -338,20 +339,22 @@ export class ConnectionManager {
       return;
     }
     const generation = ++this.generation;
-    const cleanup = this.releaseActiveResources().catch((error: unknown) => {
-      this.log("warn", "lsp.connection.cleanup_failed", {
-        message: error instanceof Error ? error.message : String(error),
+    this.scheduleRetry(1, generation, startOptions, () => {
+      const cleanup = this.releaseActiveResources().catch((error: unknown) => {
+        this.log("warn", "lsp.connection.cleanup_failed", {
+          message: error instanceof Error ? error.message : String(error),
+        });
       });
+      this.pendingCleanup = cleanup;
+      return cleanup;
     });
-    this.pendingCleanup = cleanup;
-    this.scheduleRetry(1, generation, startOptions, cleanup);
   }
 
   private scheduleRetry(
     attempt: number,
     generation: number,
     startOptions: StartConnectionOptions,
-    cleanup: Promise<void> = Promise.resolve(),
+    startCleanup?: () => Promise<void>,
   ): void {
     const delayMs = reconnectDelayMs(attempt);
     if (delayMs === undefined) {
@@ -372,6 +375,7 @@ export class ConnectionManager {
       maxAttempts: MAX_RECONNECT_ATTEMPTS,
       delayMs,
     });
+    const cleanup = startCleanup?.() ?? Promise.resolve();
     this.retryTimer = this.scheduler.schedule(delayMs, () => {
       this.retryTimer = undefined;
       void cleanup.then(async () => {
@@ -383,12 +387,20 @@ export class ConnectionManager {
           if (generation === this.generation) {
             this.publish({ kind: "connected" });
           }
-        } catch {
+        } catch (error) {
           if (generation === this.generation) {
+            this.logRetryFailure(attempt, error);
             this.scheduleRetry(attempt + 1, generation, startOptions);
           }
         }
       });
+    });
+  }
+
+  private logRetryFailure(attempt: number, error: unknown): void {
+    this.log("warn", "lsp.connection.retry_failed", {
+      attempt,
+      message: error instanceof Error ? error.message : String(error),
     });
   }
 
