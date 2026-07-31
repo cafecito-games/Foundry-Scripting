@@ -162,12 +162,10 @@ describe("TCP language-server transport", () => {
     servers.push(server);
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
-
     const address = server.address();
     if (address === null || typeof address === "string") {
       throw new Error("test server did not expose a TCP address");
     }
-
     const accepted = once(server, "connection");
     const interceptNotification = vi.fn(
       (method: string) => method === "fs_client/changeWorkspace",
@@ -217,5 +215,32 @@ describe("TCP language-server transport", () => {
 
     transport.reader.dispose();
     transport.writer.end();
+  });
+
+  it("destroys a pending language-client socket when startup is aborted", async () => {
+    const server = net.createServer();
+    servers.push(server);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("test server did not expose a TCP address");
+    }
+    const accepted = once(server, "connection");
+    const controller = new AbortController();
+    const streams = await createTcpServerOptions({
+      host: "127.0.0.1",
+      port: address.port,
+      output: { appendLine: vi.fn() },
+      signal: controller.signal,
+    })();
+    const clientSocket = streams.reader as net.Socket;
+    const [serverSocket] = (await accepted) as [net.Socket];
+    sockets.push(clientSocket, serverSocket);
+
+    controller.abort();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(clientSocket.destroyed).toBe(true);
   });
 });

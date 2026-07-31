@@ -49,6 +49,7 @@ function copyCapabilities(
 export interface FoundryScriptLanguageClientOptions {
   endpoint: TcpEndpoint;
   outputChannel: vscode.OutputChannel;
+  signal?: AbortSignal;
   onCapabilities?: (capabilities: FoundryCapabilities) => void;
   onChangeWorkspace?: (params: ChangeWorkspaceParams) => void;
   workspaceMismatchHandler?: WorkspaceMismatchHandler;
@@ -61,6 +62,7 @@ export class FoundryScriptLanguageClient extends LanguageClient {
   constructor({
     endpoint,
     outputChannel,
+    signal,
     onCapabilities,
     onChangeWorkspace,
     workspaceMismatchHandler,
@@ -94,6 +96,7 @@ export class FoundryScriptLanguageClient extends LanguageClient {
       createTcpServerOptions({
         ...endpoint,
         output: outputChannel,
+        signal,
         ...(interceptNotification === undefined
           ? {}
           : { interceptNotification }),

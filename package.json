@@ -37,7 +37,35 @@
         "scopeName": "source.foundryscript",
         "path": "./syntaxes/foundryscript.tmLanguage.json"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "FoundryScript",
+      "properties": {
+        "foundryScript.lsp.mode": {
+          "type": "string",
+          "default": "spawn",
+          "enum": [
+            "spawn",
+            "attach",
+            "auto",
+            "off"
+          ],
+          "description": "Choose whether the extension starts, attaches to, automatically selects, or disables the Foundry language server."
+        },
+        "foundryScript.lsp.port": {
+          "type": "number",
+          "default": 6005,
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "TCP port used to attach to an existing Foundry language server."
+        },
+        "foundryScript.enginePath": {
+          "type": "string",
+          "default": "foundry",
+          "description": "Path to the Foundry executable used to start the language server."
+        }
+      }
+    }
   },
   "scripts": {
     "build": "node esbuild.mjs",
