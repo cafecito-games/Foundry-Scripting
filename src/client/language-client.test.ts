@@ -87,6 +87,28 @@ describe("FoundryScript language client", () => {
     expect(onCapabilities).toHaveBeenCalledWith(capabilities);
   });
 
+  it("does not expose mutable native class state to consumers", () => {
+    const outputChannel = {
+      appendLine: vi.fn(),
+    } as unknown as vscode.OutputChannel;
+    const client = new FoundryScriptLanguageClient({
+      endpoint: { host: "127.0.0.1", port: 6005 },
+      outputChannel,
+    });
+    const capabilities: FoundryCapabilities = {
+      native_classes: [{ name: "Node", inherits: "Object" }],
+    };
+    languageClientMock.notificationHandlers.get(
+      "foundry_script/capabilities",
+    )?.(capabilities);
+
+    client.capabilities.native_classes.push({ name: "Injected", inherits: "" });
+
+    expect(client.capabilities.native_classes).toEqual([
+      { name: "Node", inherits: "Object" },
+    ]);
+  });
+
   it("records the requested server workspace and forwards the notification", () => {
     const outputChannel = {
       appendLine: vi.fn(),

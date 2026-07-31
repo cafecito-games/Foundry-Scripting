@@ -97,4 +97,54 @@ describe("TCP language-server transport", () => {
       ]),
     );
   });
+
+  it("writes structured error records when the server refuses the connection", async () => {
+    const reservation = net.createServer();
+    reservation.listen(0, "127.0.0.1");
+    await once(reservation, "listening");
+    const address = reservation.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("test server did not expose a TCP address");
+    }
+    await new Promise<void>((resolve, reject) => {
+      reservation.close((error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
+
+    const output = { appendLine: vi.fn() };
+    const streams = await createTcpServerOptions({
+      host: "127.0.0.1",
+      port: address.port,
+      output,
+    })();
+    const socket = streams.reader as net.Socket;
+    sockets.push(socket);
+    await new Promise<void>((resolve) => {
+      socket.once("close", () => resolve());
+    });
+
+    const records: unknown[] = output.appendLine.mock.calls.map(
+      ([line]) => JSON.parse(String(line)) as unknown,
+    );
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          level: "error",
+          event: "lsp.socket.error",
+          host: "127.0.0.1",
+          port: address.port,
+          code: "ECONNREFUSED",
+        }),
+        expect.objectContaining({
+          level: "error",
+          event: "lsp.socket.closed",
+          host: "127.0.0.1",
+          port: address.port,
+          hadError: true,
+        }),
+      ]),
+    );
+  });
 });

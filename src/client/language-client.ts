@@ -79,7 +79,9 @@ export class FoundryScriptLanguageClient extends LanguageClient {
   }
 
   get capabilities(): FoundryCapabilities {
-    return this.currentCapabilities;
+    return {
+      native_classes: [...this.currentCapabilities.native_classes],
+    };
   }
 
   get serverWorkspacePath(): string | undefined {
