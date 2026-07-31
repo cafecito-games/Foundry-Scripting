@@ -57,7 +57,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     showQuickPick: (items, options) =>
       vscode.window.showQuickPick(items, options),
     reconnectNow: async () => {
-      await activeConnectionManager?.reconnectNow();
+      if (activeConnectionManager !== undefined) {
+        await activeConnectionManager.reconnectNow();
+      } else {
+        await vscode.commands.executeCommand("vscode.openFolder");
+      }
     },
     openLog: () => outputChannel.show(),
     openSettings: async () => {
@@ -117,8 +121,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       message: error instanceof Error ? error.message : String(error),
     });
     statusController.update({ kind: "disconnected" });
-    activeConnectionManager = undefined;
-    await manager.stop();
     await showStartupError(error);
   }
 }

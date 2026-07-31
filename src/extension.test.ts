@@ -192,6 +192,30 @@ describe("extension entry point", () => {
     );
   });
 
+  it("keeps reconnect available after initial startup fails", async () => {
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game" },
+    });
+    extensionMock.start.mockRejectedValue(new Error("connection refused"));
+    extensionMock.showQuickPick.mockResolvedValue(RECONNECT_ACTION);
+
+    await activate(createContext());
+    await extensionMock.registeredCommands.get(CONNECTION_ACTIONS_COMMAND)?.();
+
+    expect(extensionMock.statusItem.text).toContain("Disconnected");
+    expect(extensionMock.stop).not.toHaveBeenCalled();
+    expect(extensionMock.reconnectNow).toHaveBeenCalledOnce();
+  });
+
+  it("opens a folder when reconnect is selected without a workspace", async () => {
+    extensionMock.showQuickPick.mockResolvedValue(RECONNECT_ACTION);
+
+    await activate(createContext());
+    await extensionMock.registeredCommands.get(CONNECTION_ACTIONS_COMMAND)?.();
+
+    expect(extensionMock.executeCommand).toHaveBeenCalledWith("vscode.openFolder");
+  });
+
   it("deactivation stops only the active connection manager", async () => {
     extensionMock.workspaceFolders.push({
       uri: { fsPath: "/workspace/game" },
@@ -312,6 +336,14 @@ describe("package.json manifest", () => {
     expect(definition.properties.command).toMatchObject({
       type: "string",
       enum: ["build", "lint", "test", "format", "run"],
+    });
+  });
+
+  it("contributes the status bar connection command", () => {
+    expect(packageManifest.contributes.commands).toContainEqual({
+      command: CONNECTION_ACTIONS_COMMAND,
+      title: "Show Language Server Connection Actions",
+      category: "FoundryScript",
     });
   });
 });
