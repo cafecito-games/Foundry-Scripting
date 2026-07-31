@@ -19,3 +19,13 @@ var e = r"raw\nnot_escape"
 
 var f = """triple quoted"""
 #       ^^^ punctuation.definition.string.begin.foundryscript
+
+var g = '''triple single'''
+#       ^^^ punctuation.definition.string.begin.foundryscript
+
+var h = "bad \q escape"
+#            ^^ invalid.illegal.unknown-escape.foundryscript
+
+var bad = "unterminated
+var after = 1
+#           ^ constant.numeric.integer.foundryscript

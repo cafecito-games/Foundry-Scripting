@@ -21,3 +21,6 @@ var f = 1e10
 var g = 1..2
 #       ^ constant.numeric.integer.foundryscript
 #          ^ constant.numeric.integer.foundryscript
+
+var t = tup.0
+#           ^ - constant.numeric

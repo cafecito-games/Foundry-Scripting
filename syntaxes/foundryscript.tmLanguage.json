@@ -21,15 +21,18 @@
       ]
     },
     "strings": {
+      "comment": "GRAMMAR.md 2.6.2 splits short_string (single-line by construction) from long_string (triple-quoted, multiline). The two are separate rules here so an unterminated short string cannot swallow the rest of the file. ORDER IS LOAD-BEARING TWICE: raw before non-raw, or the r prefix falls outside the string scope; triple before short, or a \"\"\" opener is consumed as an empty \"\" followed by a stray quote.",
       "patterns": [
-        { "include": "#string-raw" },
-        { "include": "#string-quoted" }
+        { "include": "#string-raw-triple" },
+        { "include": "#string-raw-short" },
+        { "include": "#string-triple" },
+        { "include": "#string-short" }
       ]
     },
-    "string-raw": {
-      "comment": "GRAMMAR.md 2.6.2 - raw strings: backslash is literal except \\\" \\' \\\\",
+    "string-raw-triple": {
+      "comment": "GRAMMAR.md 2.6.2 long_string with the raw prefix. Backslash is literal except \\\" \\' \\\\.",
       "name": "string.quoted.raw.foundryscript",
-      "begin": "\\b(r)(\"\"\"|'''|\"|')",
+      "begin": "\\b(r)(\"\"\"|''')",
       "beginCaptures": {
         "1": { "name": "storage.type.string.foundryscript" },
         "2": { "name": "punctuation.definition.string.begin.foundryscript" }
@@ -45,10 +48,29 @@
         }
       ]
     },
-    "string-quoted": {
-      "comment": "GRAMMAR.md 2.6.2 - & is StringName, ^ is NodePath",
+    "string-raw-short": {
+      "comment": "GRAMMAR.md 2.6.2 short_string with the raw prefix. The end alternation terminates at end of line so an unterminated string cannot leak into following lines. The unterminated tail is deliberately left UNSCOPED rather than marked invalid.illegal, so that scope keeps a single unambiguous meaning for the Task 6 corpus gate. Escaped quotes are consumed by the inner pattern before end is tested.",
+      "name": "string.quoted.raw.foundryscript",
+      "begin": "\\b(r)(\"|')",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.foundryscript" },
+        "2": { "name": "punctuation.definition.string.begin.foundryscript" }
+      },
+      "end": "(\\2)|$",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.string.end.foundryscript" }
+      },
+      "patterns": [
+        {
+          "name": "constant.character.escape.foundryscript",
+          "match": "\\\\[\"'\\\\]"
+        }
+      ]
+    },
+    "string-triple": {
+      "comment": "GRAMMAR.md 2.6.2 long_string. & is StringName, ^ is NodePath.",
       "name": "string.quoted.foundryscript",
-      "begin": "(&|\\^)?(\"\"\"|'''|\"|')",
+      "begin": "(&|\\^)?(\"\"\"|''')",
       "beginCaptures": {
         "1": { "name": "storage.type.string.foundryscript" },
         "2": { "name": "punctuation.definition.string.begin.foundryscript" }
@@ -56,6 +78,22 @@
       "end": "\\2",
       "endCaptures": {
         "0": { "name": "punctuation.definition.string.end.foundryscript" }
+      },
+      "patterns": [
+        { "include": "#string-escapes" }
+      ]
+    },
+    "string-short": {
+      "comment": "GRAMMAR.md 2.6.2 short_string. Line-bounded - see the note on #string-raw-short. The line-continuation escape in #string-escapes matches a trailing backslash, which is consumed before end is tested, so a continued string still spans lines correctly.",
+      "name": "string.quoted.foundryscript",
+      "begin": "(&|\\^)?(\"|')",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.foundryscript" },
+        "2": { "name": "punctuation.definition.string.begin.foundryscript" }
+      },
+      "end": "(\\2)|$",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.string.end.foundryscript" }
       },
       "patterns": [
         { "include": "#string-escapes" }
@@ -77,19 +115,21 @@
       "comment": "GRAMMAR.md 2.6.1. The (?<![\\w.]) guard keeps tuple index access (t.0) and member chains from lexing as floats; the (?!\\.) guard keeps 1..2 from lexing 1. as a float.",
       "patterns": [
         {
+          "comment": "The (?<!\\.) guard matches the integer pattern's: a digit after a PERIOD lexes as decimal integer only (GRAMMAR.md 2.6.1), so t.0x1 must not scope as hex.",
           "name": "constant.numeric.hex.foundryscript",
-          "match": "\\b0[xX][0-9A-Fa-f](?:_?[0-9A-Fa-f])*\\b"
+          "match": "(?<!\\.)\\b0[xX][0-9A-Fa-f](?:_?[0-9A-Fa-f])*\\b"
         },
         {
+          "comment": "See the hex pattern's note on the (?<!\\.) guard.",
           "name": "constant.numeric.binary.foundryscript",
-          "match": "\\b0[bB][01](?:_?[01])*\\b"
+          "match": "(?<!\\.)\\b0[bB][01](?:_?[01])*\\b"
         },
         {
           "name": "constant.numeric.float.foundryscript",
           "match": "(?<![\\w.])(?:\\d(?:_?\\d)*\\.(?!\\.)(?:\\d(?:_?\\d)*)?(?:[eE][+-]?\\d(?:_?\\d)*)?|\\.(?!\\.)\\d(?:_?\\d)*(?:[eE][+-]?\\d(?:_?\\d)*)?|\\d(?:_?\\d)*[eE][+-]?\\d(?:_?\\d)*)"
         },
         {
-          "comment": "The nested lookbehind (?<!(?<!\\.)\\.) blocks a digit preceded by a single dot (member/tuple access, e.g. t.0) while still allowing a digit preceded by the two dots of the range operator (1..2).",
+          "comment": "The guard must reject a digit after a SINGLE dot (tuple index access `t.0`, GRAMMAR.md 2.6.1) while accepting one after the SECOND dot of a range operator (`1..2`). A plain (?<![\\w.]) rejects both, which wrongly leaves the 2 in 1..2 unscoped.",
           "name": "constant.numeric.integer.foundryscript",
           "match": "(?<!\\w)(?<!(?<!\\.)\\.)\\d(?:_?\\d)*\\b"
         }
