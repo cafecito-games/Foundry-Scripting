@@ -1,0 +1,54 @@
+{
+  "planPath": "docs/superpowers/plans/2026-07-31-syntax-highlighting-foundation.md",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "Task 1: Scaffold the extension project",
+      "status": "pending",
+      "description": "**Goal:** A buildable, testable, lintable extension that VS Code recognizes as contributing the `foundryscript` language.\n\n**Files:**\n- Create: `package.json`, `tsconfig.json`, `esbuild.mjs`, `src/extension.ts`, `src/extension.test.ts`, `.gitignore`, `.github/workflows/ci.yml`\n\n**Verify:** `npm ci && npm run build && npm run typecheck && npm test`\n\nCloses #1.\n\n```json:metadata\n{\"files\": [\"package.json\", \"tsconfig.json\", \"esbuild.mjs\", \"src/extension.ts\", \".github/workflows/ci.yml\"], \"verifyCommand\": \"npm run build && npm run typecheck && npm test\", \"acceptanceCriteria\": [\"clean checkout builds, typechecks and tests\", \"dist/extension.js produced\", \"contributes foundryscript language for .fs\", \"CI green\"], \"githubIssue\": 1}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: Language configuration for .fs files",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** Correct comment toggling, bracket behavior, and indentation for an indentation-sensitive language, with the indentation regexes unit-tested.\n\n**Files:**\n- Create: `language-configuration.json`, `src/language-configuration.test.ts`\n\n**Verify:** `npx vitest run src/language-configuration.test.ts`\n\nCloses #2.\n\n```json:metadata\n{\"files\": [\"language-configuration.json\", \"src/language-configuration.test.ts\"], \"verifyCommand\": \"npx vitest run src/language-configuration.test.ts\", \"acceptanceCriteria\": [\"indent increases after trailing colon\", \"dictionary literal does not increase indent\", \"# toggles comments\", \"## continues on Enter\"], \"githubIssue\": 2}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: Grammar test harness and lexical core",
+      "status": "pending",
+      "blockedBy": [1],
+      "description": "**Goal:** A working grammar covering comments, strings, and numbers, with the scope-assertion harness in place.\n\n**Files:**\n- Create: `syntaxes/foundryscript.tmLanguage.json`, `tests/grammar/comments.fs`, `tests/grammar/strings.fs`, `tests/grammar/numbers.fs`\n- Modify: `package.json`\n\n**Verify:** `npx vscode-tmgrammar-test \"tests/grammar/**/*.fs\"`\n\nPart of #3 and #4.\n\n```json:metadata\n{\"files\": [\"syntaxes/foundryscript.tmLanguage.json\", \"tests/grammar/comments.fs\", \"tests/grammar/strings.fs\", \"tests/grammar/numbers.fs\", \"package.json\"], \"verifyCommand\": \"npx vscode-tmgrammar-test \\\"tests/grammar/**/*.fs\\\"\", \"acceptanceCriteria\": [\"## distinct from #\", \"all string prefixes and quote forms scope\", \"raw strings do not scope escapes\", \"1..2 is two integers\"], \"githubIssue\": 3}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: Keywords, constants, and annotations",
+      "status": "pending",
+      "blockedBy": [3],
+      "description": "**Goal:** Every reserved keyword from GRAMMAR.md 2.5 scopes correctly, and contextual keywords get documented heuristics.\n\n**Files:**\n- Modify: `syntaxes/foundryscript.tmLanguage.json`\n- Create: `tests/grammar/keywords.fs`, `tests/grammar/contextual-keywords.fs`, `tests/grammar/annotations.fs`\n\n**Verify:** `npx vscode-tmgrammar-test \"tests/grammar/**/*.fs\"`\n\nIncludes a manual cross-check of the keyword list against GRAMMAR.md 2.5 - the stand-in for the automated drift check that issue #5 brings.\n\nPart of #3 and #4.\n\n```json:metadata\n{\"files\": [\"syntaxes/foundryscript.tmLanguage.json\", \"tests/grammar/keywords.fs\", \"tests/grammar/contextual-keywords.fs\", \"tests/grammar/annotations.fs\"], \"verifyCommand\": \"npx vscode-tmgrammar-test \\\"tests/grammar/**/*.fs\\\"\", \"acceptanceCriteria\": [\"all GRAMMAR.md 2.5 keywords scope\", \"yield scopes invalid\", \"contextual extend/async negative assertions pass\", \"@name annotations scope\"], \"githubIssue\": 3}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: Declarations, types, and node paths",
+      "status": "pending",
+      "blockedBy": [4],
+      "description": "**Goal:** Declared names, type references, and get-node paths scope as entities rather than plain text.\n\n**Files:**\n- Modify: `syntaxes/foundryscript.tmLanguage.json`\n- Create: `tests/grammar/declarations.fs`, `tests/grammar/node-paths.fs`\n\n**Verify:** `npx vscode-tmgrammar-test \"tests/grammar/**/*.fs\"`\n\nCritical ordering: `#node-paths` before `#strings`; `#declarations` before `#keywords`.\n\nCloses #3.\n\n```json:metadata\n{\"files\": [\"syntaxes/foundryscript.tmLanguage.json\", \"tests/grammar/declarations.fs\", \"tests/grammar/node-paths.fs\"], \"verifyCommand\": \"npx vscode-tmgrammar-test \\\"tests/grammar/**/*.fs\\\"\", \"acceptanceCriteria\": [\"func/class_name/trait_name declared names scope as entities\", \"namespace and import dotted names scope\", \"extends/uses operands scope as types\", \"builtin types scope\", \"node paths scope in bare and quoted forms\"], \"githubIssue\": 3}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: Corpus regression check",
+      "status": "pending",
+      "blockedBy": [5],
+      "description": "**Goal:** Catch grammar bugs hand-written tests miss, by tokenizing every `.fs` file in an engine checkout and asserting valid code never produces `invalid.illegal` scopes.\n\n**Files:**\n- Create: `scripts/check-corpus.mjs`\n- Modify: `.github/workflows/ci.yml`\n\n**Verify:** `FOUNDRY_ENGINE_PATH=~/CafecitoGames/Foundry node scripts/check-corpus.mjs`\n\nIMPORTANT: any corpus failure must first be captured as a failing scope test in `tests/grammar/` before fixing the grammar.\n\nCloses #4.\n\n```json:metadata\n{\"files\": [\"scripts/check-corpus.mjs\", \".github/workflows/ci.yml\"], \"verifyCommand\": \"FOUNDRY_ENGINE_PATH=~/CafecitoGames/Foundry node scripts/check-corpus.mjs\", \"acceptanceCriteria\": [\"scans full engine corpus\", \"reports file and line for unexpected invalid scopes\", \"skips cleanly without env var\", \"wired into CI\"], \"githubIssue\": 4}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: Packaging and distribution",
+      "status": "pending",
+      "blockedBy": [2, 5],
+      "description": "**Goal:** An installable `.vsix` produced by CI on every PR, with a README that sets accurate expectations.\n\n**Files:**\n- Create: `.vscodeignore`, `README.md`, `LICENSE`\n- Modify: `.github/workflows/ci.yml`\n\n**Verify:** `npm run package && npx vsce ls`\n\nCloses #6.\n\n```json:metadata\n{\"files\": [\".vscodeignore\", \"README.md\", \"LICENSE\", \".github/workflows/ci.yml\"], \"verifyCommand\": \"npm run package && npx vsce ls\", \"acceptanceCriteria\": [\"vsix produced\", \"vsix excludes tests and sources\", \"real install highlights .fs files\", \"CI uploads vsix artifact\", \"README documents F# conflict\"], \"githubIssue\": 6}\n```"
+    }
+  ],
+  "lastUpdated": "2026-07-31"
+}
