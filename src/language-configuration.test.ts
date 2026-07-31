@@ -25,11 +25,12 @@ describe("increaseIndentPattern", () => {
     "    _:",
     "    [first, second]:",
     "    Message.Move(x, y) when x > 0:",
-    // Property accessors (GRAMMAR.md 4.4) and whole-file enums (3.2).
+    // Property accessors and class-body enums (GRAMMAR.md 4.4). The whole-file
+    // enum form is spelled `enum_name Direction:` (3.2) and is not covered here.
     "    get:",
     "    set(value):",
     "enum Direction:",
-    // Multi-line lambda (GRAMMAR.md 5.3).
+    // Multi-line lambda (GRAMMAR.md 5.5).
     "var handler = func(x: int) -> int:",
   ];
 
