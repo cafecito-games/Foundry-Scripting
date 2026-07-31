@@ -128,7 +128,10 @@ class FoundryTaskTerminal implements vscode.Pseudoterminal {
               this.lintRun?.appendStdout(text);
             }
           },
-          fail: (error) => this.reportProcessError(error),
+          fail: (error) => {
+            this.lintRun = undefined;
+            this.reportProcessError(error);
+          },
           close: (exitCode) => {
             this.closeEmitter.fire(this.completeLintRun(exitCode));
           },

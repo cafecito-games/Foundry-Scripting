@@ -396,4 +396,35 @@ describe("Foundry task provider", () => {
     );
     expect(closes).toEqual([1]);
   });
+
+  it("does not parse lint JSON after the child process fails to spawn", async () => {
+    providerMock.workspaceFolders.push({ uri: { fsPath: "/game" } });
+    const child = new FakeChildProcess();
+    const { diagnostics, accept } = createDiagnosticsHarness();
+    const provider = new FoundryTaskProvider({
+      diagnostics,
+      spawnProcess: () => child.asChildProcess(),
+    });
+    const lintTask = provider
+      .provideTasks()
+      .find((task) => task.definition.command === "lint");
+    const terminal = await taskTerminal(lintTask as vscode.Task);
+    terminal.open(undefined);
+
+    child.emit(
+      "error",
+      Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }),
+    );
+    await Promise.resolve();
+
+    expect(accept).not.toHaveBeenCalled();
+    expect(providerMock.showErrorMessage).toHaveBeenCalledTimes(1);
+    expect(providerMock.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining("Configure foundryScript.enginePath"),
+      "Open Settings",
+    );
+    expect(providerMock.showErrorMessage).not.toHaveBeenCalledWith(
+      expect.stringContaining("Could not ingest Foundry lint JSON"),
+    );
+  });
 });
