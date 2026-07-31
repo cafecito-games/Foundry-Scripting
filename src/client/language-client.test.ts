@@ -5,6 +5,11 @@ const languageClientMock = vi.hoisted(() => ({
   constructorCalls: [] as unknown[][],
   notificationHandlers: new Map<string, (params: unknown) => void>(),
 }));
+const transportMock = vi.hoisted(() => ({
+  options: [] as Array<{
+    interceptNotification?: (method: string, params: unknown) => boolean;
+  }>,
+}));
 
 vi.mock("vscode-languageclient/node", () => ({
   NotificationType: class {
@@ -26,15 +31,28 @@ vi.mock("vscode-languageclient/node", () => ({
   },
 }));
 
+vi.mock("./transport.js", () => ({
+  createTcpServerOptions: vi.fn(
+    (options: {
+      interceptNotification?: (method: string, params: unknown) => boolean;
+    }) => {
+      transportMock.options.push(options);
+      return vi.fn();
+    },
+  ),
+}));
+
 import {
   FoundryScriptLanguageClient,
   type FoundryCapabilities,
 } from "./language-client.js";
+import type { WorkspaceMismatchHandler } from "./workspace-mismatch.js";
 
 describe("FoundryScript language client", () => {
   beforeEach(() => {
     languageClientMock.constructorCalls.length = 0;
     languageClientMock.notificationHandlers.clear();
+    transportMock.options.length = 0;
   });
 
   it("registers standard language features for FoundryScript documents", () => {
@@ -161,5 +179,96 @@ describe("FoundryScript language client", () => {
     expect(onChangeWorkspace).toHaveBeenCalledWith({
       path: "/projects/server-project",
     });
+  });
+
+  it("routes an initialization-time workspace notification through the existing seam exactly once", () => {
+    const onChangeWorkspace = vi.fn();
+    const workspaceMismatchHandler = {
+      shouldSuppressServerMessage: vi.fn(() => false),
+      handleServerWorkspace: vi.fn().mockResolvedValue(undefined),
+    } satisfies WorkspaceMismatchHandler;
+    const client = new FoundryScriptLanguageClient({
+      endpoint: { host: "127.0.0.1", port: 6005 },
+      outputChannel: { appendLine: vi.fn() } as unknown as vscode.OutputChannel,
+      onChangeWorkspace,
+      workspaceMismatchHandler,
+    });
+    const interceptNotification = transportMock.options[0]?.interceptNotification;
+
+    expect(
+      interceptNotification?.("fs_client/changeWorkspace", {
+        path: "/projects/server-project",
+      }),
+    ).toBe(true);
+    expect(client.serverWorkspacePath).toBe("/projects/server-project");
+    expect(onChangeWorkspace).toHaveBeenCalledOnce();
+    expect(onChangeWorkspace).toHaveBeenCalledWith({
+      path: "/projects/server-project",
+    });
+    expect(workspaceMismatchHandler.handleServerWorkspace).toHaveBeenCalledOnce();
+    expect(
+      workspaceMismatchHandler.handleServerWorkspace,
+    ).toHaveBeenCalledWith("/projects/server-project");
+  });
+
+  it("suppresses only server messages accepted by the mismatch handler", () => {
+    const workspaceMismatchHandler = {
+      shouldSuppressServerMessage: vi.fn(
+        (message: { message: string }) => message.message === "exact warning",
+      ),
+      handleServerWorkspace: vi.fn().mockResolvedValue(undefined),
+    } satisfies WorkspaceMismatchHandler;
+    new FoundryScriptLanguageClient({
+      endpoint: { host: "127.0.0.1", port: 6005 },
+      outputChannel: { appendLine: vi.fn() } as unknown as vscode.OutputChannel,
+      workspaceMismatchHandler,
+    });
+    const interceptNotification = transportMock.options[0]?.interceptNotification;
+
+    expect(
+      interceptNotification?.("window/showMessage", {
+        type: 2,
+        message: "exact warning",
+      }),
+    ).toBe(true);
+    expect(
+      interceptNotification?.("window/showMessage", {
+        type: 2,
+        message: "unrelated warning",
+      }),
+    ).toBe(false);
+    expect(
+      interceptNotification?.("telemetry/event", { ready: true }),
+    ).toBe(false);
+  });
+
+  it("passes malformed workspace notifications through without invoking callbacks", () => {
+    const onChangeWorkspace = vi.fn();
+    const workspaceMismatchHandler = {
+      shouldSuppressServerMessage: vi.fn(() => false),
+      handleServerWorkspace: vi.fn().mockResolvedValue(undefined),
+    } satisfies WorkspaceMismatchHandler;
+    new FoundryScriptLanguageClient({
+      endpoint: { host: "127.0.0.1", port: 6005 },
+      outputChannel: { appendLine: vi.fn() } as unknown as vscode.OutputChannel,
+      onChangeWorkspace,
+      workspaceMismatchHandler,
+    });
+    const interceptNotification = transportMock.options[0]?.interceptNotification;
+
+    expect(
+      interceptNotification?.("fs_client/changeWorkspace", { path: 42 }),
+    ).toBe(false);
+    expect(onChangeWorkspace).not.toHaveBeenCalled();
+    expect(workspaceMismatchHandler.handleServerWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("keeps the standard language-client notification handling when no mismatch handler is configured", () => {
+    new FoundryScriptLanguageClient({
+      endpoint: { host: "127.0.0.1", port: 6005 },
+      outputChannel: { appendLine: vi.fn() } as unknown as vscode.OutputChannel,
+    });
+
+    expect(transportMock.options[0]?.interceptNotification).toBeUndefined();
   });
 });

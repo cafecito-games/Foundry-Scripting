@@ -1,6 +1,17 @@
 import * as net from "node:net";
-import type { StreamInfo } from "vscode-languageclient/node";
+import {
+  StreamMessageReader,
+  StreamMessageWriter,
+} from "vscode-jsonrpc/node";
+import type {
+  MessageTransports,
+  StreamInfo,
+} from "vscode-languageclient/node";
 import { type LogOutput, writeLog } from "./logging.js";
+import {
+  createNotificationInterceptingReader,
+  type NotificationInterceptor,
+} from "./notification-reader.js";
 
 export interface TcpEndpoint {
   host: string;
@@ -9,14 +20,18 @@ export interface TcpEndpoint {
 
 export interface TcpServerOptions extends TcpEndpoint {
   output: LogOutput;
+  interceptNotification?: NotificationInterceptor;
 }
 
-export type TcpServerOptionsFactory = () => Promise<StreamInfo>;
+export type TcpServerOptionsFactory = () => Promise<
+  StreamInfo | MessageTransports
+>;
 
 export function createTcpServerOptions({
   host,
   port,
   output,
+  interceptNotification,
 }: TcpServerOptions): TcpServerOptionsFactory {
   return () => {
     writeLog(output, "info", "lsp.socket.connecting", { host, port });
@@ -41,6 +56,17 @@ export function createTcpServerOptions({
       });
     });
 
-    return Promise.resolve({ reader: socket, writer: socket });
+    if (interceptNotification === undefined) {
+      return Promise.resolve({ reader: socket, writer: socket });
+    }
+
+    const reader = createNotificationInterceptingReader(
+      new StreamMessageReader(socket),
+      interceptNotification,
+    );
+    return Promise.resolve({
+      reader,
+      writer: new StreamMessageWriter(socket),
+    });
   };
 }

@@ -1,7 +1,16 @@
 import { once } from "node:events";
 import * as net from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Message, MessageTransports } from "vscode-languageclient/node";
 import { createTcpServerOptions } from "./transport.js";
+
+function encodeMessage(message: Message): Buffer {
+  const body = Buffer.from(JSON.stringify(message));
+  return Buffer.concat([
+    Buffer.from(`Content-Length: ${body.byteLength}\r\n\r\n`),
+    body,
+  ]);
+}
 
 describe("TCP language-server transport", () => {
   const servers: net.Server[] = [];
@@ -146,5 +155,67 @@ describe("TCP language-server transport", () => {
         }),
       ]),
     );
+  });
+
+  it("intercepts decoded notifications without swallowing other framed messages", async () => {
+    const server = net.createServer();
+    servers.push(server);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("test server did not expose a TCP address");
+    }
+
+    const accepted = once(server, "connection");
+    const interceptNotification = vi.fn(
+      (method: string) => method === "fs_client/changeWorkspace",
+    );
+    const transport = (await createTcpServerOptions({
+      host: "127.0.0.1",
+      port: address.port,
+      output: { appendLine: vi.fn() },
+      interceptNotification,
+    })()) as MessageTransports;
+    const [serverSocket] = (await accepted) as [net.Socket];
+    sockets.push(serverSocket);
+    const forwarded: Message[] = [];
+    const receivedAllFrames = new Promise<void>((resolve) => {
+      transport.reader.listen((message) => {
+        forwarded.push(message);
+        if (forwarded.length === 2) resolve();
+      });
+    });
+    const workspaceNotification = {
+      jsonrpc: "2.0",
+      method: "fs_client/changeWorkspace",
+      params: { path: "/projects/server-project" },
+    };
+    const unrelatedNotification = {
+      jsonrpc: "2.0",
+      method: "telemetry/event",
+      params: { ready: true },
+    };
+    const initializeResponse = {
+      jsonrpc: "2.0",
+      id: 1,
+      result: { capabilities: {} },
+    };
+    const frames = Buffer.concat([
+      encodeMessage(workspaceNotification),
+      encodeMessage(unrelatedNotification),
+      encodeMessage(initializeResponse),
+    ]);
+
+    serverSocket.write(frames.subarray(0, 17));
+    serverSocket.write(frames.subarray(17));
+    await receivedAllFrames;
+
+    expect(interceptNotification).toHaveBeenCalledTimes(2);
+    expect(forwarded).toEqual([unrelatedNotification, initializeResponse]);
+
+    transport.reader.dispose();
+    transport.writer.end();
   });
 });
