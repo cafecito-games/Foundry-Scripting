@@ -5,7 +5,10 @@
   "patterns": [
     { "include": "#comments" },
     { "include": "#strings" },
-    { "include": "#numbers" }
+    { "include": "#numbers" },
+    { "include": "#contextual-keywords" },
+    { "include": "#annotations" },
+    { "include": "#keywords" }
   ],
   "repository": {
     "comments": {
@@ -134,6 +137,89 @@
           "match": "(?<!\\w)(?<!(?<!\\.)\\.)\\d(?:_?\\d)*\\b"
         }
       ]
+    },
+    "keywords": {
+      "comment": "GRAMMAR.md 2.5. Keep this list in sync with the tokenizer keyword table.",
+      "patterns": [
+        {
+          "name": "keyword.control.foundryscript",
+          "match": "\\b(?:if|elif|else|for|while|match|when|break|breakpoint|continue|pass|return|await)\\b"
+        },
+        {
+          "name": "keyword.declaration.foundryscript",
+          "match": "\\b(?:class|class_name|trait|trait_name|enum|enum_name|tuple|tuple_name|func|var|const|signal|namespace|import)\\b"
+        },
+        {
+          "name": "storage.modifier.foundryscript",
+          "match": "\\b(?:static|final|abstract|extends|uses)\\b"
+        },
+        {
+          "name": "keyword.operator.word.foundryscript",
+          "match": "\\b(?:and|or|not|in|is|as)\\b"
+        },
+        {
+          "name": "keyword.other.foundryscript",
+          "match": "\\b(?:assert|preload|self|super|void)\\b"
+        },
+        {
+          "comment": "GRAMMAR.md 2.5: yield is reserved but always an error - use await.",
+          "name": "invalid.illegal.yield.foundryscript",
+          "match": "\\byield\\b"
+        },
+        {
+          "comment": "GRAMMAR.md 2.6.3: true/false/null are identifiers resolved during analysis, not keywords.",
+          "name": "constant.language.foundryscript",
+          "match": "\\b(?:true|false|null)\\b"
+        },
+        {
+          "name": "constant.language.numeric.foundryscript",
+          "match": "\\b(?:INF|NAN|PI|TAU)\\b"
+        }
+      ]
+    },
+    "contextual-keywords": {
+      "comment": "GRAMMAR.md 2.5 contextual keywords. These are lexed as ordinary identifiers and given meaning by position, so every pattern here is a heuristic. Exact classification arrives with textDocument/semanticTokens (cafecito-games/Foundry#1418).",
+      "patterns": [
+        {
+          "comment": "GRAMMAR.md 4.8. `extend` is root-only, so anchoring at column 0 doubles as the root check. LIMITATION: misses a conformance whose `uses` clause is on a line continuation.",
+          "match": "^(extend)\\s+([A-Za-z_]\\w*(?:\\.[A-Za-z_]\\w*)*)\\s+(?=uses\\b)",
+          "captures": {
+            "1": { "name": "keyword.declaration.extend.foundryscript" },
+            "2": { "name": "entity.name.type.foundryscript" }
+          }
+        },
+        {
+          "comment": "GRAMMAR.md 4.7. Root-only, same anchoring rationale as `extend`. LIMITATION: misses a declaration whose `targets` clause is on a line continuation.",
+          "match": "^(annotation)\\s+([A-Za-z_]\\w*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.annotation.foundryscript" },
+            "2": { "name": "entity.name.function.annotation.foundryscript" }
+          }
+        },
+        {
+          "comment": "GRAMMAR.md 4.7 target list. Target names are uppercase identifiers, so this is safe to match anywhere a `targets` clause shape appears.",
+          "match": "\\b(targets)\\s+((?:CLASS|METHOD|VARIABLE|SIGNAL|CONSTANT|PARAMETER)(?:\\s*,\\s*(?:CLASS|METHOD|VARIABLE|SIGNAL|CONSTANT|PARAMETER))*)",
+          "captures": {
+            "1": { "name": "keyword.other.targets.foundryscript" },
+            "2": { "name": "support.constant.target.foundryscript" }
+          }
+        },
+        {
+          "comment": "GRAMMAR.md 4.5. `async` is a modifier only immediately before `func` or another modifier run ending in `func`. LIMITATION: an `async` separated from its `func` by a line continuation is missed.",
+          "name": "storage.modifier.async.foundryscript",
+          "match": "\\basync\\b(?=(?:\\s+(?:static|final|abstract))*\\s+func\\b)"
+        },
+        {
+          "comment": "GRAMMAR.md 4.4 property accessors. LIMITATION: a dictionary key literally named get or set followed by a colon is a false positive.",
+          "name": "storage.modifier.accessor.foundryscript",
+          "match": "\\b(?:get|set)\\b(?=\\s*[:=])"
+        }
+      ]
+    },
+    "annotations": {
+      "comment": "GRAMMAR.md 2.7 - @ plus identifier is a single ANNOTATION token.",
+      "name": "entity.name.function.decorator.foundryscript",
+      "match": "@[A-Za-z_]\\w*"
     }
   }
 }
