@@ -12,6 +12,10 @@ export type TestingState =
       readonly adapter: NegotiatedTestAdapter;
       readonly discoveryErrorCount: number;
     }
+  | {
+      readonly kind: "refresh_cancelled";
+      readonly adapter?: NegotiatedTestAdapter;
+    }
   | { readonly kind: "error"; readonly failure: TestAdapterFailure };
 
 export interface TestingStatusPresentation {
@@ -65,11 +69,38 @@ export function renderTestingState(
         tooltip: metadata,
       };
     }
+    case "refresh_cancelled":
+      return {
+        text: "$(circle-slash) Tests: Refresh cancelled",
+        tooltip:
+          state.adapter === undefined
+            ? "Test discovery refresh was cancelled."
+            : `Test discovery refresh was cancelled. Showing ${state.adapter.framework.name} results.`,
+      };
     case "error":
       return {
-        text: "$(warning) Tests: Unavailable",
+        text: `$(warning) Tests: ${failureStatus(state.failure.kind)}`,
         tooltip: state.failure.message,
       };
+  }
+}
+
+function failureStatus(kind: TestAdapterFailure["kind"]): string {
+  switch (kind) {
+    case "legacy_runner":
+      return "Unsupported";
+    case "incompatible_adapter":
+      return "Version mismatch";
+    case "malformed_discovery":
+    case "incomplete_discovery":
+    case "discovery_exit_mismatch":
+      return "Discovery failed";
+    case "process_crash":
+      return "Process crashed";
+    case "readiness_timeout":
+      return "Timed out";
+    default:
+      return "Unavailable";
   }
 }
 

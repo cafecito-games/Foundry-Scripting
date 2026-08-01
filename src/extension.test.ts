@@ -10,6 +10,35 @@ import {
 import { HostStartupFailure } from "./client/host-launcher.js";
 
 const extensionMock = vi.hoisted(() => {
+  const createWatcher = (pattern: unknown) => {
+    const handlers = {
+      create: [] as Array<(uri: { fsPath: string }) => void>,
+      change: [] as Array<(uri: { fsPath: string }) => void>,
+      delete: [] as Array<(uri: { fsPath: string }) => void>,
+    };
+    const watcher = {
+      pattern,
+      onDidCreate: vi.fn((handler: (uri: { fsPath: string }) => void) => {
+        handlers.create.push(handler);
+        return { dispose: vi.fn() };
+      }),
+      onDidChange: vi.fn((handler: (uri: { fsPath: string }) => void) => {
+        handlers.change.push(handler);
+        return { dispose: vi.fn() };
+      }),
+      onDidDelete: vi.fn((handler: (uri: { fsPath: string }) => void) => {
+        handlers.delete.push(handler);
+        return { dispose: vi.fn() };
+      }),
+      emit: (kind: keyof typeof handlers, fsPath: string) => {
+        for (const handler of handlers[kind]) {
+          handler({ fsPath });
+        }
+      },
+      dispose: vi.fn(),
+    };
+    return watcher;
+  };
   const createCollection = (owner: { id: string } | undefined) => {
     const values = new Map<string, Record<string, unknown>>();
     const collection = {
@@ -73,7 +102,10 @@ const extensionMock = vi.hoisted(() => {
     createTestRun: vi.fn(),
     invalidateTestResults: vi.fn(),
     refreshHandler: undefined as
-      | ((token: { isCancellationRequested: boolean }) => Promise<void> | void)
+      | ((token: {
+          isCancellationRequested: boolean;
+          onCancellationRequested?: (handler: () => void) => { dispose(): void };
+        }) => Promise<void> | void)
       | undefined,
     dispose: vi.fn(),
   };
@@ -130,10 +162,17 @@ const extensionMock = vi.hoisted(() => {
   workspaceFoldersChangeHandler: undefined as (() => void) | undefined,
   onDidChangeConfiguration: vi.fn(),
   onDidChangeWorkspaceFolders: vi.fn(),
+  watchers: [] as Array<ReturnType<typeof createWatcher>>,
+  createFileSystemWatcher: vi.fn((pattern: unknown) => {
+    const watcher = createWatcher(pattern);
+    extensionMock.watchers.push(watcher);
+    return watcher;
+  }),
   testingProcessOptions: undefined as
     | { onOutput?: (text: string, stream: "stdout" | "stderr") => void }
     | undefined,
   testingProcessRun: vi.fn(),
+  testingProcessStop: vi.fn(),
   testingNegotiatorOptions: undefined as
     | { runProcess?: (command: unknown, signal: AbortSignal) => Promise<unknown> }
     | undefined,
@@ -205,6 +244,16 @@ vi.mock("vscode", () => ({
     }),
     onDidChangeConfiguration: extensionMock.onDidChangeConfiguration,
     onDidChangeWorkspaceFolders: extensionMock.onDidChangeWorkspaceFolders,
+    createFileSystemWatcher: extensionMock.createFileSystemWatcher,
+  },
+  RelativePattern: class {
+    readonly base: string;
+    readonly pattern: string;
+
+    constructor(base: string, pattern: string) {
+      this.base = base;
+      this.pattern = pattern;
+    }
   },
   window: {
     createOutputChannel: vi.fn((name: string) =>
@@ -249,6 +298,7 @@ vi.mock("./tasks/provider.js", () => ({
 vi.mock("./testing/process.js", () => ({
   FoundryTestAdapterProcess: class {
     readonly run = extensionMock.testingProcessRun;
+    readonly stop = extensionMock.testingProcessStop;
 
     constructor(options: unknown) {
       extensionMock.testingProcessOptions = options as never;
@@ -360,6 +410,10 @@ describe("extension entry point", () => {
     );
     extensionMock.testingProcessOptions = undefined;
     extensionMock.testingProcessRun.mockReset();
+    extensionMock.testingProcessStop.mockReset();
+    extensionMock.testingProcessStop.mockResolvedValue(undefined);
+    extensionMock.watchers.length = 0;
+    extensionMock.createFileSystemWatcher.mockClear();
     extensionMock.testingNegotiatorOptions = undefined;
     extensionMock.testingNegotiate.mockReset();
     extensionMock.testingDiscovererOptions = undefined;
@@ -711,10 +765,21 @@ describe("extension entry point", () => {
     extensionMock.testingRefresh.mockReturnValue(refresh.promise);
     await activate(createContext());
 
+    let cancelRefresh: (() => void) | undefined;
     const refreshPromise = extensionMock.testController.refreshHandler?.({
       isCancellationRequested: false,
+      onCancellationRequested: (handler) => {
+        cancelRefresh = handler;
+        return { dispose: vi.fn() };
+      },
     });
     expect(extensionMock.testingRefresh).toHaveBeenCalledOnce();
+    const refreshSignal = extensionMock.testingRefresh.mock.calls[0]?.[0] as
+      | AbortSignal
+      | undefined;
+    expect(refreshSignal?.aborted).toBe(false);
+    cancelRefresh?.();
+    expect(refreshSignal?.aborted).toBe(true);
     refresh.resolve(undefined);
     await refreshPromise;
 
@@ -723,6 +788,82 @@ describe("extension entry point", () => {
       isCancellationRequested: true,
     });
     expect(extensionMock.testingRefresh).not.toHaveBeenCalled();
+  });
+
+  it("coalesces relevant workspace file events and filters generated paths", async () => {
+    vi.useFakeTimers();
+    extensionMock.configuration.set("lsp.mode", "off");
+    extensionMock.configuration.set("testing.enabled", true);
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game" },
+    });
+
+    await activate(createContext());
+    expect(extensionMock.createFileSystemWatcher).toHaveBeenCalledTimes(2);
+    expect(
+      extensionMock.watchers.map((watcher) => watcher.pattern),
+    ).toEqual([
+      expect.objectContaining({ base: "/workspace/game", pattern: "**/*.fs" }),
+      expect.objectContaining({
+        base: "/workspace/game",
+        pattern: "project.foundry",
+      }),
+    ]);
+    extensionMock.testingRefresh.mockClear();
+
+    extensionMock.watchers[0]?.emit(
+      "create",
+      "/workspace/game/tests/first.fs",
+    );
+    await vi.advanceTimersByTimeAsync(200);
+    extensionMock.watchers[0]?.emit(
+      "change",
+      "/workspace/game/tests/second.fs",
+    );
+    extensionMock.watchers[0]?.emit(
+      "delete",
+      "/workspace/game/dist/generated.fs",
+    );
+    await vi.advanceTimersByTimeAsync(249);
+    expect(extensionMock.testingRefresh).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(extensionMock.testingRefresh).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+  });
+
+  it("cancels pending file refresh and old watchers on disable or workspace switch", async () => {
+    vi.useFakeTimers();
+    extensionMock.configuration.set("lsp.mode", "off");
+    extensionMock.configuration.set("testing.enabled", true);
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game" },
+    });
+    await activate(createContext());
+    extensionMock.testingRefresh.mockClear();
+    const oldWatchers = [...extensionMock.watchers];
+
+    oldWatchers[0]?.emit("change", "/workspace/game/tests/changed.fs");
+    extensionMock.configuration.set("testing.enabled", false);
+    extensionMock.configurationChangeHandler?.({
+      affectsConfiguration: (section) =>
+        section === "foundryScript.testing.enabled",
+    });
+    await vi.runAllTimersAsync();
+
+    expect(extensionMock.testingRefresh).not.toHaveBeenCalled();
+    expect(oldWatchers.every((watcher) => watcher.dispose.mock.calls.length === 1))
+      .toBe(true);
+
+    extensionMock.configuration.set("testing.enabled", true);
+    extensionMock.workspaceFolders.splice(0, 1, {
+      uri: { fsPath: "/workspace/changed" },
+    });
+    extensionMock.workspaceFoldersChangeHandler?.();
+    expect(extensionMock.watchers.at(-1)?.pattern).toEqual(
+      expect.objectContaining({ base: "/workspace/changed" }),
+    );
+    vi.useRealTimers();
   });
 
   it("retains last-known-good items when a refresh reports malformed discovery", async () => {
@@ -746,7 +887,7 @@ describe("extension entry point", () => {
     expect(
       controllerChild("suite-a", "test-a"),
     ).toBe(original);
-    expect(extensionMock.testingStatusItem.text).toContain("Unavailable");
+    expect(extensionMock.testingStatusItem.text).toContain("Discovery failed");
     expect(extensionMock.testingOutputChannel.appendLine).toHaveBeenCalledWith(
       expect.stringContaining("malformed_discovery"),
     );
@@ -855,6 +996,7 @@ describe("extension entry point", () => {
     await deactivate();
 
     expect(extensionMock.testingStop).toHaveBeenCalledOnce();
+    expect(extensionMock.testingProcessStop).toHaveBeenCalledOnce();
     expect(extensionMock.stop).toHaveBeenCalledOnce();
   });
 
@@ -943,6 +1085,63 @@ describe("extension entry point", () => {
     await Promise.resolve();
 
     expect(extensionMock.testingOutputChannel.show).toHaveBeenCalledOnce();
+  });
+
+  it("deduplicates actionable prompts and keeps operational failures in output", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    await activate(createContext());
+    const legacy = {
+      kind: "legacy_runner",
+      message: "The runner does not implement adapter capabilities.",
+    };
+
+    extensionMock.testingRuntimeOptions?.onState({
+      kind: "error",
+      failure: legacy,
+    });
+    extensionMock.testingRuntimeOptions?.onState({
+      kind: "error",
+      failure: legacy,
+    });
+    extensionMock.testingRuntimeOptions?.onState({
+      kind: "error",
+      failure: {
+        kind: "malformed_discovery",
+        message: "Record 9 is not valid JSON.",
+      },
+    });
+    await Promise.resolve();
+
+    expect(extensionMock.showErrorMessage).toHaveBeenCalledOnce();
+    expect(extensionMock.testingOutputChannel.appendLine).toHaveBeenCalledWith(
+      expect.stringContaining("Record 9"),
+    );
+  });
+
+  it("writes structured lifecycle failure details to testing output", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    await activate(createContext());
+
+    extensionMock.testingRuntimeOptions?.onState({
+      kind: "error",
+      failure: {
+        kind: "process_crash",
+        message: "Execution crashed.",
+        phase: "execution",
+        signal: "SIGSEGV",
+        stdout: "ordinary output",
+        stderr: "fatal detail",
+      },
+    });
+
+    const lines = extensionMock.testingOutputChannel.appendLine.mock.calls.map(
+      (call) => String(call[0]),
+    );
+    expect(lines.join("\n")).toContain("phase execution");
+    expect(lines.join("\n")).toContain("signal SIGSEGV");
+    expect(lines.join("\n")).toContain("stdout: ordinary output");
+    expect(lines.join("\n")).toContain("stderr: fatal detail");
+    expect(extensionMock.showErrorMessage).not.toHaveBeenCalled();
   });
 
   it("cleans up and forgets a connection manager after cancelled startup", async () => {

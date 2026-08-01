@@ -2,6 +2,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  createProcessCrashFailure,
+  isAbnormalProcessExit,
   TestAdapterFailure,
   type TestAdapterNegotiationRequest,
 } from "./adapter.js";
@@ -78,6 +80,9 @@ export class FoundryTestAdapterDiscoverer {
       if (processResult.kind === "cancelled") {
         throw abortError();
       }
+      if (isAbnormalProcessExit(processResult)) {
+        throw createProcessCrashFailure("discovery", processResult);
+      }
 
       const bytes = await this.readDiscovery(outputPath, processResult);
       const model = this.parseDiscovery(bytes, processResult);
@@ -148,6 +153,9 @@ export class FoundryTestAdapterDiscoverer {
       return await this.readArtifact(outputPath);
     } catch (error) {
       const missing = errorCode(error) === "ENOENT";
+      if (missing && processResult.exitCode !== 0) {
+        throw createProcessCrashFailure("discovery", processResult, error);
+      }
       throw new TestAdapterFailure(
         "read_failed",
         missing

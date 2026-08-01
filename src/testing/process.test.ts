@@ -14,9 +14,12 @@ class FakeChildProcess extends EventEmitter {
   exitCode: number | null = null;
   readonly kill = vi.fn(() => true);
 
-  complete(code: number | null): void {
+  complete(
+    code: number | null,
+    signal: NodeJS.Signals | null = null,
+  ): void {
     this.exitCode = code;
-    this.emit("close", code, null);
+    this.emit("close", code, signal);
   }
 
   asChildProcess(): ChildProcess {
@@ -218,6 +221,106 @@ describe("Foundry test adapter child process", () => {
 
     await expect(resultPromise).resolves.toMatchObject({ kind: "cancelled" });
     expect(child.kill).toHaveBeenCalledOnce();
+  });
+
+  it("aborts only the child linked to an operation signal", async () => {
+    const first = new FakeChildProcess();
+    const second = new FakeChildProcess();
+    const children = [first, second];
+    const process = new FoundryTestAdapterProcess({
+      spawnProcess: () => children.shift()!.asChildProcess(),
+      terminationGraceMs: 25,
+      shutdownDeadlineMs: 75,
+    });
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const firstResult = process.run(command, firstController.signal);
+    const secondResult = process.run(command, secondController.signal);
+
+    firstController.abort();
+    expect(first.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(second.kill).not.toHaveBeenCalled();
+    first.complete(null);
+    second.complete(0);
+
+    await expect(firstResult).resolves.toMatchObject({ kind: "cancelled" });
+    await expect(secondResult).resolves.toMatchObject({
+      kind: "exited",
+      exitCode: 0,
+    });
+  });
+
+  it("stops every owned child within the hard deadline and becomes inert", async () => {
+    const first = new FakeChildProcess();
+    const second = new FakeChildProcess();
+    const spawnProcess = vi
+      .fn()
+      .mockReturnValueOnce(first.asChildProcess())
+      .mockReturnValueOnce(second.asChildProcess());
+    const process = new FoundryTestAdapterProcess({
+      spawnProcess,
+      terminationGraceMs: 25,
+      shutdownDeadlineMs: 75,
+    });
+    const firstResult = process.run(command, new AbortController().signal);
+    const secondResult = process.run(command, new AbortController().signal);
+
+    const firstStop = process.stop();
+    const secondStop = process.stop();
+    expect(firstStop).toBe(secondStop);
+    expect(first.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(second.kill).toHaveBeenCalledWith("SIGTERM");
+    await vi.advanceTimersByTimeAsync(25);
+    expect(first.kill).toHaveBeenLastCalledWith("SIGKILL");
+    expect(second.kill).toHaveBeenLastCalledWith("SIGKILL");
+    await vi.advanceTimersByTimeAsync(50);
+    await firstStop;
+
+    await expect(firstResult).resolves.toMatchObject({ kind: "cancelled" });
+    await expect(secondResult).resolves.toMatchObject({ kind: "cancelled" });
+    await expect(
+      process.run(command, new AbortController().signal),
+    ).resolves.toEqual({
+      kind: "cancelled",
+      stdout: "",
+      stderr: "",
+    });
+    expect(spawnProcess).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains an unowned crash signal without inventing an exit code", async () => {
+    const child = new FakeChildProcess();
+    const process = new FoundryTestAdapterProcess({
+      spawnProcess: () => child.asChildProcess(),
+    });
+    const result = process.run(command, new AbortController().signal);
+
+    child.complete(null, "SIGSEGV");
+
+    await expect(result).resolves.toEqual({
+      kind: "exited",
+      signal: "SIGSEGV",
+      stdout: "",
+      stderr: "",
+    });
+  });
+
+  it("ignores late child events after process-wide deadline settlement", async () => {
+    const child = new FakeChildProcess();
+    const process = new FoundryTestAdapterProcess({
+      spawnProcess: () => child.asChildProcess(),
+      terminationGraceMs: 25,
+      shutdownDeadlineMs: 75,
+    });
+    const result = process.run(command, new AbortController().signal);
+
+    const stop = process.stop();
+    await vi.advanceTimersByTimeAsync(75);
+    child.complete(0);
+    child.emit("error", new Error("late"));
+
+    await expect(result).resolves.toMatchObject({ kind: "cancelled" });
+    await expect(stop).resolves.toBeUndefined();
   });
 });
 

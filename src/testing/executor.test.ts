@@ -19,6 +19,134 @@ const request: TestExecutionRequest = {
 };
 
 describe("Foundry test executor", () => {
+  it("aborts only its run child when first-report readiness expires", async () => {
+    let now = 0;
+    let operationSignal: AbortSignal | undefined;
+    const removeTemporaryDirectory = vi.fn().mockResolvedValue(undefined);
+    const executor = new FoundryTestExecutor({
+      makeTemporaryDirectory: () => Promise.resolve("/tmp/run-timeout"),
+      removeTemporaryDirectory,
+      runProcess: (_command, signal) => {
+        operationSignal = signal;
+        return new Promise<TestAdapterProcessResult>((resolve) => {
+          signal.addEventListener(
+            "abort",
+            () => resolve({ kind: "cancelled", stdout: "", stderr: "" }),
+            { once: true },
+          );
+        });
+      },
+      readArtifact: () => Promise.reject(missing()),
+      now: () => now,
+      waitForPoll: () => {
+        now = 30_000;
+        return Promise.resolve();
+      },
+      readinessTimeoutMs: 30_000,
+    });
+
+    await expect(
+      executor.execute(request, new AbortController().signal, observer()),
+    ).rejects.toMatchObject({
+      kind: "readiness_timeout",
+      phase: "execution",
+    });
+    expect(operationSignal?.aborted).toBe(true);
+    expect(removeTemporaryDirectory).toHaveBeenCalledWith("/tmp/run-timeout");
+  });
+
+  it("disarms readiness after the first artifact byte for a long run", async () => {
+    let now = 0;
+    let artifact = Buffer.from("T");
+    const child = deferred<TestAdapterProcessResult>();
+    let polls = 0;
+    const executor = new FoundryTestExecutor({
+      makeTemporaryDirectory: () => Promise.resolve("/tmp/run-ready"),
+      removeTemporaryDirectory: vi.fn().mockResolvedValue(undefined),
+      runProcess: () => child.promise,
+      readArtifact: () => Promise.resolve(artifact),
+      now: () => now,
+      waitForPoll: () => {
+        polls += 1;
+        now = 90_000;
+        artifact = Buffer.from(
+          report(2, point(1, "test-a"), point(2, "test-b")),
+        );
+        child.resolve(exited(0));
+        return Promise.resolve();
+      },
+      readinessTimeoutMs: 30_000,
+    });
+
+    await expect(
+      executor.execute(request, new AbortController().signal, observer()),
+    ).resolves.toMatchObject({
+      kind: "completed",
+      completion: { valid: true, complete: true },
+    });
+    expect(polls).toBe(1);
+  });
+
+  it("gives user cancellation precedence in the readiness polling turn", async () => {
+    let now = 0;
+    const user = new AbortController();
+    const executor = new FoundryTestExecutor({
+      makeTemporaryDirectory: () => Promise.resolve("/tmp/run-user-cancel"),
+      removeTemporaryDirectory: vi.fn().mockResolvedValue(undefined),
+      runProcess: (_command, signal) =>
+        new Promise<TestAdapterProcessResult>((resolve) => {
+          signal.addEventListener(
+            "abort",
+            () => resolve({ kind: "cancelled", stdout: "", stderr: "" }),
+            { once: true },
+          );
+        }),
+      readArtifact: () => Promise.reject(missing()),
+      now: () => now,
+      waitForPoll: () => {
+        now = 30_000;
+        user.abort();
+        return Promise.resolve();
+      },
+      readinessTimeoutMs: 30_000,
+    });
+
+    await expect(
+      executor.execute(request, user.signal, observer()),
+    ).resolves.toMatchObject({
+      kind: "cancelled",
+      completion: { valid: true, classification: "cancelled" },
+    });
+  });
+
+  it("classifies an unowned execution signal as a process crash", async () => {
+    const removeTemporaryDirectory = vi.fn().mockResolvedValue(undefined);
+    const executor = immediateExecutor(
+      report(2, point(1, "test-a"), point(2, "test-b")),
+      () =>
+        Promise.resolve({
+          kind: "exited",
+          signal: "SIGSEGV",
+          stdout: "ordinary",
+          stderr: "fatal detail",
+        }),
+      { removeTemporaryDirectory },
+    );
+
+    await expect(
+      executor.execute(request, new AbortController().signal, observer()),
+    ).rejects.toMatchObject({
+      kind: "process_crash",
+      phase: "execution",
+      signal: "SIGSEGV",
+      stdout: "ordinary",
+      stderr: "fatal detail",
+    });
+    expect(removeTemporaryDirectory).toHaveBeenCalledWith(
+      "/tmp/foundryscript-test-run-immediate",
+    );
+  });
+
   it("publishes a complete flushed point before the child exits", async () => {
     const child = deferred<TestAdapterProcessResult>();
     const polls: Array<ReturnType<typeof deferred<void>>> = [];
@@ -126,6 +254,8 @@ describe("Foundry test executor", () => {
 
   it("preserves only complete points for genuine cancellation", async () => {
     const seen: string[] = [];
+    const user = new AbortController();
+    user.abort();
     const executor = immediateExecutor(
       report(2, point(1, "test-a")) +
         'ok 2 - partial\n  ---\n  _foundry:\n    id: "test-b"',
@@ -133,7 +263,7 @@ describe("Foundry test executor", () => {
     );
 
     await expect(
-      executor.execute(request, new AbortController().signal, {
+      executor.execute(request, user.signal, {
         onPoint: (value) => seen.push(value.testId),
         onOutput: vi.fn(),
       }),
@@ -145,7 +275,7 @@ describe("Foundry test executor", () => {
   });
 
   it("classifies a missing final report as a read failure", async () => {
-    const executor = immediateExecutor(undefined, () => Promise.resolve(exited(2)), {
+    const executor = immediateExecutor(undefined, () => Promise.resolve(exited(0)), {
       readArtifact: () => Promise.reject(missing()),
     });
 
@@ -154,14 +284,41 @@ describe("Foundry test executor", () => {
     ).rejects.toMatchObject({ kind: "report_read_failed" });
   });
 
+  it("classifies a missing report after nonzero exit as a process crash", async () => {
+    const executor = immediateExecutor(
+      undefined,
+      () => Promise.resolve(exited(2, "ordinary", "fatal detail")),
+      { readArtifact: () => Promise.reject(missing()) },
+    );
+
+    await expect(
+      executor.execute(request, new AbortController().signal, observer()),
+    ).rejects.toMatchObject({
+      kind: "process_crash",
+      phase: "execution",
+      exitCode: 2,
+      stdout: "ordinary",
+      stderr: "fatal detail",
+    });
+  });
+
   it("rejects a report whose consumed prefix changes", async () => {
     const child = deferred<TestAdapterProcessResult>();
     const polls: Array<ReturnType<typeof deferred<void>>> = [];
     let artifact = Buffer.from("TAP version 13\n");
+    let operationSignal: AbortSignal | undefined;
     const executor = new FoundryTestExecutor({
       makeTemporaryDirectory: () => Promise.resolve("/tmp/run-mutated"),
       removeTemporaryDirectory: vi.fn().mockResolvedValue(undefined),
-      runProcess: () => child.promise,
+      runProcess: (_command, signal) => {
+        operationSignal = signal;
+        signal.addEventListener(
+          "abort",
+          () => child.resolve({ kind: "cancelled", stdout: "", stderr: "" }),
+          { once: true },
+        );
+        return child.promise;
+      },
       readArtifact: () => Promise.resolve(artifact),
       waitForPoll: () => {
         const value = deferred<void>();
@@ -180,7 +337,7 @@ describe("Foundry test executor", () => {
     polls[0]?.resolve(undefined);
 
     await expect(execution).rejects.toMatchObject({ kind: "malformed_report" });
-    child.resolve(exited(1));
+    expect(operationSignal?.aborted).toBe(true);
   });
 
   it("keeps the primary result when exact temporary cleanup fails", async () => {

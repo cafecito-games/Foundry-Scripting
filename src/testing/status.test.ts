@@ -101,21 +101,47 @@ describe("testing status", () => {
     "missing_engine",
     "missing_project",
     "malformed_capabilities",
-    "incompatible_adapter",
     "process_failed",
-    "legacy_runner",
     "spawn_failed",
     "read_failed",
     "invalid_protocol_version",
-    "malformed_discovery",
-    "incomplete_discovery",
-    "discovery_exit_mismatch",
   ] as TestAdapterFailureKind[])("surfaces actionable %s failures", (kind) => {
     const failure = new TestAdapterFailure(kind, `Action required for ${kind}.`);
 
     expect(renderTestingState({ kind: "error", failure })).toEqual({
       text: "$(warning) Tests: Unavailable",
       tooltip: `Action required for ${kind}.`,
+    });
+  });
+
+  it.each([
+    { kind: "legacy_runner", text: "Unsupported" },
+    { kind: "incompatible_adapter", text: "Version mismatch" },
+    { kind: "malformed_discovery", text: "Discovery failed" },
+    { kind: "process_crash", text: "Process crashed" },
+    { kind: "readiness_timeout", text: "Timed out" },
+  ] as const)("names $kind status as $text", ({ kind, text }) => {
+    const failure = new TestAdapterFailure(kind, `Details for ${kind}.`);
+
+    expect(renderTestingState({ kind: "error", failure })).toEqual({
+      text: `$(warning) Tests: ${text}`,
+      tooltip: `Details for ${kind}.`,
+    });
+  });
+
+  it("renders explicit refresh cancellation with retained adapter context", () => {
+    expect(
+      renderTestingState({
+        kind: "refresh_cancelled",
+        adapter: {
+          protocolVersion: 1,
+          framework: { id: "neutral", name: "Neutral", version: "1" },
+          extensions: [],
+        },
+      }),
+    ).toEqual({
+      text: "$(circle-slash) Tests: Refresh cancelled",
+      tooltip: "Test discovery refresh was cancelled. Showing Neutral results.",
     });
   });
 

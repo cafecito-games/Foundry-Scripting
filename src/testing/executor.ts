@@ -2,6 +2,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  createProcessCrashFailure,
+  isAbnormalProcessExit,
   TestAdapterFailure,
   type TestAdapterNegotiationRequest,
 } from "./adapter.js";
@@ -49,6 +51,8 @@ export interface FoundryTestExecutorOptions {
   readonly makeTemporaryDirectory?: (prefix: string) => Promise<string>;
   readonly removeTemporaryDirectory?: (directory: string) => Promise<void>;
   readonly waitForPoll?: () => Promise<void>;
+  readonly now?: () => number;
+  readonly readinessTimeoutMs?: number;
   readonly onCleanupError?: (error: unknown, directory: string) => void;
   readonly temporaryRoot?: string;
 }
@@ -59,6 +63,8 @@ export class FoundryTestExecutor {
   private readonly makeTemporaryDirectory;
   private readonly removeTemporaryDirectory;
   private readonly waitForPoll;
+  private readonly now;
+  private readonly readinessTimeoutMs;
   private readonly onCleanupError;
   private readonly temporaryRoot;
 
@@ -81,6 +87,8 @@ export class FoundryTestExecutor {
     this.waitForPoll =
       options.waitForPoll ??
       (() => new Promise((resolve) => setTimeout(resolve, 20)));
+    this.now = options.now ?? Date.now;
+    this.readinessTimeoutMs = options.readinessTimeoutMs ?? 30_000;
     this.onCleanupError = options.onCleanupError;
     this.temporaryRoot = options.temporaryRoot ?? os.tmpdir();
   }
@@ -94,19 +102,45 @@ export class FoundryTestExecutor {
       path.join(this.temporaryRoot, "foundryscript-test-run-"),
     );
     const reportPath = path.join(temporaryDirectory, "report.tap");
+    const controller = new AbortController();
+    let cause: "user" | "readiness_timeout" | undefined;
+    const onUserCancellation = (): void => {
+      if (cause === undefined) {
+        cause = "user";
+      }
+      controller.abort();
+    };
+    signal.addEventListener("abort", onUserCancellation, { once: true });
+    if (signal.aborted) {
+      onUserCancellation();
+    }
+    let processPromise: Promise<TestAdapterProcessResult> | undefined;
     try {
       const command = this.createCommand(request, reportPath);
       const parser = new FoundryTap13Parser(request.leaves, observer.onPoint);
       let consumed: Buffer = Buffer.alloc(0);
+      let reportReady = false;
       let settled = false;
-      const processPromise = this.run(command, signal, observer.onOutput).finally(
-        () => {
-          settled = true;
-        },
-      );
+      const readinessStartedAt = this.now();
+      processPromise = this.run(
+        command,
+        controller.signal,
+        observer.onOutput,
+      ).finally(() => {
+        settled = true;
+      });
 
       while (!settled) {
         consumed = await this.readNewBytes(reportPath, consumed, parser, false);
+        reportReady ||= consumed.length > 0;
+        if (
+          !reportReady &&
+          cause === undefined &&
+          this.now() - readinessStartedAt >= this.readinessTimeoutMs
+        ) {
+          cause = "readiness_timeout";
+          controller.abort();
+        }
         if (!settled) {
           await Promise.race([
             processPromise.then(
@@ -124,20 +158,52 @@ export class FoundryTestExecutor {
         consumed,
         parser,
         true,
-        processResult.kind === "cancelled",
+        processResult.kind === "cancelled" ||
+          cause !== undefined ||
+          isAbnormalProcessExit(processResult) ||
+          (processResult.exitCode !== undefined && processResult.exitCode !== 0),
       );
-      void consumed;
+      if (cause === "readiness_timeout") {
+        throw new TestAdapterFailure(
+          "readiness_timeout",
+          `Foundry test adapter execution produced no report bytes within ${this.readinessTimeoutMs} ms.`,
+          {
+            phase: "execution",
+            stdout: processResult.stdout,
+            stderr: processResult.stderr,
+          },
+        );
+      }
+      if (isAbnormalProcessExit(processResult)) {
+        throw createProcessCrashFailure("execution", processResult);
+      }
+      if (
+        processResult.kind === "exited" &&
+        processResult.exitCode !== undefined &&
+        processResult.exitCode !== 0 &&
+        consumed.length === 0
+      ) {
+        throw createProcessCrashFailure("execution", processResult);
+      }
+      if (processResult.kind === "cancelled" && cause !== "user") {
+        throw createProcessCrashFailure("execution", processResult);
+      }
       const completion = parser.finish(
-        processResult.kind === "cancelled"
+        cause === "user"
           ? { kind: "cancelled" }
           : { kind: "exited", exitCode: processResult.exitCode ?? 1 },
       );
       return {
-        kind: processResult.kind === "cancelled" ? "cancelled" : "completed",
+        kind: cause === "user" ? "cancelled" : "completed",
         completion,
         processResult,
       };
+    } catch (error) {
+      controller.abort();
+      await processPromise?.catch(() => undefined);
+      throw error;
     } finally {
+      signal.removeEventListener("abort", onUserCancellation);
       try {
         await this.removeTemporaryDirectory(temporaryDirectory);
       } catch (error) {

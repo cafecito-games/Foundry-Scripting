@@ -97,14 +97,12 @@ describe("test adapter negotiation", () => {
     await expect(pathExists(path.dirname(outputPath))).resolves.toBe(false);
   });
 
-  it.each([0, 1, 2])(
-    "reports a missing artifact after exit %s as a legacy runner",
-    async (exitCode) => {
+  it("reports a missing artifact after successful exit as a legacy runner", async () => {
       let outputPath = "";
       const negotiator = new FoundryTestAdapterNegotiator({
         runProcess: (command) => {
           outputPath = capabilitiesOutputPath(command);
-          return Promise.resolve(exited(exitCode, "legacy output", "legacy error"));
+          return Promise.resolve(exited(0, "legacy output", "legacy error"));
         },
       });
 
@@ -119,8 +117,57 @@ describe("test adapter negotiation", () => {
       });
       expect(error.message).toContain("does not implement");
       await expect(pathExists(path.dirname(outputPath))).resolves.toBe(false);
+  });
+
+  it.each([1, 2])(
+    "classifies missing capabilities after exit %s as a process crash",
+    async (exitCode) => {
+      const removeTemporaryDirectory = vi.fn().mockResolvedValue(undefined);
+      const negotiator = new FoundryTestAdapterNegotiator({
+        runProcess: () =>
+          Promise.resolve(exited(exitCode, "ordinary", "fatal detail")),
+        readArtifact: () => Promise.reject(missing()),
+        makeTemporaryDirectory: () => Promise.resolve("/virtual/crash"),
+        removeTemporaryDirectory,
+      });
+
+      await expect(
+        captureFailure(
+          negotiator.negotiate(baseRequest, new AbortController().signal),
+        ),
+      ).resolves.toMatchObject({
+        kind: "process_crash",
+        phase: "capabilities",
+        exitCode,
+        stdout: "ordinary",
+        stderr: "fatal detail",
+      });
+      expect(removeTemporaryDirectory).toHaveBeenCalledWith("/virtual/crash");
     },
   );
+
+  it("classifies signal termination as a process crash before artifact parsing", async () => {
+    const negotiator = new FoundryTestAdapterNegotiator({
+      runProcess: () =>
+        Promise.resolve({
+          kind: "exited",
+          signal: "SIGSEGV",
+          stdout: "ordinary",
+          stderr: "crashed",
+        }),
+      readArtifact: vi.fn(),
+    });
+
+    await expect(
+      captureFailure(
+        negotiator.negotiate(baseRequest, new AbortController().signal),
+      ),
+    ).resolves.toMatchObject({
+      kind: "process_crash",
+      phase: "capabilities",
+      signal: "SIGSEGV",
+    });
+  });
 
   it.each([0, 2])(
     "gives malformed artifact precedence over exit %s",
@@ -317,6 +364,10 @@ function capabilitiesOutputPath(command: TestAdapterCommand): string {
 
 function validBytes(overrides: Record<string, unknown> = {}): Buffer {
   return Buffer.from(`${JSON.stringify({ ...minimalFixture, ...overrides })}\n`);
+}
+
+function missing(): Error {
+  return Object.assign(new Error("missing"), { code: "ENOENT" });
 }
 
 function exited(
