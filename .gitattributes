@@ -6,3 +6,4 @@
 
 # Invalid protocol fixtures intentionally contain malformed encodings and endings.
 src/testing/fixtures/discovery/invalid/*.jsonl binary
+src/testing/fixtures/protocol-v1/**/*.tap binary
