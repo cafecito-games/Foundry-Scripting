@@ -156,6 +156,7 @@ const extensionMock = vi.hoisted(() => {
   taskProviderDisposable: { dispose: vi.fn() },
   registerTaskProvider: vi.fn(),
   registerFoundryTaskProvider: vi.fn(),
+  resolveProject: vi.fn(),
   configurationChangeHandler: undefined as
     | ((event: { affectsConfiguration(section: string): boolean }) => void)
     | undefined,
@@ -295,6 +296,10 @@ vi.mock("./tasks/provider.js", () => ({
   registerFoundryTaskProvider: extensionMock.registerFoundryTaskProvider,
 }));
 
+vi.mock("./project/workspace.js", () => ({
+  createWorkspaceProjectResolver: () => extensionMock.resolveProject,
+}));
+
 vi.mock("./testing/process.js", () => ({
   FoundryTestAdapterProcess: class {
     readonly run = extensionMock.testingProcessRun;
@@ -307,6 +312,18 @@ vi.mock("./testing/process.js", () => ({
 }));
 
 vi.mock("./testing/adapter.js", () => ({
+  TestAdapterFailure: class extends Error {
+    readonly setting: string | undefined;
+
+    constructor(
+      readonly kind: string,
+      message: string,
+      options: { setting?: string; cause?: unknown } = {},
+    ) {
+      super(message, options);
+      this.setting = options.setting;
+    }
+  },
   FoundryTestAdapterNegotiator: class {
     readonly negotiate = extensionMock.testingNegotiate;
 
@@ -392,6 +409,23 @@ describe("extension entry point", () => {
       },
     );
     extensionMock.registerFoundryTaskProvider.mockReset();
+    extensionMock.resolveProject.mockReset();
+    extensionMock.resolveProject.mockImplementation(() =>
+      Promise.resolve(
+        extensionMock.workspaceFolders[0] === undefined
+          ? {
+              success: false,
+              failure: {
+                kind: "missing_workspace",
+                message: "Open a workspace folder before using Foundry tooling.",
+              },
+            }
+          : {
+              success: true,
+              project: extensionMock.workspaceFolders[0].uri.fsPath,
+            },
+      ),
+    );
     extensionMock.configurationChangeHandler = undefined;
     extensionMock.workspaceFoldersChangeHandler = undefined;
     extensionMock.onDidChangeConfiguration.mockReset();
@@ -486,6 +520,30 @@ describe("extension entry point", () => {
     expect(context.subscriptions).toContain(extensionMock.statusItem);
   });
 
+  it("starts the language client with the resolved nested project", async () => {
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/repository" },
+    });
+    extensionMock.resolveProject.mockResolvedValue({
+      success: true,
+      project: "/workspace/repository/test_project",
+    });
+
+    await activate(createContext());
+
+    expect(extensionMock.createConnectionManager).toHaveBeenCalledWith(
+      extensionMock.outputChannel,
+      "/workspace/repository/test_project",
+      expect.any(Function),
+      extensionMock.diagnosticsUnit,
+    );
+    expect(extensionMock.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project: "/workspace/repository/test_project",
+      }),
+    );
+  });
+
   it("off creates no connection manager and needs no workspace", async () => {
     extensionMock.configuration.set("lsp.mode", "off");
     const context = createContext();
@@ -497,6 +555,7 @@ describe("extension entry point", () => {
     expect(extensionMock.registerFoundryTaskProvider).toHaveBeenCalledWith(
       context,
       extensionMock.diagnosticsUnit,
+      extensionMock.resolveProject,
     );
     expect(extensionMock.statusItem.show).toHaveBeenCalledOnce();
     expect(extensionMock.statusItem.text).toContain("Off");
@@ -504,6 +563,31 @@ describe("extension entry point", () => {
       "foundryscript",
     );
     expect(context.subscriptions).toContain(extensionMock.diagnosticsUnit);
+    expect(extensionMock.resolveProject).not.toHaveBeenCalled();
+  });
+
+  it("offers project settings and does not connect when selection is ambiguous", async () => {
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/repository" },
+    });
+    extensionMock.resolveProject.mockResolvedValue({
+      success: false,
+      failure: {
+        kind: "ambiguous_projects",
+        message: "Multiple Foundry projects were found.",
+        setting: "foundryScript.projectPath",
+        candidates: ["a/project.foundry", "b/project.foundry"],
+      },
+    });
+    extensionMock.showErrorMessage.mockResolvedValue("Open Settings");
+
+    await activate(createContext());
+
+    expect(extensionMock.createConnectionManager).not.toHaveBeenCalled();
+    expect(extensionMock.executeCommand).toHaveBeenCalledWith(
+      "workbench.action.openSettings",
+      "foundryScript.projectPath",
+    );
   });
 
   it("reports a missing project without attempting a connection", async () => {
@@ -511,7 +595,8 @@ describe("extension entry point", () => {
 
     expect(extensionMock.createConnectionManager).not.toHaveBeenCalled();
     expect(extensionMock.showErrorMessage).toHaveBeenCalledWith(
-      expect.stringContaining("Open a Foundry project folder"),
+      expect.stringContaining("Open a workspace folder"),
+      "Open Folder",
     );
   });
 
@@ -849,6 +934,10 @@ describe("extension entry point", () => {
       affectsConfiguration: (section) =>
         section === "foundryScript.testing.enabled",
     });
+    await vi.waitFor(() =>
+      expect(oldWatchers.every((watcher) => watcher.dispose.mock.calls.length === 1))
+        .toBe(true),
+    );
     await vi.runAllTimersAsync();
 
     expect(extensionMock.testingRefresh).not.toHaveBeenCalled();
@@ -860,6 +949,11 @@ describe("extension entry point", () => {
       uri: { fsPath: "/workspace/changed" },
     });
     extensionMock.workspaceFoldersChangeHandler?.();
+    await vi.waitFor(() =>
+      expect(extensionMock.watchers.at(-1)?.pattern).toEqual(
+        expect.objectContaining({ base: "/workspace/changed" }),
+      ),
+    );
     expect(extensionMock.watchers.at(-1)?.pattern).toEqual(
       expect.objectContaining({ base: "/workspace/changed" }),
     );
@@ -939,6 +1033,65 @@ describe("extension entry point", () => {
     expect(extensionMock.createConnectionManager).not.toHaveBeenCalled();
   });
 
+  it("configures testing and watchers with the resolved nested project", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    extensionMock.configuration.set("testing.enabled", true);
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/repository" },
+    });
+    extensionMock.resolveProject.mockResolvedValue({
+      success: true,
+      project: "/workspace/repository/test_project",
+    });
+
+    await activate(createContext());
+
+    expect(extensionMock.testingConfigure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enabled: true,
+        project: "/workspace/repository/test_project",
+      }),
+    );
+    expect(extensionMock.watchers[0]?.pattern).toEqual(
+      expect.objectContaining({ base: "/workspace/repository/test_project" }),
+    );
+  });
+
+  it("preserves an ambiguous project failure before testing negotiation", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    extensionMock.configuration.set("testing.enabled", true);
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/repository" },
+    });
+    extensionMock.resolveProject.mockResolvedValue({
+      success: false,
+      failure: {
+        kind: "ambiguous_projects",
+        message: "Multiple Foundry projects were found.",
+        setting: "foundryScript.projectPath",
+        candidates: ["a/project.foundry", "b/project.foundry"],
+      },
+    });
+
+    await activate(createContext());
+
+    const configured = extensionMock.testingConfigure.mock.calls[0]?.[0] as
+      | {
+          enabled: boolean;
+          project: string | undefined;
+          projectFailure?: { kind: string; setting?: string };
+        }
+      | undefined;
+    expect(configured).toMatchObject({
+      enabled: true,
+      project: undefined,
+      projectFailure: {
+        kind: "invalid_project",
+        setting: "foundryScript.projectPath",
+      },
+    });
+  });
+
   it("reconfigures only for relevant settings and workspace changes", async () => {
     extensionMock.configuration.set("lsp.mode", "off");
     await activate(createContext());
@@ -949,6 +1102,9 @@ describe("extension entry point", () => {
       affectsConfiguration: (section) =>
         section === "foundryScript.testing.enabled",
     });
+    await vi.waitFor(() =>
+      expect(extensionMock.testingConfigure).toHaveBeenCalledOnce(),
+    );
     extensionMock.configurationChangeHandler?.({
       affectsConfiguration: () => false,
     });
@@ -957,12 +1113,33 @@ describe("extension entry point", () => {
     });
     extensionMock.workspaceFoldersChangeHandler?.();
 
+    await vi.waitFor(() =>
+      expect(extensionMock.testingConfigure).toHaveBeenCalledTimes(2),
+    );
+
     expect(extensionMock.testingConfigure).toHaveBeenCalledTimes(2);
     expect(extensionMock.testingConfigure).toHaveBeenLastCalledWith(
       expect.objectContaining({
         enabled: true,
         project: "/workspace/changed",
       }),
+    );
+  });
+
+  it("re-resolves testing when projectPath changes", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    extensionMock.configuration.set("testing.enabled", true);
+    extensionMock.workspaceFolders.push({ uri: { fsPath: "/workspace/root" } });
+    await activate(createContext());
+    extensionMock.resolveProject.mockClear();
+
+    extensionMock.configurationChangeHandler?.({
+      affectsConfiguration: (section) =>
+        section === "foundryScript.projectPath",
+    });
+
+    await vi.waitFor(() =>
+      expect(extensionMock.resolveProject).toHaveBeenCalledOnce(),
     );
   });
 
@@ -978,6 +1155,12 @@ describe("extension entry point", () => {
       affectsConfiguration: (section) =>
         section === "foundryScript.testing.enabled",
     });
+
+    await vi.waitFor(() =>
+      expect(extensionMock.testingConfigure).toHaveBeenLastCalledWith(
+        expect.objectContaining({ enabled: false }),
+      ),
+    );
 
     expect(extensionMock.testingConfigure).toHaveBeenLastCalledWith(
       expect.objectContaining({ enabled: false }),
