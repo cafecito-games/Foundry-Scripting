@@ -1,0 +1,561 @@
+import { describe, expect, it, vi } from "vitest";
+import type {
+  ClientCapabilities,
+  Middleware,
+  ServerCapabilities,
+} from "vscode-languageclient/node";
+import semanticTokensFixture from "./fixtures/semantic-tokens.json";
+import {
+  FoundrySemanticTokensFeature,
+  inspectSemanticTokensProvider,
+  validateSemanticTokensResponse,
+} from "./semantic-tokens.js";
+
+const fullOnlyProvider = {
+  legend: {
+    tokenTypes: ["keyword", "class"],
+    tokenModifiers: ["readonly", "final"],
+  },
+  full: true,
+  range: false,
+};
+
+describe("semantic token provider contract", () => {
+  it("accepts the server-advertised full-only provider without reordering it", () => {
+    expect(inspectSemanticTokensProvider(fullOnlyProvider)).toEqual({
+      kind: "supported",
+      legend: fullOnlyProvider.legend,
+    });
+  });
+
+  it.each([undefined, false])(
+    "accepts %s as no range support",
+    (range) => {
+      expect(
+        inspectSemanticTokensProvider({ ...fullOnlyProvider, range }),
+      ).toMatchObject({ kind: "supported" });
+    },
+  );
+
+  it("returns a defensive copy of the advertised legend", () => {
+    const provider = {
+      ...fullOnlyProvider,
+      legend: {
+        tokenTypes: [...fullOnlyProvider.legend.tokenTypes],
+        tokenModifiers: [...fullOnlyProvider.legend.tokenModifiers],
+      },
+    };
+    const inspection = inspectSemanticTokensProvider(provider);
+    if (inspection.kind !== "supported") {
+      throw new Error("test provider was not accepted");
+    }
+
+    provider.legend.tokenTypes[0] = "mutated";
+    provider.legend.tokenModifiers[0] = "mutated";
+
+    expect(inspection.legend).toEqual({
+      tokenTypes: ["keyword", "class"],
+      tokenModifiers: ["readonly", "final"],
+    });
+  });
+
+  it("treats an absent provider as TextMate fallback", () => {
+    expect(inspectSemanticTokensProvider(undefined)).toEqual({
+      kind: "missing",
+    });
+  });
+
+  it.each([
+    [null, "provider_not_object"],
+    ["semantic tokens", "provider_not_object"],
+    [{ full: true }, "legend_not_object"],
+    [
+      { ...fullOnlyProvider, legend: { ...fullOnlyProvider.legend, tokenTypes: [] } },
+      "token_types_invalid",
+    ],
+    [
+      {
+        ...fullOnlyProvider,
+        legend: { ...fullOnlyProvider.legend, tokenModifiers: ["final", 7] },
+      },
+      "token_modifiers_invalid",
+    ],
+    [
+      {
+        ...fullOnlyProvider,
+        legend: { tokenTypes: ["class", "class"], tokenModifiers: ["final"] },
+      },
+      "legend_duplicates",
+    ],
+    [
+      {
+        ...fullOnlyProvider,
+        legend: {
+          tokenTypes: ["class"],
+          tokenModifiers: Array.from({ length: 32 }, (_, index) =>
+            index === 0 ? "final" : `modifier${index}`,
+          ),
+        },
+      },
+      "too_many_modifiers",
+    ],
+  ] as const)("rejects malformed provider %# with %s", (provider, reason) => {
+    expect(inspectSemanticTokensProvider(provider)).toEqual({
+      kind: "malformed",
+      reason,
+    });
+  });
+
+  it.each([
+    [
+      {
+        ...fullOnlyProvider,
+        legend: { ...fullOnlyProvider.legend, tokenModifiers: ["readonly"] },
+      },
+      "final_modifier_missing",
+    ],
+    [{ ...fullOnlyProvider, full: { delta: false } }, "full_not_plain_true"],
+    [{ ...fullOnlyProvider, range: true }, "range_supported"],
+  ] as const)("rejects provider contract mismatch %# with %s", (provider, reason) => {
+    expect(inspectSemanticTokensProvider(provider)).toEqual({
+      kind: "mismatch",
+      reason,
+    });
+  });
+});
+
+describe("semantic token full response contract", () => {
+  const legend = {
+    tokenTypes: ["keyword", "class"],
+    tokenModifiers: ["readonly", "final"],
+  };
+
+  it("accepts null as an empty semantic token result", () => {
+    expect(validateSemanticTokensResponse(null, legend)).toEqual({
+      ok: true,
+      value: null,
+    });
+  });
+
+  it("accepts records without translating the server data", () => {
+    const response = {
+      data: [0, 0, 3, 0, 1, 1, 2, 4, 1, 2],
+      resultId: "full-1",
+    };
+
+    expect(validateSemanticTokensResponse(response, legend)).toEqual({
+      ok: true,
+      value: response,
+    });
+  });
+
+  it.each([
+    [undefined, "response_not_object"],
+    ["tokens", "response_not_object"],
+    [{ resultId: "full-1" }, "data_not_array"],
+    [{ data: [0, 0] }, "record_width_invalid"],
+    [{ data: [0, 0, 3.5, 0, 0] }, "record_value_invalid"],
+    [{ data: [0, -1, 3, 0, 0] }, "record_value_invalid"],
+    [{ data: [0, 0, 2_147_483_648, 0, 0] }, "record_value_invalid"],
+    [{ data: [0, 0, 0, 0, 0] }, "token_length_zero"],
+    [{ data: [0, 0, 3, 2, 0] }, "token_type_out_of_range"],
+    [{ data: [0, 0, 3, 0, 4] }, "token_modifiers_out_of_range"],
+    [{ data: [], resultId: 17 }, "result_id_invalid"],
+  ] as const)("rejects malformed full response %# with %s", (response, reason) => {
+    expect(validateSemanticTokensResponse(response, legend)).toEqual({
+      ok: false,
+      reason,
+    });
+  });
+});
+
+describe("Foundry semantic token client feature", () => {
+  function createFeature() {
+    const output = { appendLine: vi.fn() };
+    return {
+      feature: new FoundrySemanticTokensFeature(output),
+      output,
+    };
+  }
+
+  it("adds final once to the library modifier list without changing token types", () => {
+    const { feature } = createFeature();
+    const capabilities = {
+      textDocument: {
+        semanticTokens: {
+          tokenTypes: ["class", "keyword"],
+          tokenModifiers: ["declaration", "readonly"],
+          formats: ["relative"],
+          requests: { full: true },
+        },
+      },
+    };
+
+    feature.fillClientCapabilities(capabilities as ClientCapabilities);
+    feature.fillClientCapabilities(capabilities as ClientCapabilities);
+
+    expect(capabilities.textDocument.semanticTokens.tokenTypes).toEqual([
+      "class",
+      "keyword",
+    ]);
+    expect(capabilities.textDocument.semanticTokens.tokenModifiers).toEqual([
+      "declaration",
+      "readonly",
+      "final",
+    ]);
+  });
+
+  it("retains and logs a supported server-advertised legend", () => {
+    const { feature, output } = createFeature();
+    const capabilities = {
+      completionProvider: {},
+      semanticTokensProvider: fullOnlyProvider,
+    };
+
+    feature.preInitialize(capabilities);
+
+    expect(capabilities.semanticTokensProvider).toBe(fullOnlyProvider);
+    expect(output.appendLine).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(output.appendLine.mock.calls[0]?.[0]))).toMatchObject({
+      level: "info",
+      event: "lsp.semantic_tokens.enabled",
+      tokenTypeCount: 2,
+      tokenModifierCount: 2,
+    });
+  });
+
+  it("logs a missing provider as an available TextMate fallback", () => {
+    const { feature, output } = createFeature();
+    const capabilities = { completionProvider: {} };
+
+    feature.preInitialize(capabilities);
+
+    expect(capabilities).toEqual({ completionProvider: {} });
+    expect(JSON.parse(String(output.appendLine.mock.calls[0]?.[0]))).toMatchObject({
+      level: "info",
+      event: "lsp.semantic_tokens.unavailable",
+    });
+  });
+
+  it.each([
+    [
+      {
+        ...fullOnlyProvider,
+        legend: { tokenTypes: [], tokenModifiers: ["final"] },
+      },
+      "lsp.semantic_tokens.capability_malformed",
+      "token_types_invalid",
+    ],
+    [
+      { ...fullOnlyProvider, range: true },
+      "lsp.semantic_tokens.capability_mismatch",
+      "range_supported",
+    ],
+  ] as const)(
+    "removes only rejected semantic capability %#",
+    (provider, event, reason) => {
+      const { feature, output } = createFeature();
+      const capabilities: {
+        completionProvider: object;
+        semanticTokensProvider?: unknown;
+      } = {
+        completionProvider: {},
+        semanticTokensProvider: provider,
+      };
+
+      feature.preInitialize(capabilities as ServerCapabilities);
+
+      expect(capabilities).toEqual({ completionProvider: {} });
+      expect(JSON.parse(String(output.appendLine.mock.calls[0]?.[0]))).toMatchObject({
+        level: "warn",
+        event,
+        reason,
+      });
+    },
+  );
+
+  it("exposes static feature lifecycle without active registrations", () => {
+    const { feature } = createFeature();
+
+    feature.initialize();
+    expect(feature.getState()).toEqual({ kind: "static" });
+    expect(() => feature.clear()).not.toThrow();
+  });
+
+  it("turns malformed full data into null and logs the document", async () => {
+    const { feature, output } = createFeature();
+    feature.preInitialize({ semanticTokensProvider: fullOnlyProvider });
+    const sendRequest = feature.middleware.sendRequest;
+    if (sendRequest === undefined) {
+      throw new Error("semantic request middleware was not installed");
+    }
+
+    const result = await sendRequest(
+      "textDocument/semanticTokens/full",
+      { textDocument: { uri: "file:///workspace/player.fs" } },
+      undefined,
+      () => Promise.resolve({ data: [0, 0] }),
+    );
+
+    expect(result).toBeNull();
+    expect(JSON.parse(String(output.appendLine.mock.calls.at(-1)?.[0]))).toMatchObject(
+      {
+        level: "warn",
+        event: "lsp.semantic_tokens.response_malformed",
+        reason: "record_width_invalid",
+        uri: "file:///workspace/player.fs",
+      },
+    );
+  });
+
+  it("passes a later valid full response without translating it", async () => {
+    const { feature } = createFeature();
+    feature.preInitialize({ semanticTokensProvider: fullOnlyProvider });
+    const sendRequest = feature.middleware.sendRequest;
+    if (sendRequest === undefined) {
+      throw new Error("semantic request middleware was not installed");
+    }
+    const response = { data: [0, 0, 3, 0, 1] };
+
+    const result = await sendRequest(
+      { method: "textDocument/semanticTokens/full" } as never,
+      { textDocument: { uri: "file:///workspace/player.fs" } },
+      undefined,
+      () => Promise.resolve(response),
+    );
+
+    expect(result).toBe(response);
+  });
+
+  it("passes unrelated LSP responses unchanged", async () => {
+    const { feature, output } = createFeature();
+    const sendRequest = feature.middleware.sendRequest;
+    if (sendRequest === undefined) {
+      throw new Error("semantic request middleware was not installed");
+    }
+    const hover = { contents: "still alive" };
+
+    const result = await sendRequest(
+      "textDocument/hover",
+      {
+        textDocument: { uri: "file:///workspace/player.fs" },
+        position: { line: 0, character: 0 },
+      },
+      undefined,
+      () => Promise.resolve(hover),
+    );
+
+    expect(result).toBe(hover);
+    expect(output.appendLine).not.toHaveBeenCalled();
+  });
+
+  it("normalizes only FoundryScript didOpen language IDs on the wire", async () => {
+    const { feature } = createFeature();
+    const sendNotification = (
+      feature.middleware as Pick<Middleware, "sendNotification">
+    ).sendNotification;
+    if (sendNotification === undefined) {
+      throw new Error("didOpen normalization middleware was not installed");
+    }
+    const type = { method: "textDocument/didOpen" } as never;
+    const params = {
+      textDocument: {
+        uri: "file:///workspace/player.fs",
+        languageId: "foundryscript",
+        version: 1,
+        text: "var health = 1\n",
+      },
+    };
+    const next = vi.fn(() => Promise.resolve());
+
+    await sendNotification(type, next, params);
+
+    expect(next).toHaveBeenCalledWith(type, {
+      textDocument: {
+        ...params.textDocument,
+        languageId: "foundry_script",
+      },
+    });
+    expect(params.textDocument.languageId).toBe("foundryscript");
+  });
+
+  it("passes unrelated notification parameters unchanged", async () => {
+    const { feature } = createFeature();
+    const sendNotification = (
+      feature.middleware as Pick<Middleware, "sendNotification">
+    ).sendNotification;
+    if (sendNotification === undefined) {
+      throw new Error("didOpen normalization middleware was not installed");
+    }
+    const params = {
+      textDocument: { uri: "file:///workspace/player.fs", version: 2 },
+      contentChanges: [{ text: "var changed = 2\n" }],
+    };
+    const next = vi.fn(() => Promise.resolve());
+
+    await sendNotification("textDocument/didChange", next, params);
+
+    expect(next).toHaveBeenCalledWith("textDocument/didChange", params);
+  });
+});
+
+interface DecodedFixtureToken {
+  line: number;
+  start: number;
+  length: number;
+  type: string;
+  modifiers: string[];
+}
+
+function decodeFixtureTokens(
+  data: readonly number[],
+  legend: { tokenTypes: readonly string[]; tokenModifiers: readonly string[] },
+): DecodedFixtureToken[] {
+  const tokens: DecodedFixtureToken[] = [];
+  let line = 0;
+  let start = 0;
+  for (let index = 0; index < data.length; index += 5) {
+    const deltaLine = data[index] ?? 0;
+    line += deltaLine;
+    start = deltaLine === 0 ? start + (data[index + 1] ?? 0) : (data[index + 1] ?? 0);
+    const modifierBits = data[index + 4] ?? 0;
+    tokens.push({
+      line,
+      start,
+      length: data[index + 2] ?? 0,
+      type: legend.tokenTypes[data[index + 3] ?? -1] ?? "<unknown>",
+      modifiers: legend.tokenModifiers.filter(
+        (_modifier, modifierIndex) =>
+          (modifierBits & 2 ** modifierIndex) !== 0,
+      ),
+    });
+  }
+  return tokens;
+}
+
+describe("Foundry server semantic token protocol fixture", () => {
+  const provider =
+    semanticTokensFixture.initializeResult.capabilities.semanticTokensProvider;
+
+  it("uses the server initialize legend as the only decoding order", () => {
+    expect(inspectSemanticTokensProvider(provider)).toMatchObject({
+      kind: "supported",
+      legend: provider.legend,
+    });
+  });
+
+  it("decodes every expected token and UTF-16 lexeme through the advertised legend", () => {
+    for (const document of semanticTokensFixture.documents) {
+      for (const exchange of document.exchanges) {
+        expect(
+          validateSemanticTokensResponse(exchange.response, provider.legend),
+        ).toMatchObject({ ok: true });
+        const decoded = decodeFixtureTokens(exchange.response.data, provider.legend);
+        const lines = exchange.text.split("\n");
+        for (const expected of exchange.expect) {
+          expect(
+            lines[expected.line]?.slice(
+              expected.start,
+              expected.start + expected.length,
+            ),
+            `${document.name}/${exchange.phase}: ${expected.lexeme}`,
+          ).toBe(expected.lexeme);
+          expect(decoded, `${document.name}/${exchange.phase}: ${expected.lexeme}`).toContainEqual(
+            {
+              line: expected.line,
+              start: expected.start,
+              length: expected.length,
+              type: expected.type,
+              modifiers: expected.modifiers,
+            },
+          );
+        }
+      }
+    }
+  });
+
+  it("covers contextual roles without globally reserving the same words", () => {
+    const contextual = semanticTokensFixture.documents.find(
+      (document) => document.name === "contextual-and-symbols",
+    );
+    const expectations = contextual?.exchanges[0]?.expect ?? [];
+    for (const word of ["extend", "async", "annotation", "targets", "get", "set"]) {
+      expect(expectations).toContainEqual(
+        expect.objectContaining({ lexeme: word, type: "keyword" }),
+      );
+      expect(expectations).toContainEqual(
+        expect.objectContaining({ lexeme: word, type: "variable" }),
+      );
+    }
+  });
+
+  it("covers every required symbol classification and modifier", () => {
+    const expectations = semanticTokensFixture.documents.flatMap((document) =>
+      document.exchanges.flatMap((exchange) => exchange.expect),
+    );
+    const types = new Set(expectations.map((expected) => expected.type));
+    const modifiers = new Set(
+      expectations.flatMap((expected) => expected.modifiers),
+    );
+
+    expect(types).toEqual(
+      new Set([
+        "namespace",
+        "class",
+        "interface",
+        "struct",
+        "enum",
+        "enumMember",
+        "event",
+        "type",
+        "typeParameter",
+        "function",
+        "method",
+        "property",
+        "variable",
+        "parameter",
+        "decorator",
+        "keyword",
+      ]),
+    );
+    expect(modifiers).toEqual(
+      new Set([
+        "declaration",
+        "static",
+        "abstract",
+        "final",
+        "async",
+        "readonly",
+        "defaultLibrary",
+      ]),
+    );
+  });
+
+  it("records UTF-16 positions after and within astral characters", () => {
+    const astral = semanticTokensFixture.documents.find(
+      (document) => document.name === "utf16-astral",
+    );
+    expect(astral?.exchanges[0]?.expect).toEqual([
+      expect.objectContaining({ lexeme: "value", start: 5, length: 5 }),
+      expect.objectContaining({ lexeme: "😀name", start: 15, length: 6 }),
+    ]);
+  });
+
+  it("changes the full response after a managed-buffer didChange", () => {
+    const managed = semanticTokensFixture.documents.find(
+      (document) => document.name === "managed-buffer",
+    );
+    const opened = managed?.exchanges.find((exchange) => exchange.phase === "didOpen");
+    const changed = managed?.exchanges.find(
+      (exchange) => exchange.phase === "didChange",
+    );
+
+    expect(opened?.response.data).not.toEqual(changed?.response.data);
+    expect(opened?.expect).toContainEqual(
+      expect.objectContaining({ lexeme: "opened", type: "method" }),
+    );
+    expect(changed?.expect).toContainEqual(
+      expect.objectContaining({ lexeme: "Changed", type: "class" }),
+    );
+  });
+});

@@ -641,6 +641,21 @@ describe("package.json manifest", () => {
     expect(grammar.language).toBe(language.id);
   });
 
+  it("contributes only the custom final semantic token modifier", () => {
+    const contributes = packageManifest.contributes as typeof packageManifest.contributes & {
+      semanticTokenModifiers?: Array<{ id: string; description: string }>;
+      semanticTokenTypes?: unknown;
+    };
+
+    expect(contributes.semanticTokenModifiers).toEqual([
+      {
+        id: "final",
+        description: "Marks a final FoundryScript declaration.",
+      },
+    ]);
+    expect(contributes.semanticTokenTypes).toBeUndefined();
+  });
+
   it("contributes language server connection settings", () => {
     const properties = packageManifest.contributes.configuration.properties;
 

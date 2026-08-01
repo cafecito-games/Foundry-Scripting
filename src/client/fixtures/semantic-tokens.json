@@ -1,0 +1,853 @@
+{
+  "initializeResult": {
+    "capabilities": {
+      "semanticTokensProvider": {
+        "legend": {
+          "tokenTypes": [
+            "namespace",
+            "class",
+            "interface",
+            "struct",
+            "enum",
+            "enumMember",
+            "event",
+            "type",
+            "typeParameter",
+            "function",
+            "method",
+            "property",
+            "variable",
+            "parameter",
+            "decorator",
+            "keyword"
+          ],
+          "tokenModifiers": [
+            "declaration",
+            "static",
+            "abstract",
+            "final",
+            "async",
+            "readonly",
+            "defaultLibrary"
+          ]
+        },
+        "full": true,
+        "range": false
+      }
+    }
+  },
+  "documents": [
+    {
+      "name": "contextual-and-symbols",
+      "uri": "file:///fixture/symbols.fs",
+      "exchanges": [
+        {
+          "phase": "didOpen",
+          "text": "namespace game.core\ntrait Runner:\n\tabstract func run() -> void\nfinal class Player:\n\tsignal moved(value: int)\n\tstatic final var count: int = 0\n\tconst LIMIT := 10\n\tasync func fetch(arg: int) -> void:\n\tannotation trackable(label: String) targets CLASS\n\t@trackable(\"x\")\n\textend int uses Runner:\n\tvar extend := 1\n\tvar async := 2\n\tvar annotation := 3\n\tvar targets := 4\n\tvar get := 5\n\tvar set := 6\n\tvar score: int:\n\t\tget:\n\t\tset(value):\n\tenum Direction:\n\t\tUP\n\ttuple Point(x: float)\n\tclass Box[T]:\n\tfunc helper() -> void:\n\t\tvar local := func(): pass\n\t\thelper()\n\t\tprint(Vector2.ZERO)\n\textends Node\n",
+          "response": {
+            "data": [
+              0,
+              10,
+              4,
+              0,
+              1,
+              0,
+              5,
+              4,
+              0,
+              1,
+              1,
+              6,
+              6,
+              2,
+              5,
+              1,
+              15,
+              3,
+              10,
+              5,
+              1,
+              12,
+              6,
+              1,
+              9,
+              1,
+              8,
+              5,
+              6,
+              1,
+              0,
+              6,
+              5,
+              13,
+              1,
+              0,
+              7,
+              3,
+              7,
+              64,
+              1,
+              18,
+              5,
+              11,
+              11,
+              1,
+              7,
+              5,
+              11,
+              33,
+              1,
+              1,
+              5,
+              15,
+              0,
+              0,
+              11,
+              5,
+              10,
+              17,
+              0,
+              6,
+              3,
+              13,
+              1,
+              1,
+              1,
+              10,
+              15,
+              0,
+              0,
+              11,
+              9,
+              14,
+              1,
+              0,
+              10,
+              5,
+              13,
+              1,
+              0,
+              7,
+              6,
+              7,
+              64,
+              0,
+              8,
+              7,
+              15,
+              0,
+              1,
+              2,
+              9,
+              14,
+              0,
+              1,
+              1,
+              6,
+              15,
+              0,
+              0,
+              7,
+              3,
+              7,
+              64,
+              0,
+              9,
+              6,
+              2,
+              0,
+              1,
+              5,
+              6,
+              12,
+              1,
+              1,
+              5,
+              5,
+              12,
+              1,
+              1,
+              5,
+              10,
+              12,
+              1,
+              1,
+              5,
+              7,
+              12,
+              1,
+              1,
+              5,
+              3,
+              12,
+              1,
+              1,
+              5,
+              3,
+              12,
+              1,
+              1,
+              5,
+              5,
+              11,
+              1,
+              1,
+              2,
+              3,
+              15,
+              0,
+              1,
+              2,
+              3,
+              15,
+              0,
+              0,
+              4,
+              5,
+              13,
+              1,
+              1,
+              6,
+              9,
+              4,
+              1,
+              1,
+              2,
+              2,
+              5,
+              33,
+              1,
+              7,
+              5,
+              3,
+              1,
+              0,
+              6,
+              1,
+              11,
+              33,
+              1,
+              7,
+              3,
+              1,
+              1,
+              0,
+              4,
+              1,
+              8,
+              1,
+              1,
+              6,
+              6,
+              10,
+              1,
+              1,
+              6,
+              5,
+              12,
+              1,
+              0,
+              9,
+              4,
+              9,
+              0,
+              1,
+              2,
+              6,
+              10,
+              0,
+              1,
+              2,
+              5,
+              9,
+              64,
+              0,
+              6,
+              7,
+              7,
+              64,
+              0,
+              8,
+              4,
+              11,
+              98,
+              1,
+              9,
+              4,
+              1,
+              64
+            ]
+          },
+          "expect": [
+            {
+              "line": 0,
+              "start": 10,
+              "length": 4,
+              "lexeme": "game",
+              "type": "namespace",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 0,
+              "start": 15,
+              "length": 4,
+              "lexeme": "core",
+              "type": "namespace",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 1,
+              "start": 6,
+              "length": 6,
+              "lexeme": "Runner",
+              "type": "interface",
+              "modifiers": [
+                "declaration",
+                "abstract"
+              ]
+            },
+            {
+              "line": 2,
+              "start": 15,
+              "length": 3,
+              "lexeme": "run",
+              "type": "method",
+              "modifiers": [
+                "declaration",
+                "abstract"
+              ]
+            },
+            {
+              "line": 3,
+              "start": 12,
+              "length": 6,
+              "lexeme": "Player",
+              "type": "class",
+              "modifiers": [
+                "declaration",
+                "final"
+              ]
+            },
+            {
+              "line": 4,
+              "start": 8,
+              "length": 5,
+              "lexeme": "moved",
+              "type": "event",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 4,
+              "start": 14,
+              "length": 5,
+              "lexeme": "value",
+              "type": "parameter",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 4,
+              "start": 21,
+              "length": 3,
+              "lexeme": "int",
+              "type": "type",
+              "modifiers": [
+                "defaultLibrary"
+              ]
+            },
+            {
+              "line": 5,
+              "start": 18,
+              "length": 5,
+              "lexeme": "count",
+              "type": "property",
+              "modifiers": [
+                "declaration",
+                "static",
+                "final"
+              ]
+            },
+            {
+              "line": 6,
+              "start": 7,
+              "length": 5,
+              "lexeme": "LIMIT",
+              "type": "property",
+              "modifiers": [
+                "declaration",
+                "readonly"
+              ]
+            },
+            {
+              "line": 7,
+              "start": 1,
+              "length": 5,
+              "lexeme": "async",
+              "type": "keyword",
+              "modifiers": []
+            },
+            {
+              "line": 7,
+              "start": 12,
+              "length": 5,
+              "lexeme": "fetch",
+              "type": "method",
+              "modifiers": [
+                "declaration",
+                "async"
+              ]
+            },
+            {
+              "line": 7,
+              "start": 18,
+              "length": 3,
+              "lexeme": "arg",
+              "type": "parameter",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 8,
+              "start": 1,
+              "length": 10,
+              "lexeme": "annotation",
+              "type": "keyword",
+              "modifiers": []
+            },
+            {
+              "line": 8,
+              "start": 12,
+              "length": 9,
+              "lexeme": "trackable",
+              "type": "decorator",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 8,
+              "start": 22,
+              "length": 5,
+              "lexeme": "label",
+              "type": "parameter",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 8,
+              "start": 29,
+              "length": 6,
+              "lexeme": "String",
+              "type": "type",
+              "modifiers": [
+                "defaultLibrary"
+              ]
+            },
+            {
+              "line": 8,
+              "start": 37,
+              "length": 7,
+              "lexeme": "targets",
+              "type": "keyword",
+              "modifiers": []
+            },
+            {
+              "line": 9,
+              "start": 2,
+              "length": 9,
+              "lexeme": "trackable",
+              "type": "decorator",
+              "modifiers": []
+            },
+            {
+              "line": 10,
+              "start": 1,
+              "length": 6,
+              "lexeme": "extend",
+              "type": "keyword",
+              "modifiers": []
+            },
+            {
+              "line": 10,
+              "start": 8,
+              "length": 3,
+              "lexeme": "int",
+              "type": "type",
+              "modifiers": [
+                "defaultLibrary"
+              ]
+            },
+            {
+              "line": 10,
+              "start": 17,
+              "length": 6,
+              "lexeme": "Runner",
+              "type": "interface",
+              "modifiers": []
+            },
+            {
+              "line": 11,
+              "start": 5,
+              "length": 6,
+              "lexeme": "extend",
+              "type": "variable",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 12,
+              "start": 5,
+              "length": 5,
+              "lexeme": "async",
+              "type": "variable",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 13,
+              "start": 5,
+              "length": 10,
+              "lexeme": "annotation",
+              "type": "variable",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 14,
+              "start": 5,
+              "length": 7,
+              "lexeme": "targets",
+              "type": "variable",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 15,
+              "start": 5,
+              "length": 3,
+              "lexeme": "get",
+              "type": "variable",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 16,
+              "start": 5,
+              "length": 3,
+              "lexeme": "set",
+              "type": "variable",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 17,
+              "start": 5,
+              "length": 5,
+              "lexeme": "score",
+              "type": "property",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 18,
+              "start": 2,
+              "length": 3,
+              "lexeme": "get",
+              "type": "keyword",
+              "modifiers": []
+            },
+            {
+              "line": 19,
+              "start": 2,
+              "length": 3,
+              "lexeme": "set",
+              "type": "keyword",
+              "modifiers": []
+            },
+            {
+              "line": 19,
+              "start": 6,
+              "length": 5,
+              "lexeme": "value",
+              "type": "parameter",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 20,
+              "start": 6,
+              "length": 9,
+              "lexeme": "Direction",
+              "type": "enum",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 21,
+              "start": 2,
+              "length": 2,
+              "lexeme": "UP",
+              "type": "enumMember",
+              "modifiers": [
+                "declaration",
+                "readonly"
+              ]
+            },
+            {
+              "line": 22,
+              "start": 7,
+              "length": 5,
+              "lexeme": "Point",
+              "type": "struct",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 22,
+              "start": 13,
+              "length": 1,
+              "lexeme": "x",
+              "type": "property",
+              "modifiers": [
+                "declaration",
+                "readonly"
+              ]
+            },
+            {
+              "line": 23,
+              "start": 7,
+              "length": 3,
+              "lexeme": "Box",
+              "type": "class",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 23,
+              "start": 11,
+              "length": 1,
+              "lexeme": "T",
+              "type": "typeParameter",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 24,
+              "start": 6,
+              "length": 6,
+              "lexeme": "helper",
+              "type": "method",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 25,
+              "start": 6,
+              "length": 5,
+              "lexeme": "local",
+              "type": "variable",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 25,
+              "start": 15,
+              "length": 4,
+              "lexeme": "func",
+              "type": "function",
+              "modifiers": []
+            },
+            {
+              "line": 26,
+              "start": 2,
+              "length": 6,
+              "lexeme": "helper",
+              "type": "method",
+              "modifiers": []
+            },
+            {
+              "line": 27,
+              "start": 2,
+              "length": 5,
+              "lexeme": "print",
+              "type": "function",
+              "modifiers": [
+                "defaultLibrary"
+              ]
+            },
+            {
+              "line": 27,
+              "start": 8,
+              "length": 7,
+              "lexeme": "Vector2",
+              "type": "type",
+              "modifiers": [
+                "defaultLibrary"
+              ]
+            },
+            {
+              "line": 27,
+              "start": 16,
+              "length": 4,
+              "lexeme": "ZERO",
+              "type": "property",
+              "modifiers": [
+                "static",
+                "readonly",
+                "defaultLibrary"
+              ]
+            },
+            {
+              "line": 28,
+              "start": 9,
+              "length": 4,
+              "lexeme": "Node",
+              "type": "class",
+              "modifiers": [
+                "defaultLibrary"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "utf16-astral",
+      "uri": "file:///fixture/astral.fs",
+      "exchanges": [
+        {
+          "phase": "didOpen",
+          "text": "😀   value =   😀name\n",
+          "response": {
+            "data": [
+              0,
+              5,
+              5,
+              12,
+              1,
+              0,
+              10,
+              6,
+              12,
+              0
+            ]
+          },
+          "expect": [
+            {
+              "line": 0,
+              "start": 5,
+              "length": 5,
+              "lexeme": "value",
+              "type": "variable",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 0,
+              "start": 15,
+              "length": 6,
+              "lexeme": "😀name",
+              "type": "variable",
+              "modifiers": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "managed-buffer",
+      "uri": "file:///fixture/buffer.fs",
+      "exchanges": [
+        {
+          "phase": "didOpen",
+          "text": "func opened() -> void:\n\tpass\n",
+          "response": {
+            "data": [
+              0,
+              5,
+              6,
+              10,
+              1
+            ]
+          },
+          "expect": [
+            {
+              "line": 0,
+              "start": 5,
+              "length": 6,
+              "lexeme": "opened",
+              "type": "method",
+              "modifiers": [
+                "declaration"
+              ]
+            }
+          ]
+        },
+        {
+          "phase": "didChange",
+          "text": "class Changed:\n\tfunc changed() -> void:\n\t\tpass\n",
+          "response": {
+            "data": [
+              0,
+              6,
+              7,
+              1,
+              1,
+              1,
+              6,
+              7,
+              10,
+              1
+            ]
+          },
+          "expect": [
+            {
+              "line": 0,
+              "start": 6,
+              "length": 7,
+              "lexeme": "Changed",
+              "type": "class",
+              "modifiers": [
+                "declaration"
+              ]
+            },
+            {
+              "line": 1,
+              "start": 6,
+              "length": 7,
+              "lexeme": "changed",
+              "type": "method",
+              "modifiers": [
+                "declaration"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

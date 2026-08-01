@@ -38,6 +38,12 @@
         "path": "./syntaxes/foundryscript.tmLanguage.json"
       }
     ],
+    "semanticTokenModifiers": [
+      {
+        "id": "final",
+        "description": "Marks a final FoundryScript declaration."
+      }
+    ],
     "commands": [
       {
         "command": "foundryScript.connectionActions",
