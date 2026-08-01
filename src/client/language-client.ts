@@ -8,6 +8,7 @@ import {
   type StateChangeEvent,
 } from "vscode-languageclient/node";
 import { writeLog } from "./logging.js";
+import { FoundrySemanticTokensFeature } from "./semantic-tokens.js";
 import {
   createTcpServerOptions,
   type TcpEndpoint,
@@ -98,6 +99,7 @@ export class FoundryScriptLanguageClient extends LanguageClient {
             }
             return false;
           };
+    const semanticTokens = new FoundrySemanticTokensFeature(outputChannel);
 
     super(
       "foundryScript",
@@ -120,17 +122,19 @@ export class FoundryScriptLanguageClient extends LanguageClient {
           error: () => ({ action: ErrorAction.Continue, handled: true }),
           closed: () => ({ action: CloseAction.DoNotRestart, handled: true }),
         },
-        ...(onDiagnostics === undefined
-          ? {}
-          : {
-              middleware: {
+        middleware: {
+          ...semanticTokens.middleware,
+          ...(onDiagnostics === undefined
+            ? {}
+            : {
                 handleDiagnostics: (uri, diagnostics): void => {
                   onDiagnostics(uri, diagnostics);
                 },
-              },
-            }),
+              }),
+        },
       },
     );
+    this.registerFeature(semanticTokens);
 
     this.onNotification(capabilitiesNotification, (capabilities) => {
       this.currentCapabilities = copyCapabilities(capabilities);

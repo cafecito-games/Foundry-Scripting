@@ -4,6 +4,7 @@ import { CloseAction, State } from "vscode-languageclient/node";
 
 const languageClientMock = vi.hoisted(() => ({
   constructorCalls: [] as unknown[][],
+  registeredFeatures: [] as unknown[],
   notificationHandlers: new Map<string, (params: unknown) => void>(),
   stateHandlers: new Set<
     (event: { oldState: State; newState: State }) => void
@@ -44,6 +45,10 @@ vi.mock("vscode-languageclient/node", () => ({
         dispose: () => languageClientMock.stateHandlers.delete(handler),
       };
     }
+
+    registerFeature(feature: unknown) {
+      languageClientMock.registeredFeatures.push(feature);
+    }
   },
 }));
 
@@ -62,11 +67,13 @@ import {
   FoundryScriptLanguageClient,
   type FoundryCapabilities,
 } from "./language-client.js";
+import { FoundrySemanticTokensFeature } from "./semantic-tokens.js";
 import type { WorkspaceMismatchHandler } from "./workspace-mismatch.js";
 
 describe("FoundryScript language client", () => {
   beforeEach(() => {
     languageClientMock.constructorCalls.length = 0;
+    languageClientMock.registeredFeatures.length = 0;
     languageClientMock.notificationHandlers.clear();
     languageClientMock.stateHandlers.clear();
     transportMock.options.length = 0;
@@ -126,6 +133,58 @@ describe("FoundryScript language client", () => {
 
     expect(onDiagnostics).toHaveBeenCalledWith(uri, diagnostics);
     expect(next).not.toHaveBeenCalled();
+  });
+
+  it("registers the Foundry semantic token contract feature", () => {
+    new FoundryScriptLanguageClient({
+      endpoint: { host: "127.0.0.1", port: 6005 },
+      outputChannel: { appendLine: vi.fn() } as unknown as vscode.OutputChannel,
+    });
+
+    expect(languageClientMock.registeredFeatures).toHaveLength(1);
+    expect(languageClientMock.registeredFeatures[0]).toBeInstanceOf(
+      FoundrySemanticTokensFeature,
+    );
+  });
+
+  it("composes semantic response middleware with diagnostics routing", async () => {
+    const onDiagnostics = vi.fn();
+    new FoundryScriptLanguageClient({
+      endpoint: { host: "127.0.0.1", port: 6005 },
+      outputChannel: { appendLine: vi.fn() } as unknown as vscode.OutputChannel,
+      onDiagnostics,
+    });
+    const clientOptions = languageClientMock.constructorCalls[0]?.[3] as
+      | {
+          middleware?: {
+            handleDiagnostics?: (
+              uri: vscode.Uri,
+              diagnostics: vscode.Diagnostic[],
+              next: () => void,
+            ) => void;
+            sendRequest?: (
+              type: string,
+              params: unknown,
+              token: undefined,
+              next: () => Promise<unknown>,
+            ) => Promise<unknown>;
+          };
+        }
+      | undefined;
+    const uri = { fsPath: "/game/player.fs" } as vscode.Uri;
+    const diagnostics = [{ message: "still routed" }] as vscode.Diagnostic[];
+
+    clientOptions?.middleware?.handleDiagnostics?.(uri, diagnostics, vi.fn());
+    const hover = { contents: "still alive" };
+    const response = await clientOptions?.middleware?.sendRequest?.(
+      "textDocument/hover",
+      { textDocument: { uri: "file:///game/player.fs" } },
+      undefined,
+      () => Promise.resolve(hover),
+    );
+
+    expect(onDiagnostics).toHaveBeenCalledWith(uri, diagnostics);
+    expect(response).toBe(hover);
   });
 
   it("records native class capabilities and forwards the notification", () => {
