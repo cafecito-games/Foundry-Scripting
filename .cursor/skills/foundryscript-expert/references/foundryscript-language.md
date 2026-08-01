@@ -147,7 +147,7 @@ Repository: [cafecito-games/Foundry](https://github.com/cafecito-games/Foundry)
 
 | Capability | CLI / location |
 |------------|----------------|
-| Language server | `foundry lsp serve --port N --path <project>` |
+| Combined tooling host | `foundry tooling serve --project <project> --lsp-port N --dap-port N` |
 | Lint JSON | `foundry script lint --format=json` |
 | Grammar spec | [`modules/foundry_script/GRAMMAR.md`](https://github.com/cafecito-games/Foundry/blob/develop/modules/foundry_script/GRAMMAR.md) |
 | Tokenizer | [`fs_tokenizer.cpp`](https://github.com/cafecito-games/Foundry/tree/develop/modules/foundry_script) / `fs_tokenizer.h` |

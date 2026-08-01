@@ -39,7 +39,7 @@ Use this skill when working in this repository on:
 **Engine dependency** ([cafecito-games/Foundry](https://github.com/cafecito-games/Foundry)):
 
 - Authoritative grammar: [`modules/foundry_script/GRAMMAR.md`](https://github.com/cafecito-games/Foundry/blob/develop/modules/foundry_script/GRAMMAR.md)
-- Language server: `foundry lsp serve`
+- Combined tooling host: `foundry tooling serve`
 - Grammar artifact: published from engine releases; extension may sync via `npm run sync-grammar`
 
 ## Architecture rules

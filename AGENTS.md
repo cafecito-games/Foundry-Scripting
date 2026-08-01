@@ -70,7 +70,7 @@ Press **F5** in VS Code to exercise UI behavior in an Extension Development Host
 |------|----------|
 | Engine repo | [cafecito-games/Foundry](https://github.com/cafecito-games/Foundry) |
 | Grammar spec | [`modules/foundry_script/GRAMMAR.md`](https://github.com/cafecito-games/Foundry/blob/develop/modules/foundry_script/GRAMMAR.md) |
-| Language server | `foundry lsp serve` |
+| Combined tooling host | `foundry tooling serve` |
 | Grammar artifact | [Engine release](https://github.com/cafecito-games/Foundry/releases) `foundryscript-tmlanguage-<version>.json` |
 
 Configure the Foundry binary with `foundryScript.enginePath` (default: `foundry` on `PATH`).
