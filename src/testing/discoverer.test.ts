@@ -194,6 +194,54 @@ describe("test adapter discovery", () => {
     expect(error.message.toLowerCase()).toContain(message);
   });
 
+  it("classifies missing discovery after nonzero exit as a process crash", async () => {
+    const removeTemporaryDirectory = vi.fn().mockResolvedValue(undefined);
+    const discoverer = new FoundryTestAdapterDiscoverer({
+      runProcess: () => Promise.resolve(exited(2, "ordinary", "fatal detail")),
+      readArtifact: () => Promise.reject(missing()),
+      makeTemporaryDirectory: () => Promise.resolve("/virtual/crash"),
+      removeTemporaryDirectory,
+    });
+
+    await expect(
+      captureFailure(
+        discoverer.discover(baseRequest, new AbortController().signal),
+      ),
+    ).resolves.toMatchObject({
+      kind: "process_crash",
+      phase: "discovery",
+      exitCode: 2,
+      stdout: "ordinary",
+      stderr: "fatal detail",
+    });
+    expect(removeTemporaryDirectory).toHaveBeenCalledWith("/virtual/crash");
+  });
+
+  it("classifies discovery signal termination before reading an artifact", async () => {
+    const readArtifact = vi.fn();
+    const discoverer = new FoundryTestAdapterDiscoverer({
+      runProcess: () =>
+        Promise.resolve({
+          kind: "exited",
+          signal: "SIGABRT",
+          stdout: "ordinary",
+          stderr: "fatal detail",
+        }),
+      readArtifact,
+    });
+
+    await expect(
+      captureFailure(
+        discoverer.discover(baseRequest, new AbortController().signal),
+      ),
+    ).resolves.toMatchObject({
+      kind: "process_crash",
+      phase: "discovery",
+      signal: "SIGABRT",
+    });
+    expect(readArtifact).not.toHaveBeenCalled();
+  });
+
   it.each([
     { processKind: "missing_engine", setting: "foundryScript.enginePath" },
     { processKind: "spawn_failed", setting: undefined },
@@ -319,6 +367,10 @@ function exited(
   stderr = "",
 ): TestAdapterProcessResult {
   return { kind: "exited", exitCode, stdout, stderr };
+}
+
+function missing(): Error {
+  return Object.assign(new Error("missing"), { code: "ENOENT" });
 }
 
 async function pathExists(target: string): Promise<boolean> {

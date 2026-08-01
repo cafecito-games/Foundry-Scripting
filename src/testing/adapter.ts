@@ -43,16 +43,24 @@ export type TestAdapterFailureKind =
   | TestDiscoveryParseErrorKind
   | "discovery_exit_mismatch";
 
+export type TestAdapterPhase = "capabilities" | "discovery" | "execution";
+
 interface TestAdapterFailureOptions extends ErrorOptions {
   readonly setting?: string;
   readonly stdout?: string;
   readonly stderr?: string;
+  readonly phase?: TestAdapterPhase;
+  readonly exitCode?: number;
+  readonly signal?: NodeJS.Signals;
 }
 
 export class TestAdapterFailure extends Error {
   readonly setting: string | undefined;
   readonly stdout: string | undefined;
   readonly stderr: string | undefined;
+  readonly phase: TestAdapterPhase | undefined;
+  readonly exitCode: number | undefined;
+  readonly signal: NodeJS.Signals | undefined;
 
   constructor(
     readonly kind: TestAdapterFailureKind,
@@ -64,6 +72,9 @@ export class TestAdapterFailure extends Error {
     this.setting = options.setting;
     this.stdout = options.stdout;
     this.stderr = options.stderr;
+    this.phase = options.phase;
+    this.exitCode = options.exitCode;
+    this.signal = options.signal;
   }
 }
 
@@ -120,6 +131,9 @@ export class FoundryTestAdapterNegotiator {
       const processResult = await this.run(command, signal);
       if (processResult.kind === "cancelled") {
         throw abortError();
+      }
+      if (isAbnormalProcessExit(processResult)) {
+        throw createProcessCrashFailure("capabilities", processResult);
       }
 
       const bytes = await this.readCapabilities(outputPath, processResult);
@@ -190,6 +204,9 @@ export class FoundryTestAdapterNegotiator {
       return await this.readArtifact(outputPath);
     } catch (error) {
       if (errorCode(error) === "ENOENT") {
+        if (processResult.exitCode !== 0) {
+          throw createProcessCrashFailure("capabilities", processResult, error);
+        }
         throw new TestAdapterFailure(
           "legacy_runner",
           "The configured runner does not implement Foundry Test Adapter Protocol capabilities.",
@@ -229,6 +246,40 @@ export class FoundryTestAdapterNegotiator {
       });
     }
   }
+}
+
+export function isAbnormalProcessExit(
+  result: TestAdapterProcessResult,
+): boolean {
+  return (
+    result.kind === "exited" &&
+    (result.signal !== undefined || result.exitCode === undefined)
+  );
+}
+
+export function createProcessCrashFailure(
+  phase: TestAdapterPhase,
+  result: TestAdapterProcessResult,
+  cause?: unknown,
+): TestAdapterFailure {
+  const detail =
+    result.signal !== undefined
+      ? ` after signal ${result.signal}`
+      : result.exitCode === undefined
+        ? " without an exit code"
+        : ` with exit code ${result.exitCode}`;
+  return new TestAdapterFailure(
+    "process_crash",
+    `Foundry test adapter ${phase} process crashed${detail}.`,
+    {
+      phase,
+      ...(result.exitCode === undefined ? {} : { exitCode: result.exitCode }),
+      ...(result.signal === undefined ? {} : { signal: result.signal }),
+      stdout: result.stdout,
+      stderr: result.stderr,
+      ...(cause === undefined ? {} : { cause }),
+    },
+  );
 }
 
 function errorCode(error: unknown): string | undefined {
