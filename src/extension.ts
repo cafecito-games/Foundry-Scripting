@@ -17,8 +17,10 @@ import {
   type TestAdapterFailure,
 } from "./testing/adapter.js";
 import { FoundryTestAdapterDiscoverer } from "./testing/discoverer.js";
+import { FoundryTestExecutor } from "./testing/executor.js";
 import { FoundryTestExplorer } from "./testing/explorer.js";
 import { FoundryTestAdapterProcess } from "./testing/process.js";
+import { FoundryTestRunProfile } from "./testing/profile.js";
 import {
   TestingRuntime,
   type TestingRuntimeConfiguration,
@@ -118,6 +120,11 @@ function registerTestingRuntime(context: vscode.ExtensionContext): void {
     runProcess: (command, signal) => process.run(command, signal),
     onCleanupError,
   });
+  const executor = new FoundryTestExecutor({
+    runProcess: (command, signal, onOutput) =>
+      process.run(command, signal, onOutput),
+    onCleanupError,
+  });
   const runtime = new TestingRuntime({
     negotiate: (request, signal) => negotiator.negotiate(request, signal),
     discover: (request, signal) => discoverer.discover(request, signal),
@@ -131,6 +138,25 @@ function registerTestingRuntime(context: vscode.ExtensionContext): void {
       }
     },
   });
+  const runProfile = new FoundryTestRunProfile({
+    controller,
+    readyContext: () => runtime.readyContext(),
+    snapshot: () => explorer.snapshot(),
+    execute: (request, signal, observer) =>
+      executor.execute(request, signal, observer),
+    createMessage: (message) => new vscode.TestMessage(message),
+    createLocation: (nativePath, line, character) =>
+      new vscode.Location(
+        vscode.Uri.file(nativePath),
+        new vscode.Position(line, character),
+      ),
+  });
+  controller.createRunProfile(
+    "Run",
+    vscode.TestRunProfileKind.Run,
+    async (request, token) => runProfile.run(request, token),
+    true,
+  );
   controller.refreshHandler = async (token) => {
     if (token.isCancellationRequested) {
       return;

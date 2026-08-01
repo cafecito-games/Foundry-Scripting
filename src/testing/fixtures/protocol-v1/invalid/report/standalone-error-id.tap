@@ -1,0 +1,11 @@
+TAP version 13
+# foundry-test-adapter: 1
+1..1
+not ok 1 - BrokenTests discovery
+  ---
+  message: "the suite could not be indexed"
+  _foundry:
+    id: "error-a"
+    duration_ms: 1
+    status_detail: "discovery_error"
+  ...

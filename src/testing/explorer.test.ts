@@ -278,6 +278,30 @@ describe("Foundry Test Explorer reconciliation", () => {
     expect(harness.controller.items.size).toBe(0);
     expect(harness.explorer.getMetadata("test-a")).toBeUndefined();
   });
+
+  it("exposes only the latest authoritative model and exact TestItem identities", () => {
+    const harness = createHarness();
+    const discovered = model([
+      suite(),
+      test({ id: "row-a", parentId: "suite-a", label: "duplicate" }),
+      test({ id: "row-b", parentId: "suite-a", label: "duplicate" }),
+      discoveryError({ id: "error-a", parentId: "suite-a" }),
+    ]);
+
+    harness.explorer.reconcile("/workspace/game", discovered);
+
+    const snapshot = harness.explorer.snapshot();
+    expect(snapshot?.model).toBe(discovered);
+    expect(snapshot?.item("row-a")).toBe(
+      harness.controller.items.get("suite-a")?.children.get("row-a"),
+    );
+    expect(snapshot?.item("row-b")?.label).toBe("duplicate");
+    expect(snapshot?.item("error-a")?.id).toBe("error-a");
+    expect(snapshot?.item("missing")).toBeUndefined();
+
+    harness.explorer.clear();
+    expect(harness.explorer.snapshot()).toBeUndefined();
+  });
 });
 
 interface Harness {

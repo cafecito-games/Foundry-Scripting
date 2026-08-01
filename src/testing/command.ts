@@ -34,6 +34,13 @@ export interface TestAdapterDiscoveryCommandRequest
   readonly outputPath: string;
 }
 
+export interface TestAdapterRunCommandRequest
+  extends TestAdapterCommandRequestFields {
+  readonly protocolVersion: number;
+  readonly reportPath: string;
+  readonly selections: readonly string[];
+}
+
 export interface TestAdapterCommand {
   readonly command: string;
   readonly args: string[];
@@ -73,9 +80,7 @@ export function createTestAdapterDiscoveryCommand(
   request: TestAdapterDiscoveryCommandRequest,
 ): TestAdapterCommand {
   const validated = validateCommandRequest(request);
-  if (!Number.isInteger(request.protocolVersion) || request.protocolVersion <= 0) {
-    throw new TestAdapterConfigurationError("invalid_protocol_version");
-  }
+  validateProtocolVersion(request.protocolVersion);
 
   const args = [
     "--headless",
@@ -94,6 +99,41 @@ export function createTestAdapterDiscoveryCommand(
     "--output",
     request.outputPath,
   ];
+  appendFrameworkArguments(args, request.frameworkArgs);
+
+  return {
+    command: request.enginePath,
+    args,
+    cwd: validated.project,
+  };
+}
+
+export function createTestAdapterRunCommand(
+  request: TestAdapterRunCommandRequest,
+): TestAdapterCommand {
+  const validated = validateCommandRequest(request);
+  validateProtocolVersion(request.protocolVersion);
+
+  const args = [
+    "--headless",
+    "--no-header",
+    "project",
+    "test",
+    "--project",
+    validated.project,
+    "--runner",
+    request.runner,
+    "--",
+    "adapter",
+    "run",
+    "--protocol-version",
+    String(request.protocolVersion),
+    "--report",
+    request.reportPath,
+  ];
+  for (const selection of request.selections) {
+    args.push("--select", selection);
+  }
   appendFrameworkArguments(args, request.frameworkArgs);
 
   return {
@@ -137,6 +177,12 @@ function validateCommandRequest(
     );
   }
   return { project: request.project };
+}
+
+function validateProtocolVersion(protocolVersion: number): void {
+  if (!Number.isInteger(protocolVersion) || protocolVersion <= 0) {
+    throw new TestAdapterConfigurationError("invalid_protocol_version");
+  }
 }
 
 function appendFrameworkArguments(

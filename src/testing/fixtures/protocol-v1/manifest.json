@@ -1,0 +1,2084 @@
+{
+  "protocol_version": 1,
+  "fixtures": [
+    {
+      "id": "capabilities.valid.minimal",
+      "operation": "capabilities",
+      "artifact": "valid/capabilities/minimal.json",
+      "exit_code": 0,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": true,
+        "classification": "conforming",
+        "codes": []
+      }
+    },
+    {
+      "id": "capabilities.valid.additive",
+      "operation": "capabilities",
+      "artifact": "valid/capabilities/additive.json",
+      "exit_code": 0,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": true,
+        "classification": "conforming",
+        "codes": []
+      }
+    },
+    {
+      "id": "capabilities.valid.multi-version",
+      "operation": "capabilities",
+      "artifact": "valid/capabilities/multi-version.json",
+      "exit_code": 0,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": true,
+        "classification": "conforming",
+        "codes": []
+      }
+    },
+    {
+      "id": "capabilities.invalid.exit-mismatch",
+      "operation": "capabilities",
+      "artifact": "valid/capabilities/minimal.json",
+      "exit_code": 1,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "capabilities.exit"
+        ]
+      }
+    },
+    {
+      "id": "capabilities.invalid.malformed-json",
+      "operation": "capabilities",
+      "artifact": "invalid/capabilities/malformed-json.json",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "unsupported",
+        "codes": [
+          "capabilities.json"
+        ]
+      }
+    },
+    {
+      "id": "capabilities.invalid.not-an-object",
+      "operation": "capabilities",
+      "artifact": "invalid/capabilities/not-an-object.json",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "unsupported",
+        "codes": [
+          "capabilities.json"
+        ]
+      }
+    },
+    {
+      "id": "capabilities.invalid.non-standard-constant",
+      "operation": "capabilities",
+      "artifact": "invalid/capabilities/non-standard-constant.json",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "unsupported",
+        "codes": [
+          "capabilities.json"
+        ]
+      }
+    },
+    {
+      "id": "capabilities.invalid.empty",
+      "operation": "capabilities",
+      "artifact": "invalid/capabilities/empty.json",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "unsupported",
+        "codes": [
+          "capabilities.json"
+        ]
+      }
+    },
+    {
+      "id": "capabilities.invalid.wrong-protocol",
+      "operation": "capabilities",
+      "artifact": "invalid/capabilities/wrong-protocol.json",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "unsupported",
+        "codes": [
+          "capabilities.schema"
+        ]
+      }
+    },
+    {
+      "id": "capabilities.invalid.missing-framework",
+      "operation": "capabilities",
+      "artifact": "invalid/capabilities/missing-framework.json",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "unsupported",
+        "codes": [
+          "capabilities.schema"
+        ]
+      }
+    },
+    {
+      "id": "capabilities.invalid.empty-framework-name",
+      "operation": "capabilities",
+      "artifact": "invalid/capabilities/empty-framework-name.json",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "unsupported",
+        "codes": [
+          "capabilities.schema"
+        ]
+      }
+    },
+    {
+      "id": "capabilities.invalid.empty-versions",
+      "operation": "capabilities",
+      "artifact": "invalid/capabilities/empty-versions.json",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "unsupported",
+        "codes": [
+          "capabilities.schema"
+        ]
+      }
+    },
+    {
+      "id": "capabilities.invalid.duplicate-versions",
+      "operation": "capabilities",
+      "artifact": "invalid/capabilities/duplicate-versions.json",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "unsupported",
+        "codes": [
+          "capabilities.schema"
+        ]
+      }
+    },
+    {
+      "id": "capabilities.invalid.non-positive-version",
+      "operation": "capabilities",
+      "artifact": "invalid/capabilities/non-positive-version.json",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "unsupported",
+        "codes": [
+          "capabilities.schema"
+        ]
+      }
+    },
+    {
+      "id": "capabilities.invalid.duplicate-extensions",
+      "operation": "capabilities",
+      "artifact": "invalid/capabilities/duplicate-extensions.json",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "unsupported",
+        "codes": [
+          "capabilities.schema"
+        ]
+      }
+    },
+    {
+      "id": "capabilities.invalid.unsorted-versions",
+      "operation": "capabilities",
+      "artifact": "invalid/capabilities/unsorted-versions.json",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "unsupported",
+        "codes": [
+          "capabilities.version_order"
+        ]
+      }
+    },
+    {
+      "id": "capabilities.invalid.without-v1",
+      "operation": "capabilities",
+      "artifact": "invalid/capabilities/without-v1.json",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "unsupported",
+        "codes": [
+          "capabilities.version_order"
+        ]
+      }
+    },
+    {
+      "id": "capabilities.invalid.no-terminal-lf",
+      "operation": "capabilities",
+      "artifact": "invalid/capabilities/no-terminal-lf.json",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "unsupported",
+        "codes": [
+          "capabilities.line_ending"
+        ]
+      }
+    },
+    {
+      "id": "capabilities.invalid.crlf",
+      "operation": "capabilities",
+      "artifact": "invalid/capabilities/crlf.json",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "unsupported",
+        "codes": [
+          "capabilities.line_ending"
+        ]
+      }
+    },
+    {
+      "id": "capabilities.invalid.byte-order-mark",
+      "operation": "capabilities",
+      "artifact": "invalid/capabilities/byte-order-mark.json",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "unsupported",
+        "codes": [
+          "artifact.encoding"
+        ]
+      }
+    },
+    {
+      "id": "capabilities.invalid.invalid-utf8",
+      "operation": "capabilities",
+      "artifact": "invalid/capabilities/invalid-utf8.json",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "unsupported",
+        "codes": [
+          "artifact.encoding"
+        ]
+      }
+    },
+    {
+      "id": "capabilities.invalid.missing",
+      "operation": "capabilities",
+      "artifact": "invalid/capabilities/does-not-exist.json",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "unsupported",
+        "codes": [
+          "artifact.missing"
+        ]
+      }
+    },
+    {
+      "id": "discovery.valid.empty",
+      "operation": "discovery",
+      "artifact": "valid/discovery/empty.jsonl",
+      "exit_code": 0,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": true,
+        "classification": "conforming",
+        "codes": []
+      }
+    },
+    {
+      "id": "discovery.valid.nested",
+      "operation": "discovery",
+      "artifact": "valid/discovery/nested.jsonl",
+      "exit_code": 0,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": true,
+        "classification": "conforming",
+        "codes": []
+      }
+    },
+    {
+      "id": "discovery.valid.astral-range",
+      "operation": "discovery",
+      "artifact": "valid/discovery/astral-range.jsonl",
+      "exit_code": 0,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": true,
+        "classification": "conforming",
+        "codes": []
+      }
+    },
+    {
+      "id": "discovery.valid.with-errors",
+      "operation": "discovery",
+      "artifact": "valid/discovery/with-errors.jsonl",
+      "exit_code": 1,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": true,
+        "classification": "discovery_failures",
+        "codes": []
+      }
+    },
+    {
+      "id": "discovery.valid.with-skip",
+      "operation": "discovery",
+      "artifact": "valid/discovery/with-skip.jsonl",
+      "exit_code": 0,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": true,
+        "classification": "conforming",
+        "codes": []
+      }
+    },
+    {
+      "id": "discovery.valid.additive",
+      "operation": "discovery",
+      "artifact": "valid/discovery/additive.jsonl",
+      "exit_code": 0,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": true,
+        "classification": "conforming",
+        "codes": []
+      }
+    },
+    {
+      "id": "discovery.invalid.exit-mismatch",
+      "operation": "discovery",
+      "artifact": "valid/discovery/empty.jsonl",
+      "exit_code": 1,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "discovery.exit"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.malformed-line",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/malformed-line.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "discovery.json"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.blank-line",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/blank-line.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "discovery.json"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.wrong-version",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/wrong-version.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "infrastructure_failure",
+        "codes": [
+          "discovery.end",
+          "discovery.incomplete",
+          "discovery.schema"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.unknown-event",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/unknown-event.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "discovery.schema"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.missing-start",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/missing-start.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "discovery.start"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.late-start",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/late-start.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "discovery.ordering"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.duplicate-start",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/duplicate-start.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "discovery.start"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.records-after-end",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/records-after-end.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "discovery.ordering"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.missing-end",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/missing-end.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "infrastructure_failure",
+        "codes": [
+          "discovery.end",
+          "discovery.incomplete"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.truncated",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/truncated.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "infrastructure_failure",
+        "codes": [
+          "discovery.end",
+          "discovery.incomplete",
+          "discovery.line_ending"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.crlf",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/crlf.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "infrastructure_failure",
+        "codes": [
+          "discovery.incomplete",
+          "discovery.line_ending"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.duplicate-id",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/duplicate-id.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "discovery.duplicate_id"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.unknown-parent",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/unknown-parent.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "discovery.parent"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.test-as-parent",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/test-as-parent.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "discovery.parent"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.non-canonical-path",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/non-canonical-path.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "discovery.path"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.non-canonical-root",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/non-canonical-root.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "discovery.path"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.range-order",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/range-order.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "discovery.range"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.range-without-path",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/range-without-path.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "discovery.range"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.skip-without-reason",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/skip-without-reason.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "discovery.skip"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.reason-without-skip",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/reason-without-skip.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "discovery.skip"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.non-runnable-skipped",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/non-runnable-skipped.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "discovery.skip"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.inherited-skip",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/inherited-skip.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "discovery.skip"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.count-mismatch",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/count-mismatch.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "discovery.counts"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.byte-order-mark",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/byte-order-mark.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "infrastructure_failure",
+        "codes": [
+          "artifact.encoding"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.invalid-utf8",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/invalid-utf8.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "infrastructure_failure",
+        "codes": [
+          "artifact.encoding"
+        ]
+      }
+    },
+    {
+      "id": "discovery.invalid.missing",
+      "operation": "discovery",
+      "artifact": "invalid/discovery/does-not-exist.jsonl",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "infrastructure_failure",
+        "codes": [
+          "artifact.missing"
+        ]
+      }
+    },
+    {
+      "id": "report.valid.run-all-pass",
+      "operation": "report",
+      "artifact": "valid/report/run-all-pass.tap",
+      "exit_code": 0,
+      "cancelled": false,
+      "discovery": "valid/discovery/nested.jsonl",
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": true,
+        "classification": "conforming",
+        "codes": []
+      }
+    },
+    {
+      "id": "report.invalid.exit-mismatch",
+      "operation": "report",
+      "artifact": "valid/report/run-all-pass.tap",
+      "exit_code": 1,
+      "cancelled": false,
+      "discovery": "valid/discovery/nested.jsonl",
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.exit"
+        ]
+      }
+    },
+    {
+      "id": "report.valid.empty-plan",
+      "operation": "report",
+      "artifact": "valid/report/empty-plan.tap",
+      "exit_code": 0,
+      "cancelled": false,
+      "discovery": "valid/discovery/empty.jsonl",
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": true,
+        "classification": "conforming",
+        "codes": []
+      }
+    },
+    {
+      "id": "report.valid.failure",
+      "operation": "report",
+      "artifact": "valid/report/failure.tap",
+      "exit_code": 1,
+      "cancelled": false,
+      "discovery": "valid/discovery/nested.jsonl",
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": true,
+        "classification": "test_failures",
+        "codes": []
+      }
+    },
+    {
+      "id": "report.valid.status-details",
+      "operation": "report",
+      "artifact": "valid/report/status-details.tap",
+      "exit_code": 1,
+      "cancelled": false,
+      "discovery": "valid/discovery/nested.jsonl",
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": true,
+        "classification": "test_failures",
+        "codes": []
+      }
+    },
+    {
+      "id": "report.valid.setup-error",
+      "operation": "report",
+      "artifact": "valid/report/setup-error.tap",
+      "exit_code": 1,
+      "cancelled": false,
+      "discovery": "valid/discovery/nested.jsonl",
+      "selections": [
+        "test-a"
+      ],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": true,
+        "classification": "test_failures",
+        "codes": []
+      }
+    },
+    {
+      "id": "report.valid.discovery-error-status",
+      "operation": "report",
+      "artifact": "valid/report/discovery-error-status.tap",
+      "exit_code": 1,
+      "cancelled": false,
+      "discovery": "valid/discovery/nested.jsonl",
+      "selections": [
+        "test-a"
+      ],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": true,
+        "classification": "test_failures",
+        "codes": []
+      }
+    },
+    {
+      "id": "report.valid.skip",
+      "operation": "report",
+      "artifact": "valid/report/skip.tap",
+      "exit_code": 0,
+      "cancelled": false,
+      "discovery": "valid/discovery/with-skip.jsonl",
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": true,
+        "classification": "conforming",
+        "codes": []
+      }
+    },
+    {
+      "id": "report.valid.suite-selection",
+      "operation": "report",
+      "artifact": "valid/report/suite-selection.tap",
+      "exit_code": 0,
+      "cancelled": false,
+      "discovery": "valid/discovery/nested.jsonl",
+      "selections": [
+        "suite-b"
+      ],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": true,
+        "classification": "conforming",
+        "codes": []
+      }
+    },
+    {
+      "id": "report.valid.overlap-selection",
+      "operation": "report",
+      "artifact": "valid/report/overlap-selection.tap",
+      "exit_code": 0,
+      "cancelled": false,
+      "discovery": "valid/discovery/nested.jsonl",
+      "selections": [
+        "suite-a",
+        "test-a",
+        "test-a"
+      ],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": true,
+        "classification": "conforming",
+        "codes": []
+      }
+    },
+    {
+      "id": "report.valid.bailout-before-plan",
+      "operation": "report",
+      "artifact": "valid/report/bailout-before-plan.tap",
+      "exit_code": 2,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": false,
+        "classification": "infrastructure_failure",
+        "codes": []
+      }
+    },
+    {
+      "id": "report.valid.bailout-after-plan",
+      "operation": "report",
+      "artifact": "valid/report/bailout-after-plan.tap",
+      "exit_code": 2,
+      "cancelled": false,
+      "discovery": "valid/discovery/nested.jsonl",
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": false,
+        "classification": "infrastructure_failure",
+        "codes": []
+      }
+    },
+    {
+      "id": "report.valid.cancelled-empty",
+      "operation": "report",
+      "artifact": "valid/report/cancelled-empty.tap",
+      "exit_code": null,
+      "cancelled": true,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": false,
+        "classification": "cancelled",
+        "codes": []
+      }
+    },
+    {
+      "id": "report.valid.cancelled-missing",
+      "operation": "report",
+      "artifact": "valid/report/does-not-exist.tap",
+      "exit_code": null,
+      "cancelled": true,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": false,
+        "classification": "cancelled",
+        "codes": []
+      }
+    },
+    {
+      "id": "report.valid.cancelled-version-only",
+      "operation": "report",
+      "artifact": "valid/report/cancelled-version-only.tap",
+      "exit_code": null,
+      "cancelled": true,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": false,
+        "classification": "cancelled",
+        "codes": []
+      }
+    },
+    {
+      "id": "report.valid.cancelled-preamble",
+      "operation": "report",
+      "artifact": "valid/report/cancelled-preamble.tap",
+      "exit_code": null,
+      "cancelled": true,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": false,
+        "classification": "cancelled",
+        "codes": []
+      }
+    },
+    {
+      "id": "report.valid.cancelled-plan",
+      "operation": "report",
+      "artifact": "valid/report/cancelled-plan.tap",
+      "exit_code": null,
+      "cancelled": true,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": false,
+        "classification": "cancelled",
+        "codes": []
+      }
+    },
+    {
+      "id": "report.valid.cancelled-one-point",
+      "operation": "report",
+      "artifact": "valid/report/cancelled-one-point.tap",
+      "exit_code": null,
+      "cancelled": true,
+      "discovery": "valid/discovery/nested.jsonl",
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": false,
+        "classification": "cancelled",
+        "codes": []
+      }
+    },
+    {
+      "id": "report.valid.cancelled-partial-point",
+      "operation": "report",
+      "artifact": "valid/report/cancelled-partial-point.tap",
+      "exit_code": null,
+      "cancelled": true,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 0,
+        "valid": true,
+        "complete": false,
+        "classification": "cancelled",
+        "codes": []
+      }
+    },
+    {
+      "id": "report.invalid.cancelled-with-exit",
+      "operation": "report",
+      "artifact": "valid/report/cancelled-one-point.tap",
+      "exit_code": 1,
+      "cancelled": true,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "invalid",
+        "codes": [
+          "report.cancellation"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.cancelled-satisfied-plan",
+      "operation": "report",
+      "artifact": "invalid/report/cancelled-satisfied-plan.tap",
+      "exit_code": null,
+      "cancelled": true,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "invalid",
+        "codes": [
+          "report.cancellation"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.cancelled-bailout",
+      "operation": "report",
+      "artifact": "invalid/report/cancelled-bailout.tap",
+      "exit_code": null,
+      "cancelled": true,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "invalid",
+        "codes": [
+          "report.cancellation"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.cancelled-malformed-unit",
+      "operation": "report",
+      "artifact": "invalid/report/cancelled-malformed-unit.tap",
+      "exit_code": null,
+      "cancelled": true,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "invalid",
+        "codes": [
+          "report.cancellation",
+          "report.point"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.bad-header",
+      "operation": "report",
+      "artifact": "invalid/report/bad-header.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "invalid",
+        "codes": [
+          "report.header"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.bad-adapter-comment",
+      "operation": "report",
+      "artifact": "invalid/report/bad-adapter-comment.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "invalid",
+        "codes": [
+          "report.adapter_version"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.missing-plan",
+      "operation": "report",
+      "artifact": "invalid/report/missing-plan.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "invalid",
+        "codes": [
+          "report.incomplete",
+          "report.plan"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.late-plan",
+      "operation": "report",
+      "artifact": "invalid/report/late-plan.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "invalid",
+        "codes": [
+          "report.incomplete",
+          "report.plan"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.todo-directive",
+      "operation": "report",
+      "artifact": "invalid/report/todo-directive.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.directive"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.unrecognized-line",
+      "operation": "report",
+      "artifact": "invalid/report/unrecognized-line.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.point"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.wrong-numbering",
+      "operation": "report",
+      "artifact": "invalid/report/wrong-numbering.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.point"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.too-many-points",
+      "operation": "report",
+      "artifact": "invalid/report/too-many-points.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.point"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.missing-yaml",
+      "operation": "report",
+      "artifact": "invalid/report/missing-yaml.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "invalid",
+        "codes": [
+          "report.incomplete",
+          "report.yaml"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.malformed-yaml",
+      "operation": "report",
+      "artifact": "invalid/report/malformed-yaml.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.yaml"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.unindented-yaml",
+      "operation": "report",
+      "artifact": "invalid/report/unindented-yaml.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.yaml"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.missing-metadata",
+      "operation": "report",
+      "artifact": "invalid/report/missing-metadata.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.metadata"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.negative-duration",
+      "operation": "report",
+      "artifact": "invalid/report/negative-duration.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.metadata"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.boolean-duration",
+      "operation": "report",
+      "artifact": "invalid/report/boolean-duration.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.metadata"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.unknown-status-detail",
+      "operation": "report",
+      "artifact": "invalid/report/unknown-status-detail.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.metadata"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.detail-on-pass",
+      "operation": "report",
+      "artifact": "invalid/report/detail-on-pass.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.status"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.failure-without-message",
+      "operation": "report",
+      "artifact": "invalid/report/failure-without-message.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.metadata"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.skip-on-failure",
+      "operation": "report",
+      "artifact": "invalid/report/skip-on-failure.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.status"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.bad-location",
+      "operation": "report",
+      "artifact": "invalid/report/bad-location.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.location"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.duplicate-id",
+      "operation": "report",
+      "artifact": "invalid/report/duplicate-id.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.duplicate_id"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.unsatisfied-plan",
+      "operation": "report",
+      "artifact": "invalid/report/unsatisfied-plan.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "infrastructure_failure",
+        "codes": [
+          "report.incomplete"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.bailout-after-satisfied-plan",
+      "operation": "report",
+      "artifact": "invalid/report/bailout-after-satisfied-plan.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.bailout"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.content-after-bailout",
+      "operation": "report",
+      "artifact": "invalid/report/content-after-bailout.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "invalid",
+        "codes": [
+          "report.bailout"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.crlf",
+      "operation": "report",
+      "artifact": "invalid/report/crlf.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "infrastructure_failure",
+        "codes": [
+          "report.incomplete",
+          "report.line_ending"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.no-terminal-lf",
+      "operation": "report",
+      "artifact": "invalid/report/no-terminal-lf.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "infrastructure_failure",
+        "codes": [
+          "report.incomplete",
+          "report.line_ending"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.byte-order-mark",
+      "operation": "report",
+      "artifact": "invalid/report/byte-order-mark.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "infrastructure_failure",
+        "codes": [
+          "artifact.encoding"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.missing",
+      "operation": "report",
+      "artifact": "invalid/report/does-not-exist.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "infrastructure_failure",
+        "codes": [
+          "artifact.missing"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.unknown-point-id",
+      "operation": "report",
+      "artifact": "invalid/report/unknown-point-id.tap",
+      "exit_code": 0,
+      "cancelled": false,
+      "discovery": "valid/discovery/nested.jsonl",
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.selection"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.wrong-order",
+      "operation": "report",
+      "artifact": "invalid/report/wrong-order.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": "valid/discovery/nested.jsonl",
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.order"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.standalone-error-id",
+      "operation": "report",
+      "artifact": "invalid/report/standalone-error-id.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": "valid/discovery/with-errors.jsonl",
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.selection"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.skip-ignored",
+      "operation": "report",
+      "artifact": "invalid/report/skip-ignored.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": "valid/discovery/with-skip.jsonl",
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.skip"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.skip-reason-mismatch",
+      "operation": "report",
+      "artifact": "invalid/report/skip-reason-mismatch.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": "valid/discovery/with-skip.jsonl",
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.skip"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.non-runnable-selection",
+      "operation": "report",
+      "artifact": "invalid/report/non-runnable-selection.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": "valid/discovery/nested.jsonl",
+      "selections": [
+        "test-d"
+      ],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.selection"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.empty-suite-selection",
+      "operation": "report",
+      "artifact": "invalid/report/empty-suite-selection.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": "valid/discovery/nested.jsonl",
+      "selections": [
+        "suite-empty"
+      ],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.selection"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.missing-discovery-context",
+      "operation": "report",
+      "artifact": "valid/report/run-all-pass.tap",
+      "exit_code": 0,
+      "cancelled": false,
+      "discovery": "invalid/discovery/does-not-exist.jsonl",
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "artifact.missing"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.nonconforming-discovery-context",
+      "operation": "report",
+      "artifact": "valid/report/run-all-pass.tap",
+      "exit_code": 0,
+      "cancelled": false,
+      "discovery": "invalid/discovery/count-mismatch.jsonl",
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.selection"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.encoded-discovery-context",
+      "operation": "report",
+      "artifact": "valid/report/run-all-pass.tap",
+      "exit_code": 0,
+      "cancelled": false,
+      "discovery": "invalid/discovery/byte-order-mark.jsonl",
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "artifact.encoding"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.oversized-plan-number",
+      "operation": "report",
+      "artifact": "invalid/report/oversized-plan-number.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": false,
+        "classification": "invalid",
+        "codes": [
+          "report.plan",
+          "report.incomplete"
+        ]
+      }
+    },
+    {
+      "id": "report.invalid.unconstructible-yaml",
+      "operation": "report",
+      "artifact": "invalid/report/unconstructible-yaml.tap",
+      "exit_code": null,
+      "cancelled": false,
+      "discovery": null,
+      "selections": [],
+      "expected": {
+        "validator_exit": 1,
+        "valid": false,
+        "complete": true,
+        "classification": "invalid",
+        "codes": [
+          "report.yaml"
+        ]
+      }
+    }
+  ]
+}

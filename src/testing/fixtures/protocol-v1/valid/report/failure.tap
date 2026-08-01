@@ -1,0 +1,29 @@
+TAP version 13
+# foundry-test-adapter: 1
+1..3
+ok 1 - MathTests.adds numbers
+  ---
+  _foundry:
+    id: "test-a"
+    duration_ms: 1
+    status_detail: ""
+  ...
+not ok 2 - MathTests.adds numbers
+  ---
+  message: "expected 4, got 5"
+  at:
+    fileName: "res://tests/math_tests.fs"
+    lineNumber: 5
+    columnNumber: 1
+  _foundry:
+    id: "test-b"
+    duration_ms: 1
+    status_detail: ""
+  ...
+ok 3 - StringTests.joins parts
+  ---
+  _foundry:
+    id: "test-c"
+    duration_ms: 1
+    status_detail: ""
+  ...

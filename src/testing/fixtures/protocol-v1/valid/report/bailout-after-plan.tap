@@ -1,0 +1,11 @@
+TAP version 13
+# foundry-test-adapter: 1
+1..3
+ok 1 - MathTests.adds numbers
+  ---
+  _foundry:
+    id: "test-a"
+    duration_ms: 1
+    status_detail: ""
+  ...
+Bail out! the runtime terminated the suite

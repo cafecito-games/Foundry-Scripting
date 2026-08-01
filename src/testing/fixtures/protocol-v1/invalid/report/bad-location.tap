@@ -1,0 +1,15 @@
+TAP version 13
+# foundry-test-adapter: 1
+1..1
+not ok 1 - MathTests.adds numbers
+  ---
+  message: "failed"
+  at:
+    fileName: "res://tests/math_tests.fs"
+    lineNumber: 0
+    columnNumber: 1
+  _foundry:
+    id: "test-a"
+    duration_ms: 1
+    status_detail: ""
+  ...

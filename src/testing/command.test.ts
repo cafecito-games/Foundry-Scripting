@@ -3,6 +3,7 @@ import {
   TestAdapterConfigurationError,
   createTestAdapterCapabilitiesCommand,
   createTestAdapterDiscoveryCommand,
+  createTestAdapterRunCommand,
 } from "./command.js";
 
 const baseRequest = {
@@ -243,6 +244,76 @@ describe("test adapter discovery command", () => {
       expect(error.message).toBe(
         "Use a negotiated positive integer Foundry test adapter protocol version.",
       );
+    },
+  );
+});
+
+describe("test adapter run command", () => {
+  const runRequest = {
+    ...baseRequest,
+    protocolVersion: 1,
+    reportPath: "/tmp/report.tap",
+    selections: ["test-b", "--"] as readonly string[],
+  };
+
+  it("places repeatable exact selections before opaque framework arguments", () => {
+    const command = createTestAdapterRunCommand({
+      ...runRequest,
+      frameworkArgs: ["--select", "framework-value"],
+    });
+
+    expect(command).toEqual({
+      command: "/opt/foundry",
+      cwd: "/workspace/game",
+      args: [
+        "--headless",
+        "--no-header",
+        "project",
+        "test",
+        "--project",
+        "/workspace/game",
+        "--runner",
+        "res://tests/runner.fs",
+        "--",
+        "adapter",
+        "run",
+        "--protocol-version",
+        "1",
+        "--report",
+        "/tmp/report.tap",
+        "--select",
+        "test-b",
+        "--select",
+        "--",
+        "--",
+        "--select",
+        "framework-value",
+      ],
+    });
+  });
+
+  it("omits only the adapter-level boundary for empty framework arguments", () => {
+    expect(createTestAdapterRunCommand(runRequest).args.slice(-9)).toEqual([
+      "run",
+      "--protocol-version",
+      "1",
+      "--report",
+      "/tmp/report.tap",
+      "--select",
+      "test-b",
+      "--select",
+      "--",
+    ]);
+  });
+
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects invalid protocol version %s",
+    (protocolVersion) => {
+      expect(
+        captureConfigurationError(() =>
+          createTestAdapterRunCommand({ ...runRequest, protocolVersion }),
+        ),
+      ).toMatchObject({ kind: "invalid_protocol_version" });
     },
   );
 });
