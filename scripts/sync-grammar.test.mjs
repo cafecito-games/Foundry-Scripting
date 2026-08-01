@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -210,5 +211,22 @@ describe("sync-grammar command", () => {
 
     expect(error.stderr).toContain("Usage: node scripts/sync-grammar.mjs [--check]");
     expect(requests).toEqual([]);
+  });
+});
+
+describe("grammar package commands", () => {
+  it("exposes explicit sync and check commands without a build lifecycle hook", () => {
+    const require = createRequire(import.meta.url);
+    const packageJson = require("../package.json");
+
+    expect(packageJson.scripts["sync-grammar"]).toBe(
+      "node scripts/sync-grammar.mjs",
+    );
+    expect(packageJson.scripts["check:grammar-sync"]).toBe(
+      "node scripts/sync-grammar.mjs --check",
+    );
+    expect(packageJson.scripts.build).toBe("node esbuild.mjs");
+    expect(packageJson.scripts.prepare).toBeUndefined();
+    expect(packageJson.scripts.prebuild).toBeUndefined();
   });
 });
