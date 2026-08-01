@@ -38,6 +38,8 @@ export type TestAdapterFailureKind =
   | "malformed_report"
   | "incomplete_report"
   | "report_exit_mismatch"
+  | "process_crash"
+  | "readiness_timeout"
   | TestDiscoveryParseErrorKind
   | "discovery_exit_mismatch";
 

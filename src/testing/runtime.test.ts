@@ -35,6 +35,53 @@ const cleanModel: TestDiscoveryModel = {
 };
 
 describe("testing runtime", () => {
+  it("invalidates changed configuration synchronously before async work", async () => {
+    const nextNegotiation = deferred<typeof negotiatedAdapter>();
+    const negotiate = vi
+      .fn()
+      .mockResolvedValueOnce(negotiatedAdapter)
+      .mockImplementationOnce(() => nextNegotiation.promise);
+    const harness = createHarness({ negotiate });
+    await harness.runtime.configure(enabledConfiguration);
+    expect(harness.runtime.readyContext()).toBeDefined();
+
+    const changed = harness.runtime.configure({
+      ...enabledConfiguration,
+      runner: "res://tests/changed.fs",
+    });
+
+    expect(harness.runtime.readyContext()).toBeUndefined();
+    nextNegotiation.resolve(negotiatedAdapter);
+    await changed;
+  });
+
+  it("retains same-configuration ready context during and after a failed refresh", async () => {
+    const nextNegotiation = deferred<typeof negotiatedAdapter>();
+    const failure = new TestAdapterFailure(
+      "malformed_discovery",
+      "Record 4 is not valid JSON.",
+    );
+    const negotiate = vi
+      .fn()
+      .mockResolvedValueOnce(negotiatedAdapter)
+      .mockImplementationOnce(() => nextNegotiation.promise);
+    const discover = vi
+      .fn()
+      .mockResolvedValueOnce(cleanModel)
+      .mockRejectedValueOnce(failure);
+    const harness = createHarness({ negotiate, discover });
+    await harness.runtime.configure(enabledConfiguration);
+    const original = harness.runtime.readyContext();
+
+    const refresh = harness.runtime.refresh();
+    expect(harness.runtime.readyContext()).toBe(original);
+    nextNegotiation.resolve(negotiatedAdapter);
+    await refresh;
+
+    expect(harness.runtime.readyContext()).toBe(original);
+    expect(harness.states.at(-1)).toEqual({ kind: "error", failure });
+  });
+
   it("exposes ready context only for a completed current generation", async () => {
     const nextNegotiation = deferred<typeof negotiatedAdapter>();
     const negotiate = vi
@@ -45,14 +92,15 @@ describe("testing runtime", () => {
 
     expect(harness.runtime.readyContext()).toBeUndefined();
     await harness.runtime.configure(enabledConfiguration);
-    expect(harness.runtime.readyContext()).toEqual({
+    const original = harness.runtime.readyContext();
+    expect(original).toEqual({
       configuration: enabledConfiguration,
       adapter: negotiatedAdapter,
       model: cleanModel,
     });
 
     const refresh = harness.runtime.refresh();
-    expect(harness.runtime.readyContext()).toBeUndefined();
+    expect(harness.runtime.readyContext()).toBe(original);
     nextNegotiation.resolve(negotiatedAdapter);
     await refresh;
     expect(harness.runtime.readyContext()).toMatchObject({
@@ -193,9 +241,9 @@ describe("testing runtime", () => {
       runner: "res://tests/changed.fs",
     });
     expect(discoverySignals[0]?.aborted).toBe(true);
+    await vi.waitFor(() => expect(discover).toHaveBeenCalledTimes(2));
     first.resolve(cleanModel);
     await firstConfigure;
-    await vi.waitFor(() => expect(discover).toHaveBeenCalledTimes(2));
     second.resolve(cleanModel);
     await secondConfigure;
 
@@ -302,6 +350,86 @@ describe("testing runtime", () => {
       "negotiating",
       "discovering",
     ]);
+  });
+
+  it("cancels an explicit refresh while retaining the last good context", async () => {
+    let refreshSignal: AbortSignal | undefined;
+    const discover = vi
+      .fn()
+      .mockResolvedValueOnce(cleanModel)
+      .mockImplementationOnce((_request, signal: AbortSignal) => {
+        refreshSignal = signal;
+        return new Promise<TestDiscoveryModel>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(abortError()), {
+            once: true,
+          });
+        });
+      });
+    const harness = createHarness({ discover });
+    await harness.runtime.configure(enabledConfiguration);
+    const original = harness.runtime.readyContext();
+    const controller = new AbortController();
+
+    const refresh = harness.runtime.refresh(controller.signal);
+    await vi.waitFor(() => expect(refreshSignal).toBeDefined());
+    controller.abort();
+    await refresh;
+
+    expect(refreshSignal?.aborted).toBe(true);
+    expect(harness.runtime.readyContext()).toBe(original);
+    expect(harness.states.at(-1)).toEqual({
+      kind: "refresh_cancelled",
+      adapter: negotiatedAdapter,
+    });
+  });
+
+  it("does not publish cancellation from a superseded refresh", async () => {
+    const first = deferred<TestDiscoveryModel>();
+    const discover = vi
+      .fn()
+      .mockResolvedValueOnce(cleanModel)
+      .mockImplementationOnce(() => first.promise)
+      .mockResolvedValueOnce(cleanModel);
+    const harness = createHarness({ discover });
+    await harness.runtime.configure(enabledConfiguration);
+    const controller = new AbortController();
+    const firstRefresh = harness.runtime.refresh(controller.signal);
+    await vi.waitFor(() => expect(discover).toHaveBeenCalledTimes(2));
+
+    const newer = harness.runtime.refresh();
+    controller.abort();
+    first.reject(abortError());
+    await Promise.all([firstRefresh, newer]);
+
+    expect(
+      harness.states.some((state) => state.kind === "refresh_cancelled"),
+    ).toBe(false);
+    expect(harness.states.at(-1)?.kind).toBe("ready");
+  });
+
+  it("bounds stop when an outstanding operation ignores abort", async () => {
+    vi.useFakeTimers();
+    const never = new Promise<typeof negotiatedAdapter>(() => undefined);
+    const harness = createHarness({
+      negotiate: vi.fn(() => never),
+      lifecycleTimeoutMs: 5_000,
+    });
+    const configure = harness.runtime.configure(enabledConfiguration);
+
+    const stop = harness.runtime.stop();
+    let stopped = false;
+    void stop.then(() => {
+      stopped = true;
+    });
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(stopped).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await stop;
+
+    expect(stopped).toBe(true);
+    expect(harness.states.at(-1)).toEqual({ kind: "disabled" });
+    void configure;
+    vi.useRealTimers();
   });
 
   it("publishes negotiation failure without starting discovery", async () => {

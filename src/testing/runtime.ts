@@ -26,6 +26,7 @@ export interface TestingRuntimeOptions {
   readonly onDiscovery: (project: string, model: TestDiscoveryModel) => void;
   readonly onClear: () => void;
   readonly onState: (state: TestingState) => void;
+  readonly lifecycleTimeoutMs?: number;
 }
 
 export interface TestingReadyContext {
@@ -45,72 +46,89 @@ export class TestingRuntime {
   private configurationKey: string | undefined;
   private configuration: TestingRuntimeConfiguration | undefined;
   private active: ActiveOperation | undefined;
+  private readonly operations = new Set<ActiveOperation>();
   private stopped = false;
   private stopPromise: Promise<void> | undefined;
   private currentStateKind: TestingState["kind"] | undefined;
   private ready: TestingReadyContext | undefined;
+  private readonly lifecycleTimeoutMs: number;
 
-  constructor(private readonly options: TestingRuntimeOptions) {}
-
-  async configure(configuration: TestingRuntimeConfiguration): Promise<void> {
-    this.configuration = configuration;
-    await this.start(configuration, false);
+  constructor(private readonly options: TestingRuntimeOptions) {
+    this.lifecycleTimeoutMs = options.lifecycleTimeoutMs ?? 5_000;
   }
 
-  async refresh(): Promise<void> {
+  configure(configuration: TestingRuntimeConfiguration): Promise<void> {
+    this.configuration = configuration;
+    const key = configurationKey(configuration);
+    if (key !== this.configurationKey) {
+      this.ready = undefined;
+    }
+    return this.start(configuration, false);
+  }
+
+  refresh(signal?: AbortSignal): Promise<void> {
     const configuration = this.configuration;
     if (configuration === undefined || !configuration.enabled) {
-      return;
+      return Promise.resolve();
     }
-    await this.start(configuration, true);
+    return this.start(configuration, true, signal);
   }
 
-  private async start(
+  private start(
     configuration: TestingRuntimeConfiguration,
     force: boolean,
+    externalSignal?: AbortSignal,
   ): Promise<void> {
     if (this.stopped) {
-      return;
+      return Promise.resolve();
     }
     const key = configurationKey(configuration);
     if (!force && key === this.configurationKey) {
-      return;
+      return Promise.resolve();
     }
     this.configurationKey = key;
     const generation = ++this.generation;
-    this.ready = undefined;
     const previous = this.active;
 
     if (!configuration.enabled) {
       this.publish({ kind: "disabled" });
       this.options.onClear();
-    }
-    if (previous !== undefined) {
-      previous.controller.abort();
-      await previous.completion;
-    }
-    if (this.stopped || generation !== this.generation || !configuration.enabled) {
-      return;
+      previous?.controller.abort();
+      this.active = undefined;
+      return Promise.resolve();
     }
 
+    previous?.controller.abort();
     this.publish({ kind: "negotiating", runner: configuration.runner });
     const controller = new AbortController();
+    const disposeExternalSignal = linkAbortSignal(externalSignal, controller);
     const request: TestAdapterNegotiationRequest = {
       enginePath: configuration.enginePath,
       project: configuration.project,
       runner: configuration.runner,
       frameworkArgs: configuration.frameworkArgs,
     };
-    const operation: ActiveOperation = {
+    const operation = {} as ActiveOperation;
+    const completion = this.completeGeneration(
+      generation,
+      request,
+      controller.signal,
+      externalSignal,
+    ).finally(() => {
+      disposeExternalSignal();
+      this.operations.delete(operation);
+      if (this.active === operation) {
+        this.active = undefined;
+      }
+    });
+    Object.assign(operation, {
       generation,
       controller,
-      completion: this.completeGeneration(generation, request, controller.signal),
-    };
+      completion,
+    });
+    this.operations.add(operation);
     this.active = operation;
-    await operation.completion;
-    if (this.active === operation) {
-      this.active = undefined;
-    }
+    return operation.completion;
   }
 
   stop(): Promise<void> {
@@ -122,13 +140,16 @@ export class TestingRuntime {
     this.ready = undefined;
     this.generation += 1;
     this.publish({ kind: "disabled" });
-    const operation = this.active;
-    operation?.controller.abort();
+    const operations = [...this.operations];
+    this.active = undefined;
+    for (const operation of operations) {
+      operation.controller.abort();
+    }
     this.stopPromise = (async () => {
-      await operation?.completion;
-      if (this.active === operation) {
-        this.active = undefined;
-      }
+      await settleWithin(
+        operations.map((operation) => operation.completion),
+        this.lifecycleTimeoutMs,
+      );
     })();
     return this.stopPromise;
   }
@@ -141,10 +162,12 @@ export class TestingRuntime {
     generation: number,
     request: TestAdapterNegotiationRequest,
     signal: AbortSignal,
+    externalSignal: AbortSignal | undefined,
   ): Promise<void> {
     try {
       const adapter = await this.options.negotiate(request, signal);
-      if (!this.isCurrent(generation)) {
+      if (!this.isCurrent(generation) || signal.aborted) {
+        this.publishExternalCancellation(generation, externalSignal);
         return;
       }
       this.publish({ kind: "discovering", adapter });
@@ -162,7 +185,8 @@ export class TestingRuntime {
         },
         signal,
       );
-      if (!this.isCurrent(generation)) {
+      if (!this.isCurrent(generation) || signal.aborted) {
+        this.publishExternalCancellation(generation, externalSignal);
         return;
       }
       this.options.onDiscovery(request.project, model);
@@ -182,7 +206,11 @@ export class TestingRuntime {
         });
       }
     } catch (error) {
-      if (!this.isCurrent(generation) || isAbortError(error)) {
+      if (!this.isCurrent(generation)) {
+        return;
+      }
+      if (isAbortError(error) || signal.aborted) {
+        this.publishExternalCancellation(generation, externalSignal);
         return;
       }
       const failure =
@@ -194,6 +222,22 @@ export class TestingRuntime {
               { cause: error },
             );
       this.publish({ kind: "error", failure });
+    }
+  }
+
+  private publishExternalCancellation(
+    generation: number,
+    externalSignal: AbortSignal | undefined,
+  ): void {
+    if (
+      this.isCurrent(generation) &&
+      externalSignal !== undefined &&
+      externalSignal.aborted
+    ) {
+      this.publish({
+        kind: "refresh_cancelled",
+        ...(this.ready === undefined ? {} : { adapter: this.ready.adapter }),
+      });
     }
   }
 
@@ -238,4 +282,40 @@ function isAbortError(error: unknown): boolean {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function linkAbortSignal(
+  external: AbortSignal | undefined,
+  controller: AbortController,
+): () => void {
+  if (external === undefined) {
+    return () => undefined;
+  }
+  const onAbort = (): void => controller.abort();
+  external.addEventListener("abort", onAbort, { once: true });
+  if (external.aborted) {
+    controller.abort();
+  }
+  return () => external.removeEventListener("abort", onAbort);
+}
+
+async function settleWithin(
+  completions: readonly Promise<void>[],
+  timeoutMs: number,
+): Promise<void> {
+  if (completions.length === 0) {
+    return;
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+    timer.unref?.();
+  });
+  await Promise.race([
+    Promise.allSettled(completions).then(() => undefined),
+    deadline,
+  ]);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+  }
 }
