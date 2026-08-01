@@ -23,6 +23,7 @@ export class TestAdapterProcessFailure extends Error {
 export interface TestAdapterProcessResult {
   readonly kind: "exited" | "cancelled";
   readonly exitCode?: number;
+  readonly signal?: NodeJS.Signals;
   readonly stdout: string;
   readonly stderr: string;
 }
@@ -38,11 +39,19 @@ export interface FoundryTestAdapterProcessOptions {
   readonly shutdownDeadlineMs?: number;
 }
 
+interface ActiveTestAdapterProcess {
+  readonly controller: AbortController;
+  readonly completion: Promise<TestAdapterProcessResult>;
+}
+
 export class FoundryTestAdapterProcess {
   private readonly spawnProcess;
   private readonly onOutput;
   private readonly terminationGraceMs;
   private readonly shutdownDeadlineMs;
+  private readonly active = new Set<ActiveTestAdapterProcess>();
+  private stopped = false;
+  private stopPromise: Promise<void> | undefined;
 
   constructor(options: FoundryTestAdapterProcessOptions = {}) {
     this.spawnProcess = options.spawnProcess ?? spawn;
@@ -56,7 +65,7 @@ export class FoundryTestAdapterProcess {
     signal: AbortSignal,
     onOutput?: (text: string, stream: "stdout" | "stderr") => void,
   ): Promise<TestAdapterProcessResult> {
-    if (signal.aborted) {
+    if (this.stopped || signal.aborted) {
       return Promise.resolve(cancelledResult("", ""));
     }
 
@@ -71,7 +80,14 @@ export class FoundryTestAdapterProcess {
       return Promise.reject(toProcessFailure(error));
     }
 
-    return new Promise((resolve, reject) => {
+    const controller = new AbortController();
+    const onCallerAbort = (): void => controller.abort();
+    signal.addEventListener("abort", onCallerAbort, { once: true });
+    if (signal.aborted) {
+      controller.abort();
+    }
+    const operationSignal = controller.signal;
+    const completion = new Promise<TestAdapterProcessResult>((resolve, reject) => {
       let stdout = "";
       let stderr = "";
       let cancelled = false;
@@ -91,11 +107,14 @@ export class FoundryTestAdapterProcess {
         this.onOutput?.(text, "stderr");
         onOutput?.(text, "stderr");
       };
+      const ignoreLateError = (): void => undefined;
       const cleanup = (): void => {
-        signal.removeEventListener("abort", onAbort);
+        signal.removeEventListener("abort", onCallerAbort);
+        operationSignal.removeEventListener("abort", onAbort);
         child.stdout?.off("data", onStdout);
         child.stderr?.off("data", onStderr);
         child.off("error", onError);
+        child.once("error", ignoreLateError);
         child.off("close", onClose);
         if (terminationTimer !== undefined) {
           clearTimeout(terminationTimer);
@@ -127,13 +146,17 @@ export class FoundryTestAdapterProcess {
           fail(error);
         }
       };
-      const onClose = (code: number | null): void => {
+      const onClose = (
+        code: number | null,
+        closeSignal: NodeJS.Signals | null,
+      ): void => {
         finish(
           cancelled
             ? cancelledResult(stdout, stderr)
             : {
                 kind: "exited",
-                exitCode: code ?? 1,
+                ...(code === null ? {} : { exitCode: code }),
+                ...(closeSignal === null ? {} : { signal: closeSignal }),
                 stdout,
                 stderr,
               },
@@ -161,11 +184,33 @@ export class FoundryTestAdapterProcess {
       child.stderr?.on("data", onStderr);
       child.once("error", onError);
       child.once("close", onClose);
-      signal.addEventListener("abort", onAbort, { once: true });
-      if (signal.aborted) {
+      operationSignal.addEventListener("abort", onAbort, { once: true });
+      if (operationSignal.aborted) {
         onAbort();
       }
     });
+    let operation: ActiveTestAdapterProcess;
+    const trackedCompletion = completion.finally(() => {
+      this.active.delete(operation);
+    });
+    operation = { controller, completion: trackedCompletion };
+    this.active.add(operation);
+    return trackedCompletion;
+  }
+
+  stop(): Promise<void> {
+    if (this.stopPromise !== undefined) {
+      return this.stopPromise;
+    }
+    this.stopped = true;
+    const operations = [...this.active];
+    for (const operation of operations) {
+      operation.controller.abort();
+    }
+    this.stopPromise = Promise.allSettled(
+      operations.map((operation) => operation.completion),
+    ).then(() => undefined);
+    return this.stopPromise;
   }
 }
 
