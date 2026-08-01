@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type {
+  ClientCapabilities,
+  ServerCapabilities,
+} from "vscode-languageclient/node";
 import {
+  FoundrySemanticTokensFeature,
   inspectSemanticTokensProvider,
   validateSemanticTokensResponse,
 } from "./semantic-tokens.js";
@@ -159,5 +164,186 @@ describe("semantic token full response contract", () => {
       ok: false,
       reason,
     });
+  });
+});
+
+describe("Foundry semantic token client feature", () => {
+  function createFeature() {
+    const output = { appendLine: vi.fn() };
+    return {
+      feature: new FoundrySemanticTokensFeature(output),
+      output,
+    };
+  }
+
+  it("adds final once to the library modifier list without changing token types", () => {
+    const { feature } = createFeature();
+    const capabilities = {
+      textDocument: {
+        semanticTokens: {
+          tokenTypes: ["class", "keyword"],
+          tokenModifiers: ["declaration", "readonly"],
+          formats: ["relative"],
+          requests: { full: true },
+        },
+      },
+    };
+
+    feature.fillClientCapabilities(capabilities as ClientCapabilities);
+    feature.fillClientCapabilities(capabilities as ClientCapabilities);
+
+    expect(capabilities.textDocument.semanticTokens.tokenTypes).toEqual([
+      "class",
+      "keyword",
+    ]);
+    expect(capabilities.textDocument.semanticTokens.tokenModifiers).toEqual([
+      "declaration",
+      "readonly",
+      "final",
+    ]);
+  });
+
+  it("retains and logs a supported server-advertised legend", () => {
+    const { feature, output } = createFeature();
+    const capabilities = {
+      completionProvider: {},
+      semanticTokensProvider: fullOnlyProvider,
+    };
+
+    feature.preInitialize(capabilities);
+
+    expect(capabilities.semanticTokensProvider).toBe(fullOnlyProvider);
+    expect(output.appendLine).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(output.appendLine.mock.calls[0]?.[0]))).toMatchObject({
+      level: "info",
+      event: "lsp.semantic_tokens.enabled",
+      tokenTypeCount: 2,
+      tokenModifierCount: 2,
+    });
+  });
+
+  it("logs a missing provider as an available TextMate fallback", () => {
+    const { feature, output } = createFeature();
+    const capabilities = { completionProvider: {} };
+
+    feature.preInitialize(capabilities);
+
+    expect(capabilities).toEqual({ completionProvider: {} });
+    expect(JSON.parse(String(output.appendLine.mock.calls[0]?.[0]))).toMatchObject({
+      level: "info",
+      event: "lsp.semantic_tokens.unavailable",
+    });
+  });
+
+  it.each([
+    [
+      {
+        ...fullOnlyProvider,
+        legend: { tokenTypes: [], tokenModifiers: ["final"] },
+      },
+      "lsp.semantic_tokens.capability_malformed",
+      "token_types_invalid",
+    ],
+    [
+      { ...fullOnlyProvider, range: true },
+      "lsp.semantic_tokens.capability_mismatch",
+      "range_supported",
+    ],
+  ] as const)(
+    "removes only rejected semantic capability %#",
+    (provider, event, reason) => {
+      const { feature, output } = createFeature();
+      const capabilities: {
+        completionProvider: object;
+        semanticTokensProvider?: unknown;
+      } = {
+        completionProvider: {},
+        semanticTokensProvider: provider,
+      };
+
+      feature.preInitialize(capabilities as ServerCapabilities);
+
+      expect(capabilities).toEqual({ completionProvider: {} });
+      expect(JSON.parse(String(output.appendLine.mock.calls[0]?.[0]))).toMatchObject({
+        level: "warn",
+        event,
+        reason,
+      });
+    },
+  );
+
+  it("exposes static feature lifecycle without active registrations", () => {
+    const { feature } = createFeature();
+
+    feature.initialize();
+    expect(feature.getState()).toEqual({ kind: "static" });
+    expect(() => feature.clear()).not.toThrow();
+  });
+
+  it("turns malformed full data into null and logs the document", async () => {
+    const { feature, output } = createFeature();
+    feature.preInitialize({ semanticTokensProvider: fullOnlyProvider });
+    const sendRequest = feature.middleware.sendRequest;
+    if (sendRequest === undefined) {
+      throw new Error("semantic request middleware was not installed");
+    }
+
+    const result = await sendRequest(
+      "textDocument/semanticTokens/full",
+      { textDocument: { uri: "file:///workspace/player.fs" } },
+      undefined,
+      () => Promise.resolve({ data: [0, 0] }),
+    );
+
+    expect(result).toBeNull();
+    expect(JSON.parse(String(output.appendLine.mock.calls.at(-1)?.[0]))).toMatchObject(
+      {
+        level: "warn",
+        event: "lsp.semantic_tokens.response_malformed",
+        reason: "record_width_invalid",
+        uri: "file:///workspace/player.fs",
+      },
+    );
+  });
+
+  it("passes a later valid full response without translating it", async () => {
+    const { feature } = createFeature();
+    feature.preInitialize({ semanticTokensProvider: fullOnlyProvider });
+    const sendRequest = feature.middleware.sendRequest;
+    if (sendRequest === undefined) {
+      throw new Error("semantic request middleware was not installed");
+    }
+    const response = { data: [0, 0, 3, 0, 1] };
+
+    const result = await sendRequest(
+      { method: "textDocument/semanticTokens/full" } as never,
+      { textDocument: { uri: "file:///workspace/player.fs" } },
+      undefined,
+      () => Promise.resolve(response),
+    );
+
+    expect(result).toBe(response);
+  });
+
+  it("passes unrelated LSP responses unchanged", async () => {
+    const { feature, output } = createFeature();
+    const sendRequest = feature.middleware.sendRequest;
+    if (sendRequest === undefined) {
+      throw new Error("semantic request middleware was not installed");
+    }
+    const hover = { contents: "still alive" };
+
+    const result = await sendRequest(
+      "textDocument/hover",
+      {
+        textDocument: { uri: "file:///workspace/player.fs" },
+        position: { line: 0, character: 0 },
+      },
+      undefined,
+      () => Promise.resolve(hover),
+    );
+
+    expect(result).toBe(hover);
+    expect(output.appendLine).not.toHaveBeenCalled();
   });
 });

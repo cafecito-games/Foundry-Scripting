@@ -1,3 +1,12 @@
+import type {
+  ClientCapabilities,
+  FeatureState,
+  Middleware,
+  ServerCapabilities,
+  StaticFeature,
+} from "vscode-languageclient/node";
+import { type LogOutput, writeLog } from "./logging.js";
+
 export const CUSTOM_SEMANTIC_TOKEN_MODIFIER = "final";
 
 export interface AdvertisedSemanticTokensLegend {
@@ -130,4 +139,127 @@ export function validateSemanticTokensResponse(
   }
 
   return { ok: true, value };
+}
+
+function capabilityShape(value: unknown): string {
+  if (value === undefined) return "absent";
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}
+
+function requestMethod(type: unknown): string | undefined {
+  if (typeof type === "string") return type;
+  if (
+    typeof type === "object" &&
+    type !== null &&
+    "method" in type &&
+    typeof type.method === "string"
+  ) {
+    return type.method;
+  }
+  return undefined;
+}
+
+function semanticTokensUri(params: unknown): string | undefined {
+  if (typeof params !== "object" || params === null) return undefined;
+  const textDocument = (params as { textDocument?: unknown }).textDocument;
+  if (typeof textDocument !== "object" || textDocument === null) {
+    return undefined;
+  }
+  const uri = (textDocument as { uri?: unknown }).uri;
+  return typeof uri === "string" ? uri : undefined;
+}
+
+export class FoundrySemanticTokensFeature implements StaticFeature {
+  private legend: AdvertisedSemanticTokensLegend | undefined;
+
+  constructor(private readonly output: LogOutput) {}
+
+  get middleware(): Pick<Middleware, "sendRequest"> {
+    return {
+      sendRequest: async (type, params, token, next) => {
+        const result = await next(type, params, token);
+        if (requestMethod(type) !== "textDocument/semanticTokens/full") {
+          return result;
+        }
+
+        const validation =
+          this.legend === undefined
+            ? { ok: false as const, reason: "legend_unavailable" }
+            : validateSemanticTokensResponse(result, this.legend);
+        if (validation.ok) {
+          return validation.value as typeof result;
+        }
+
+        writeLog(
+          this.output,
+          "warn",
+          "lsp.semantic_tokens.response_malformed",
+          {
+            reason: validation.reason,
+            uri: semanticTokensUri(params),
+          },
+        );
+        return null as typeof result;
+      },
+    };
+  }
+
+  fillClientCapabilities(capabilities: ClientCapabilities): void {
+    const modifiers = capabilities.textDocument?.semanticTokens?.tokenModifiers;
+    if (
+      modifiers !== undefined &&
+      !modifiers.includes(CUSTOM_SEMANTIC_TOKEN_MODIFIER)
+    ) {
+      modifiers.push(CUSTOM_SEMANTIC_TOKEN_MODIFIER);
+    }
+  }
+
+  preInitialize(capabilities: ServerCapabilities): void {
+    const inspection = inspectSemanticTokensProvider(
+      capabilities.semanticTokensProvider,
+    );
+    if (inspection.kind === "supported") {
+      this.legend = inspection.legend;
+      writeLog(this.output, "info", "lsp.semantic_tokens.enabled", {
+        tokenTypeCount: inspection.legend.tokenTypes.length,
+        tokenModifierCount: inspection.legend.tokenModifiers.length,
+      });
+      return;
+    }
+
+    this.legend = undefined;
+    if (inspection.kind === "missing") {
+      writeLog(this.output, "info", "lsp.semantic_tokens.unavailable");
+      return;
+    }
+
+    const provider = capabilities.semanticTokensProvider as
+      | Record<string, unknown>
+      | undefined;
+    writeLog(
+      this.output,
+      "warn",
+      inspection.kind === "malformed"
+        ? "lsp.semantic_tokens.capability_malformed"
+        : "lsp.semantic_tokens.capability_mismatch",
+      {
+        reason: inspection.reason,
+        full: capabilityShape(provider?.full),
+        range: capabilityShape(provider?.range),
+      },
+    );
+    capabilities.semanticTokensProvider = undefined;
+  }
+
+  initialize(): void {}
+
+  getState(): FeatureState {
+    return { kind: "static" };
+  }
+
+  clear(): void {
+    this.legend = undefined;
+  }
 }
