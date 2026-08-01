@@ -5,9 +5,9 @@ the gradually-typed scripting language of the Foundry engine.
 
 ## Features
 
-- Syntax highlighting for the full FoundryScript grammar, including namespaces, traits,
-  tuples, generics, nullable types, `async`/`await`, retroactive conformances (`extend`),
-  and custom annotation declarations.
+- Semantic highlighting from the Foundry language server, including contextual keywords,
+  declarations, symbol kinds, and modifiers such as `final`, with the full TextMate
+  grammar retained as an offline fallback.
 - Comment toggling, bracket matching, off-side folding, and indentation for
   FoundryScript's indentation-sensitive block structure.
 - Language intelligence over the Foundry engine's language-server protocol, including
@@ -49,7 +49,21 @@ workspace in `.vscode/settings.json`:
 }
 ```
 
-## Highlighting accuracy
+## Semantic highlighting and fallback
+
+When connected to a compatible Foundry language server, the extension uses the
+server-advertised semantic-token legend and full-document token responses. This lets
+the parser distinguish contextual words such as `extend`, `async`, `annotation`,
+`targets`, `get`, and `set` from identifiers with the same spelling, and distinguishes
+declarations, symbol kinds, and modifiers such as `static`, `final`, and `readonly`.
+
+The TextMate grammar remains active underneath semantic highlighting. It provides
+highlighting while LSP mode is `off`, while the server is unavailable, and when an older
+or incompatible server does not advertise the expected full semantic-token capability.
+Capability and response problems are recorded in the FoundryScript LSP output log; they
+do not disable completion, hover, diagnostics, or other language-server features.
+
+### TextMate-only limitations
 
 A TextMate grammar matches patterns line by line with no knowledge of the parser's
 context, so a specific and bounded set of cases highlight incorrectly. Listed roughly in
@@ -82,10 +96,8 @@ descending user impact:
    not `[T]`.
 8. **`@` has no left boundary** — `a@b` highlights `@b` as an annotation.
 
-All of these are inherent to regex-based, line-oriented TextMate grammars. The fix is
-`textDocument/semanticTokens` in the engine's language server — see
-[cafecito-games/Foundry#1418](https://github.com/cafecito-games/Foundry/issues/1418).
-Every case above is documented in a `comment` field in
+These cases are inherent to regex-based, line-oriented TextMate grammars and can still
+appear when semantic highlighting is unavailable. Every case above is documented in a `comment` field in
 [`syntaxes/foundryscript.tmLanguage.json`](syntaxes/foundryscript.tmLanguage.json).
 
 ## Development
