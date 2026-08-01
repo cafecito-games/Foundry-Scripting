@@ -21,6 +21,12 @@ or `off` to keep syntax highlighting without starting or connecting to Foundry. 
 and auto use `foundryScript.lsp.port` (default `6005`). Hosts spawned by the extension
 are stopped with it; externally started hosts are never terminated by the extension.
 
+Cold project initialization may include file scanning, script-class registration, and
+editor setup before the language-server port opens. While Foundry emits startup output,
+the extension allows that work to continue for up to two minutes. A silent startup is
+treated as stalled after 15 seconds. Startup output and the specific timeout reason are
+available from the `FoundryScript LSP` output channel.
+
 If a running language server disappears, the extension reports the loss in its
 status-bar item and retries five times with capped exponential backoff. Click the item
 to reconnect immediately or open the LSP log. After retries are exhausted it rests in
