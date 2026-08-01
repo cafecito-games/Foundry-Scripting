@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type {
   ClientCapabilities,
+  Middleware,
   ServerCapabilities,
 } from "vscode-languageclient/node";
 import semanticTokensFixture from "./fixtures/semantic-tokens.json";
@@ -346,6 +347,55 @@ describe("Foundry semantic token client feature", () => {
 
     expect(result).toBe(hover);
     expect(output.appendLine).not.toHaveBeenCalled();
+  });
+
+  it("normalizes only FoundryScript didOpen language IDs on the wire", async () => {
+    const { feature } = createFeature();
+    const sendNotification = (
+      feature.middleware as Pick<Middleware, "sendNotification">
+    ).sendNotification;
+    if (sendNotification === undefined) {
+      throw new Error("didOpen normalization middleware was not installed");
+    }
+    const type = { method: "textDocument/didOpen" } as never;
+    const params = {
+      textDocument: {
+        uri: "file:///workspace/player.fs",
+        languageId: "foundryscript",
+        version: 1,
+        text: "var health = 1\n",
+      },
+    };
+    const next = vi.fn(() => Promise.resolve());
+
+    await sendNotification(type, next, params);
+
+    expect(next).toHaveBeenCalledWith(type, {
+      textDocument: {
+        ...params.textDocument,
+        languageId: "foundry_script",
+      },
+    });
+    expect(params.textDocument.languageId).toBe("foundryscript");
+  });
+
+  it("passes unrelated notification parameters unchanged", async () => {
+    const { feature } = createFeature();
+    const sendNotification = (
+      feature.middleware as Pick<Middleware, "sendNotification">
+    ).sendNotification;
+    if (sendNotification === undefined) {
+      throw new Error("didOpen normalization middleware was not installed");
+    }
+    const params = {
+      textDocument: { uri: "file:///workspace/player.fs", version: 2 },
+      contentChanges: [{ text: "var changed = 2\n" }],
+    };
+    const next = vi.fn(() => Promise.resolve());
+
+    await sendNotification("textDocument/didChange", next, params);
+
+    expect(next).toHaveBeenCalledWith("textDocument/didChange", params);
   });
 });
 

@@ -8,6 +8,8 @@ import type {
 import { type LogOutput, writeLog } from "./logging.js";
 
 export const CUSTOM_SEMANTIC_TOKEN_MODIFIER = "final";
+const VS_CODE_FOUNDRY_SCRIPT_LANGUAGE_ID = "foundryscript";
+const FOUNDRY_LSP_LANGUAGE_ID = "foundry_script";
 
 export interface AdvertisedSemanticTokensLegend {
   readonly tokenTypes: readonly string[];
@@ -171,12 +173,31 @@ function semanticTokensUri(params: unknown): string | undefined {
   return typeof uri === "string" ? uri : undefined;
 }
 
+function normalizeDidOpenParams(params: unknown): unknown {
+  if (typeof params !== "object" || params === null) return params;
+  const textDocument = (params as { textDocument?: unknown }).textDocument;
+  if (typeof textDocument !== "object" || textDocument === null) return params;
+  if (
+    (textDocument as { languageId?: unknown }).languageId !==
+    VS_CODE_FOUNDRY_SCRIPT_LANGUAGE_ID
+  ) {
+    return params;
+  }
+  return {
+    ...params,
+    textDocument: {
+      ...textDocument,
+      languageId: FOUNDRY_LSP_LANGUAGE_ID,
+    },
+  };
+}
+
 export class FoundrySemanticTokensFeature implements StaticFeature {
   private legend: AdvertisedSemanticTokensLegend | undefined;
 
   constructor(private readonly output: LogOutput) {}
 
-  get middleware(): Pick<Middleware, "sendRequest"> {
+  get middleware(): Pick<Middleware, "sendRequest" | "sendNotification"> {
     return {
       sendRequest: async (type, params, token, next) => {
         const result = await next(type, params, token);
@@ -203,6 +224,13 @@ export class FoundrySemanticTokensFeature implements StaticFeature {
         );
         return null as typeof result;
       },
+      sendNotification: (type, next, params) =>
+        next(
+          type,
+          (requestMethod(type) === "textDocument/didOpen"
+            ? normalizeDidOpenParams(params)
+            : params) as typeof params,
+        ),
     };
   }
 

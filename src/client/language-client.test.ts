@@ -168,6 +168,11 @@ describe("FoundryScript language client", () => {
               token: undefined,
               next: () => Promise<unknown>,
             ) => Promise<unknown>;
+            sendNotification?: (
+              type: string,
+              next: (type: string, params: unknown) => Promise<void>,
+              params: unknown,
+            ) => Promise<void>;
           };
         }
       | undefined;
@@ -182,9 +187,29 @@ describe("FoundryScript language client", () => {
       undefined,
       () => Promise.resolve(hover),
     );
+    const didOpenNext = vi.fn((_type: string, _params: unknown) =>
+      Promise.resolve(),
+    );
+    await clientOptions?.middleware?.sendNotification?.(
+      "textDocument/didOpen",
+      didOpenNext,
+      {
+        textDocument: {
+          uri: "file:///game/player.fs",
+          languageId: "foundryscript",
+          version: 1,
+          text: "var health = 1\n",
+        },
+      },
+    );
 
     expect(onDiagnostics).toHaveBeenCalledWith(uri, diagnostics);
     expect(response).toBe(hover);
+    const normalizedDidOpen = didOpenNext.mock.calls[0]?.[1] as
+      | { textDocument: { languageId: string } }
+      | undefined;
+    expect(didOpenNext.mock.calls[0]?.[0]).toBe("textDocument/didOpen");
+    expect(normalizedDidOpen?.textDocument.languageId).toBe("foundry_script");
   });
 
   it("records native class capabilities and forwards the notification", () => {
