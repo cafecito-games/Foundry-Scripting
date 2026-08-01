@@ -1,0 +1,1 @@
+{"protocol":"foundry-test-adapter","supported_versions":[1,2,4],"framework":{"id":"neutral-spec","name":"Neutral Spec","version":"2.4.0"},"extensions":["neutral.coverage"]}
