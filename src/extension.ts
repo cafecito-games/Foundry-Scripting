@@ -22,6 +22,10 @@ import { FoundryTestExplorer } from "./testing/explorer.js";
 import { FoundryTestAdapterProcess } from "./testing/process.js";
 import { FoundryTestRunProfile } from "./testing/profile.js";
 import {
+  TestingRefreshCoordinator,
+  isRelevantTestingWorkspacePath,
+} from "./testing/refresh.js";
+import {
   TestingRuntime,
   type TestingRuntimeConfiguration,
 } from "./testing/runtime.js";
@@ -31,7 +35,11 @@ import {
 } from "./testing/status.js";
 
 let activeConnectionManager: ConnectionManager | undefined;
-let activeTestingRuntime: TestingRuntime | undefined;
+interface ActiveTestingLifecycle {
+  readonly stop: () => Promise<void>;
+}
+
+let activeTestingLifecycle: ActiveTestingLifecycle | undefined;
 
 const TESTING_CONFIGURATION_SECTIONS = [
   "foundryScript.testing.enabled",
@@ -81,10 +89,6 @@ function readTestingConfiguration(): TestingRuntimeConfiguration {
   };
 }
 
-function configureTesting(runtime: TestingRuntime): void {
-  void runtime.configure(readTestingConfiguration());
-}
-
 function registerTestingRuntime(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel("FoundryScript Testing");
   const controller = vscode.tests.createTestController(
@@ -125,6 +129,8 @@ function registerTestingRuntime(context: vscode.ExtensionContext): void {
       process.run(command, signal, onOutput),
     onCleanupError,
   });
+  let shownFailureFingerprint: string | undefined;
+  let failureConfigurationKey: string | undefined;
   const runtime = new TestingRuntime({
     negotiate: (request, signal) => negotiator.negotiate(request, signal),
     discover: (request, signal) => discoverer.discover(request, signal),
@@ -133,11 +139,76 @@ function registerTestingRuntime(context: vscode.ExtensionContext): void {
     onState: (state) => {
       status.update(state);
       writeTestingState(output, state);
-      if (state.kind === "error") {
+      if (
+        state.kind === "error" &&
+        isActionableTestingFailure(state.failure)
+      ) {
+        const fingerprint = testingFailureFingerprint(state.failure);
+        if (fingerprint === shownFailureFingerprint) {
+          return;
+        }
+        shownFailureFingerprint = fingerprint;
         void showTestingFailure(state.failure, output);
       }
     },
   });
+  const refresh = new TestingRefreshCoordinator({
+    refresh: (signal) => runtime.refresh(signal),
+    onError: (error) => {
+      output.appendLine(
+        `Scheduled test refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    },
+  });
+  let watcherProject: string | undefined;
+  let watcherDisposables: vscode.Disposable[] = [];
+  const disposeWatchers = (): void => {
+    for (const disposable of watcherDisposables) {
+      disposable.dispose();
+    }
+    watcherDisposables = [];
+    watcherProject = undefined;
+  };
+  const updateWatchers = (
+    configuration: TestingRuntimeConfiguration,
+  ): void => {
+    refresh.cancelPending();
+    const project = configuration.enabled ? configuration.project : undefined;
+    if (project === watcherProject) {
+      return;
+    }
+    disposeWatchers();
+    if (project === undefined) {
+      return;
+    }
+    watcherProject = project;
+    const onWorkspacePath = (uri: vscode.Uri): void => {
+      if (isRelevantTestingWorkspacePath(project, uri.fsPath)) {
+        refresh.workspaceChanged();
+      }
+    };
+    for (const pattern of ["**/*.fs", "project.foundry"]) {
+      const watcher = vscode.workspace.createFileSystemWatcher(
+        new vscode.RelativePattern(project, pattern),
+      );
+      watcherDisposables.push(
+        watcher,
+        watcher.onDidCreate(onWorkspacePath),
+        watcher.onDidChange(onWorkspacePath),
+        watcher.onDidDelete(onWorkspacePath),
+      );
+    }
+  };
+  const configure = (): void => {
+    const configuration = readTestingConfiguration();
+    const key = JSON.stringify(configuration);
+    if (key !== failureConfigurationKey) {
+      failureConfigurationKey = key;
+      shownFailureFingerprint = undefined;
+    }
+    updateWatchers(configuration);
+    void runtime.configure(configuration);
+  };
   const runProfile = new FoundryTestRunProfile({
     controller,
     readyContext: () => runtime.readyContext(),
@@ -161,9 +232,31 @@ function registerTestingRuntime(context: vscode.ExtensionContext): void {
     if (token.isCancellationRequested) {
       return;
     }
-    await runtime.refresh();
+    const controller = new AbortController();
+    const cancellation = token.onCancellationRequested?.(
+      () => controller.abort(),
+    );
+    try {
+      await refresh.explicitRefresh(controller.signal);
+    } finally {
+      cancellation?.dispose();
+    }
   };
-  activeTestingRuntime = runtime;
+  let stopPromise: Promise<void> | undefined;
+  const lifecycle: ActiveTestingLifecycle = {
+    stop: () => {
+      if (stopPromise !== undefined) {
+        return stopPromise;
+      }
+      refresh.dispose();
+      disposeWatchers();
+      stopPromise = Promise.all([runtime.stop(), process.stop()]).then(
+        () => undefined,
+      );
+      return stopPromise;
+    },
+  };
+  activeTestingLifecycle = lifecycle;
   context.subscriptions.push(
     output,
     status,
@@ -174,20 +267,20 @@ function registerTestingRuntime(context: vscode.ExtensionContext): void {
           event.affectsConfiguration(section),
         )
       ) {
-        configureTesting(runtime);
+        configure();
       }
     }),
-    vscode.workspace.onDidChangeWorkspaceFolders(() => configureTesting(runtime)),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => configure()),
     {
       dispose: () => {
-        if (activeTestingRuntime === runtime) {
-          activeTestingRuntime = undefined;
+        if (activeTestingLifecycle === lifecycle) {
+          activeTestingLifecycle = undefined;
         }
-        void runtime.stop();
+        void lifecycle.stop();
       },
     },
   );
-  configureTesting(runtime);
+  configure();
 }
 
 function writeTestingState(output: vscode.OutputChannel, state: TestingState): void {
@@ -212,11 +305,44 @@ function writeTestingState(output: vscode.OutputChannel, state: TestingState): v
           `discovery errors ${state.discoveryErrorCount}.`,
       );
       return;
+    case "refresh_cancelled":
+      output.appendLine("Test discovery refresh cancelled; prior results retained.");
+      return;
     case "error":
       output.appendLine(
-        `Test adapter unavailable [${state.failure.kind}]: ${state.failure.message}`,
+        `Test adapter unavailable [${state.failure.kind}]: ${state.failure.message}${testingFailureLifecycleSuffix(state.failure)}`,
       );
+      if (state.failure.stdout !== undefined && state.failure.stdout !== "") {
+        output.appendLine(`stdout: ${state.failure.stdout.trimEnd()}`);
+      }
+      if (state.failure.stderr !== undefined && state.failure.stderr !== "") {
+        output.appendLine(`stderr: ${state.failure.stderr.trimEnd()}`);
+      }
   }
+}
+
+function testingFailureLifecycleSuffix(failure: TestAdapterFailure): string {
+  const details = [
+    failure.phase === undefined ? undefined : `phase ${failure.phase}`,
+    failure.exitCode === undefined
+      ? undefined
+      : `exit code ${failure.exitCode}`,
+    failure.signal === undefined ? undefined : `signal ${failure.signal}`,
+  ].filter((value): value is string => value !== undefined);
+  return details.length === 0 ? "" : ` (${details.join(", ")})`;
+}
+
+function isActionableTestingFailure(failure: TestAdapterFailure): boolean {
+  return (
+    failure.setting !== undefined ||
+    failure.kind === "missing_project" ||
+    failure.kind === "legacy_runner" ||
+    failure.kind === "incompatible_adapter"
+  );
+}
+
+function testingFailureFingerprint(failure: TestAdapterFailure): string {
+  return JSON.stringify([failure.kind, failure.setting ?? null, failure.message]);
 }
 
 async function showTestingFailure(
@@ -352,8 +478,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
 export async function deactivate(): Promise<void> {
   const manager = activeConnectionManager;
-  const testingRuntime = activeTestingRuntime;
+  const testingLifecycle = activeTestingLifecycle;
   activeConnectionManager = undefined;
-  activeTestingRuntime = undefined;
-  await Promise.all([manager?.stop(), testingRuntime?.stop()]);
+  activeTestingLifecycle = undefined;
+  await Promise.all([manager?.stop(), testingLifecycle?.stop()]);
 }
