@@ -97,8 +97,9 @@ descending user impact:
 8. **`@` has no left boundary** — `a@b` highlights `@b` as an annotation.
 
 These cases are inherent to regex-based, line-oriented TextMate grammars and can still
-appear when semantic highlighting is unavailable. Every case above is documented in a `comment` field in
-[`syntaxes/foundryscript.tmLanguage.json`](syntaxes/foundryscript.tmLanguage.json).
+appear when semantic highlighting is unavailable. The committed fallback is the
+unmodified [engine-published grammar](syntaxes/foundryscript.tmLanguage.json), and its
+behavior is covered by the scope assertions under `tests/grammar/`.
 
 ## Development
 

@@ -35,7 +35,7 @@ var config = {async = 1}
 #              ^^^^^ - storage.modifier.async.foundryscript
 
 var handler = get
-#             ^^^ - storage.modifier.accessor.foundryscript
+#             ^^^ - storage.type.accessor.foundryscript
 
 var targets = 5
 #   ^^^^^^^ - keyword.other.targets.foundryscript
