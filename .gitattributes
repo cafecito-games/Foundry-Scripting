@@ -3,3 +3,6 @@
 # backslash into invalid.illegal.unknown-escape and cascades from there.
 *.fs text eol=lf
 *.json text eol=lf
+
+# Invalid protocol fixtures intentionally contain malformed encodings and endings.
+src/testing/fixtures/discovery/invalid/*.jsonl binary

@@ -198,4 +198,3 @@ Before publication:
 - fetch and integrate current `origin/main`, then repeat verification if it advanced;
 - run Cursor's exact read-only review wrapper against `origin/main` until `RESULT: clean`; and
 - push only the clean-reviewed head, open a ready PR ending `Closes #20`, monitor every CI check through squash merge, and remove only issue #20's branch, worktree, and task-specific temporary artifacts.
-
