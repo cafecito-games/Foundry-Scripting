@@ -7,7 +7,6 @@ import {
   buildToolingHostCommand,
   FoundryHostLauncher,
   HostStartupFailure,
-  allocateLoopbackPort,
   parseToolingReadinessLine,
 } from "./host-launcher.js";
 
@@ -26,6 +25,15 @@ class FakeChildProcess extends EventEmitter {
     return this as unknown as ChildProcess;
   }
 }
+
+const validReadiness = {
+  project: "/workspace/game",
+  pid: 99,
+  local_only: true,
+  services: ["lsp", "dap"],
+  lsp_port: 49152,
+  dap_port: 49153,
+};
 
 describe("host launch abstraction", () => {
   const servers: net.Server[] = [];
@@ -63,10 +71,11 @@ describe("host launch abstraction", () => {
     });
   });
 
-  it("parses the future combined tooling-host readiness record", () => {
+  it("parses a valid combined tooling-host readiness record", () => {
     expect(
       parseToolingReadinessLine(
-        'FOUNDRY_TOOLING {"project":"/workspace/game","pid":99,"local_only":true,"services":["lsp","dap"],"lsp_port":49152,"dap_port":49153}',
+        `FOUNDRY_TOOLING ${JSON.stringify(validReadiness)}`,
+        "/workspace/game",
       ),
     ).toEqual({
       project: "/workspace/game",
@@ -76,127 +85,127 @@ describe("host launch abstraction", () => {
       lspPort: 49152,
       dapPort: 49153,
     });
-    expect(parseToolingReadinessLine("ordinary log output")).toBeUndefined();
+  });
+
+  it.each([
+    ["wrong marker", `OTHER ${JSON.stringify(validReadiness)}`],
+    ["malformed JSON", "FOUNDRY_TOOLING {"],
+    [
+      "wrong project",
+      `FOUNDRY_TOOLING ${JSON.stringify({ ...validReadiness, project: "/workspace/other" })}`,
+    ],
+    [
+      "zero PID",
+      `FOUNDRY_TOOLING ${JSON.stringify({ ...validReadiness, pid: 0 })}`,
+    ],
+    [
+      "remote contract",
+      `FOUNDRY_TOOLING ${JSON.stringify({ ...validReadiness, local_only: false })}`,
+    ],
+    [
+      "missing DAP service",
+      `FOUNDRY_TOOLING ${JSON.stringify({ ...validReadiness, services: ["lsp"] })}`,
+    ],
+    [
+      "missing DAP port",
+      `FOUNDRY_TOOLING ${JSON.stringify({ ...validReadiness, dap_port: undefined })}`,
+    ],
+    [
+      "invalid LSP port",
+      `FOUNDRY_TOOLING ${JSON.stringify({ ...validReadiness, lsp_port: 0 })}`,
+    ],
+    [
+      "invalid DAP port",
+      `FOUNDRY_TOOLING ${JSON.stringify({ ...validReadiness, dap_port: 65536 })}`,
+    ],
+    [
+      "identical ports",
+      `FOUNDRY_TOOLING ${JSON.stringify({ ...validReadiness, dap_port: 49152 })}`,
+    ],
+  ])("rejects %s readiness", (_name, line) => {
     expect(
-      parseToolingReadinessLine(
-        'FOUNDRY_TOOLING {"project":"/workspace/game","pid":99,"local_only":true,"services":["dap"],"lsp_port":49152,"dap_port":49153}',
-      ),
+      parseToolingReadinessLine(line, "/workspace/game"),
     ).toBeUndefined();
   });
 
-  it("allocates and releases a loopback ephemeral port", async () => {
-    const port = await allocateLoopbackPort();
-    const server = net.createServer();
-    servers.push(server);
+  it.each(["complete", "split"] as const)(
+    "starts only after a %s combined readiness record",
+    async (delivery) => {
+      const child = new FakeChildProcess();
+      const spawnProcess = vi.fn(() => {
+        queueMicrotask(() => {
+          const line = `FOUNDRY_TOOLING ${JSON.stringify(validReadiness)}\n`;
+          if (delivery === "split") {
+            child.stdout.write(line.slice(0, 17));
+            child.stdout.write(line.slice(17));
+          } else {
+            child.stdout.write(line);
+          }
+        });
+        return child.asChildProcess();
+      });
+      const launcher = new FoundryHostLauncher({
+        spawnProcess,
+        inactivityTimeoutMs: 100,
+        absoluteTimeoutMs: 200,
+        pollIntervalMs: 5,
+      });
 
-    server.listen(port, "127.0.0.1");
-    await once(server, "listening");
+      const host = await launcher.launch({
+        enginePath: "/opt/foundry",
+        project: "/workspace/game",
+      });
 
-    expect(server.address()).toMatchObject({ port });
-  });
+      expect(spawnProcess).toHaveBeenCalledWith(
+        "/opt/foundry",
+        [
+          "tooling",
+          "serve",
+          "--project",
+          "/workspace/game",
+          "--lsp-port",
+          "0",
+          "--dap-port",
+          "0",
+        ],
+        expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }),
+      );
+      expect(host.readiness).toEqual({
+        project: "/workspace/game",
+        pid: 99,
+        localOnly: true,
+        services: ["lsp", "dap"],
+        lspPort: 49152,
+        dapPort: 49153,
+      });
 
-  it("waits for TCP readiness and returns one owned host", async () => {
+      await host.stop();
+      expect(child.kill).toHaveBeenCalledOnce();
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    },
+  );
+
+  it("does not accept an open TCP listener without a readiness record", async () => {
     const server = net.createServer();
     servers.push(server);
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
-    const address = server.address();
-    if (address === null || typeof address === "string") {
-      throw new Error("test server did not expose a TCP address");
-    }
     const child = new FakeChildProcess();
-    const spawnProcess = vi.fn(() => child.asChildProcess());
-    const output = { appendLine: vi.fn() };
     const launcher = new FoundryHostLauncher({
-      allocatePort: () => Promise.resolve(address.port),
-      spawnProcess,
-      output,
-      inactivityTimeoutMs: 100,
-      absoluteTimeoutMs: 200,
+      spawnProcess: () => child.asChildProcess(),
+      inactivityTimeoutMs: 20,
+      absoluteTimeoutMs: 100,
       pollIntervalMs: 5,
     });
 
-    const host = await launcher.launch({
-      enginePath: "/opt/foundry",
-      project: "/workspace/game",
-    });
-
-    expect(spawnProcess).toHaveBeenCalledWith(
-      "/opt/foundry",
-      [
-        "lsp",
-        "serve",
-        "--port",
-        String(address.port),
-        "--project",
-        "/workspace/game",
-      ],
-      expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }),
-    );
-    expect(host.readiness).toMatchObject({
-      project: "/workspace/game",
-      pid: 4321,
-      localOnly: true,
-      services: ["lsp"],
-      lspPort: address.port,
-    });
-    const records: unknown[] = output.appendLine.mock.calls.map(
-      ([line]) => JSON.parse(String(line)) as unknown,
-    );
-    expect(records).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          event: "lsp.host.launching",
-          project: "/workspace/game",
-          port: address.port,
-        }),
-        expect.objectContaining({
-          event: "lsp.host.ready",
-          project: "/workspace/game",
-          port: address.port,
-        }),
-      ]),
-    );
-
-    await host.stop();
-    expect(child.kill).toHaveBeenCalledOnce();
-    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
-  });
-
-  it("uses a future readiness record without changing connection orchestration", async () => {
-    const child = new FakeChildProcess();
-    const launcher = new FoundryHostLauncher({
-      allocatePort: () => Promise.resolve(49152),
-      spawnProcess: () => {
-        queueMicrotask(() => {
-          child.stdout.write(
-            'FOUNDRY_TOOLING {"project":"/canonical/game","pid":4321,"local_only":true,"services":["lsp","dap"],"lsp_port":50100,"dap_port":50101}\n',
-          );
-        });
-        return child.asChildProcess();
-      },
-      inactivityTimeoutMs: 100,
-      absoluteTimeoutMs: 200,
-      pollIntervalMs: 5,
-    });
-
-    const host = await launcher.launch({
-      enginePath: "foundry",
-      project: "/workspace/game",
-    });
-
-    expect(host.readiness).toMatchObject({
-      project: "/canonical/game",
-      services: ["lsp", "dap"],
-      lspPort: 50100,
-      dapPort: 50101,
-    });
+    await expect(
+      launcher.launch({ enginePath: "foundry", project: "/workspace/game" }),
+    ).rejects.toMatchObject({ kind: "readiness_timeout" });
   });
 
   it("turns a missing executable into an actionable startup failure", async () => {
     const child = new FakeChildProcess();
     const launcher = new FoundryHostLauncher({
-      allocatePort: () => Promise.resolve(49152),
       spawnProcess: () => {
         queueMicrotask(() => {
           child.emit(
@@ -222,14 +231,12 @@ describe("host launch abstraction", () => {
       kind: "missing_engine",
       enginePath: "/missing/foundry",
       project: "/workspace/game",
-      port: 49152,
     });
     expect((failure as Error).message).toContain("foundryScript.enginePath");
   });
 
   it("turns a synchronously rejected engine path into the same actionable failure", async () => {
     const launcher = new FoundryHostLauncher({
-      allocatePort: () => Promise.resolve(49152),
       spawnProcess: () => {
         throw Object.assign(new Error("The argument 'file' cannot be empty"), {
           code: "ERR_INVALID_ARG_VALUE",
@@ -246,14 +253,12 @@ describe("host launch abstraction", () => {
       kind: "missing_engine",
       enginePath: "",
       project: "/workspace/game",
-      port: 49152,
     });
   });
 
   it("treats a non-executable engine path as an engine setting failure", async () => {
     const child = new FakeChildProcess();
     const launcher = new FoundryHostLauncher({
-      allocatePort: () => Promise.resolve(49152),
       spawnProcess: () => {
         queueMicrotask(() => {
           child.emit(
@@ -281,7 +286,6 @@ describe("host launch abstraction", () => {
   it("reports a non-path spawn error without inventing an exit code", async () => {
     const child = new FakeChildProcess();
     const launcher = new FoundryHostLauncher({
-      allocatePort: () => Promise.resolve(49152),
       spawnProcess: () => {
         queueMicrotask(() => {
           child.emit(
@@ -308,7 +312,6 @@ describe("host launch abstraction", () => {
   it("distinguishes process exit before readiness", async () => {
     const child = new FakeChildProcess();
     const launcher = new FoundryHostLauncher({
-      allocatePort: () => Promise.resolve(49152),
       spawnProcess: () => {
         queueMicrotask(() => {
           child.exitCode = 23;
@@ -326,7 +329,6 @@ describe("host launch abstraction", () => {
     ).rejects.toMatchObject({
       kind: "process_exit",
       project: "/workspace/game",
-      port: 49152,
       exitCode: 23,
     });
   });
@@ -335,7 +337,6 @@ describe("host launch abstraction", () => {
     const conflictChild = new FakeChildProcess();
     const timeoutChild = new FakeChildProcess();
     const conflictLauncher = new FoundryHostLauncher({
-      allocatePort: () => Promise.resolve(49152),
       spawnProcess: () => {
         queueMicrotask(() =>
           conflictChild.stderr.write("bind failed: Address already in use\n"),
@@ -347,7 +348,6 @@ describe("host launch abstraction", () => {
       pollIntervalMs: 5,
     });
     const timeoutLauncher = new FoundryHostLauncher({
-      allocatePort: () => Promise.resolve(49153),
       spawnProcess: () => timeoutChild.asChildProcess(),
       inactivityTimeoutMs: 20,
       absoluteTimeoutMs: 100,
@@ -359,20 +359,19 @@ describe("host launch abstraction", () => {
         enginePath: "foundry",
         project: "/workspace/game",
       }),
-    ).rejects.toMatchObject({ kind: "port_conflict", port: 49152 });
+    ).rejects.toMatchObject({ kind: "port_conflict" });
     await expect(
       timeoutLauncher.launch({
         enginePath: "foundry",
         project: "/workspace/game",
       }),
-    ).rejects.toMatchObject({ kind: "readiness_timeout", port: 49153 });
+    ).rejects.toMatchObject({ kind: "readiness_timeout" });
   });
 
   it("reports inactivity when a silent host does not become ready", async () => {
     const child = new FakeChildProcess();
     const output = { appendLine: vi.fn() };
     const launcher = new FoundryHostLauncher({
-      allocatePort: () => Promise.resolve(49153),
       spawnProcess: () => child.asChildProcess(),
       output,
       inactivityTimeoutMs: 20,
@@ -401,7 +400,6 @@ describe("host launch abstraction", () => {
           level: "error",
           event: "lsp.host.timeout",
           project: "/workspace/game",
-          port: 49153,
           reason: "inactivity",
           timeoutMs: 20,
         }),
@@ -414,7 +412,6 @@ describe("host launch abstraction", () => {
     async (stream) => {
       const child = new FakeChildProcess();
       const launcher = new FoundryHostLauncher({
-        allocatePort: () => Promise.resolve(49154),
         spawnProcess: () => {
           setTimeout(() => child[stream].write("still importing"), 10);
           if (stream === "stdout") {
@@ -422,7 +419,7 @@ describe("host launch abstraction", () => {
           }
           setTimeout(() => {
             child.stdout.write(
-              'FOUNDRY_TOOLING {"project":"/workspace/game","pid":4321,"local_only":true,"services":["lsp"],"lsp_port":50100}\n',
+              'FOUNDRY_TOOLING {"project":"/workspace/game","pid":4321,"local_only":true,"services":["lsp","dap"],"lsp_port":50100,"dap_port":50101}\n',
             );
           }, 25);
           return child.asChildProcess();
@@ -445,7 +442,6 @@ describe("host launch abstraction", () => {
   it("enforces the absolute limit while output continues", async () => {
     const child = new FakeChildProcess();
     const launcher = new FoundryHostLauncher({
-      allocatePort: () => Promise.resolve(49155),
       spawnProcess: () => {
         const activity = setInterval(() => child.stdout.write("working\n"), 5);
         child.once("exit", () => clearInterval(activity));
@@ -474,13 +470,12 @@ describe("host launch abstraction", () => {
     const child = new FakeChildProcess();
     const output = { appendLine: vi.fn() };
     const launcher = new FoundryHostLauncher({
-      allocatePort: () => Promise.resolve(49156),
       spawnProcess: () => {
         queueMicrotask(() => {
           child.stdout.write("scan started\nscan complete\n");
           child.stderr.write("warning tail");
           child.stdout.write(
-            'FOUNDRY_TOOLING {"project":"/workspace/game","pid":4321,"local_only":true,"services":["lsp"],"lsp_port":50100}\n',
+            'FOUNDRY_TOOLING {"project":"/workspace/game","pid":4321,"local_only":true,"services":["lsp","dap"],"lsp_port":50100,"dap_port":50101}\n',
           );
         });
         return child.asChildProcess();
@@ -528,7 +523,6 @@ describe("host launch abstraction", () => {
     const child = new FakeChildProcess();
     const output = { appendLine: vi.fn() };
     const launcher = new FoundryHostLauncher({
-      allocatePort: () => Promise.resolve(49157),
       spawnProcess: () => {
         queueMicrotask(() => {
           child.stderr.write("fatal tail");
@@ -565,7 +559,6 @@ describe("host launch abstraction", () => {
     const child = new FakeChildProcess();
     const controller = new AbortController();
     const launcher = new FoundryHostLauncher({
-      allocatePort: () => Promise.resolve(49152),
       spawnProcess: () => child.asChildProcess(),
       inactivityTimeoutMs: 50,
       absoluteTimeoutMs: 100,

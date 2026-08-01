@@ -3,7 +3,6 @@ import {
   type ChildProcess,
   type SpawnOptions,
 } from "node:child_process";
-import * as net from "node:net";
 import {
   type HostLaunchRequest,
   type OwnedToolingHost,
@@ -11,10 +10,6 @@ import {
   type ToolingHostReadiness,
 } from "./connection-manager.js";
 import { type LogOutput, writeLog } from "./logging.js";
-
-export interface LegacyLspCommandRequest extends HostLaunchRequest {
-  port: number;
-}
 
 export interface HostCommand {
   command: string;
@@ -40,24 +35,6 @@ export function buildToolingHostCommand({
   };
 }
 
-export function buildLegacyLspCommand({
-  enginePath,
-  project,
-  port,
-}: LegacyLspCommandRequest): HostCommand {
-  return {
-    command: enginePath,
-    args: [
-      "lsp",
-      "serve",
-      "--port",
-      String(port),
-      "--project",
-      project,
-    ],
-  };
-}
-
 interface ToolingReadinessRecord {
   project?: unknown;
   pid?: unknown;
@@ -73,6 +50,7 @@ function isPort(value: unknown): value is number {
 
 export function parseToolingReadinessLine(
   line: string,
+  expectedProject: string,
 ): ToolingHostReadiness | undefined {
   const prefix = "FOUNDRY_TOOLING ";
   if (!line.startsWith(prefix)) {
@@ -87,14 +65,17 @@ export function parseToolingReadinessLine(
   }
 
   if (
-    typeof record.project !== "string" ||
+    record.project !== expectedProject ||
     !Number.isInteger(record.pid) ||
+    Number(record.pid) <= 0 ||
     record.local_only !== true ||
     !Array.isArray(record.services) ||
     !record.services.every((service) => typeof service === "string") ||
     !record.services.includes("lsp") ||
+    !record.services.includes("dap") ||
     !isPort(record.lsp_port) ||
-    (record.dap_port !== undefined && !isPort(record.dap_port))
+    !isPort(record.dap_port) ||
+    record.lsp_port === record.dap_port
   ) {
     return undefined;
   }
@@ -105,28 +86,8 @@ export function parseToolingReadinessLine(
     localOnly: true,
     services: record.services,
     lspPort: record.lsp_port,
-    ...(record.dap_port === undefined ? {} : { dapPort: record.dap_port }),
+    dapPort: record.dap_port,
   };
-}
-
-export async function allocateLoopbackPort(): Promise<number> {
-  const server = net.createServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve());
-  });
-  const address = server.address();
-  if (address === null || typeof address === "string") {
-    server.close();
-    throw new Error("ephemeral TCP listener did not expose a port");
-  }
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => {
-      if (error) reject(error);
-      else resolve();
-    });
-  });
-  return address.port;
 }
 
 export type HostStartupFailureKind =
@@ -138,7 +99,7 @@ export type HostStartupFailureKind =
 
 export type HostStartupTimeoutReason = "inactivity" | "absolute";
 
-export interface HostStartupFailureDetails extends LegacyLspCommandRequest {
+export interface HostStartupFailureDetails extends HostLaunchRequest {
   kind: HostStartupFailureKind;
   exitCode?: number | null;
   timeoutReason?: HostStartupTimeoutReason;
@@ -147,7 +108,7 @@ export interface HostStartupFailureDetails extends LegacyLspCommandRequest {
 }
 
 function startupFailureMessage(details: HostStartupFailureDetails): string {
-  const target = `project "${details.project}" on port ${details.port}`;
+  const target = `project "${details.project}"`;
   switch (details.kind) {
     case "missing_engine":
       return (
@@ -167,7 +128,7 @@ function startupFailureMessage(details: HostStartupFailureDetails): string {
         `language server for ${target} became ready.`
       );
     case "port_conflict":
-      return `Foundry could not bind the language server for ${target} because the port is already in use.`;
+      return `Foundry could not bind the tooling host for ${target} because a requested port is already in use.`;
     case "readiness_timeout": {
       if (
         details.timeoutReason === "inactivity" &&
@@ -196,7 +157,6 @@ export class HostStartupFailure extends Error {
   readonly kind: HostStartupFailureKind;
   readonly enginePath: string;
   readonly project: string;
-  readonly port: number;
   readonly exitCode: number | null | undefined;
   readonly timeoutReason: HostStartupTimeoutReason | undefined;
   readonly timeoutMs: number | undefined;
@@ -207,7 +167,6 @@ export class HostStartupFailure extends Error {
     this.kind = details.kind;
     this.enginePath = details.enginePath;
     this.project = details.project;
-    this.port = details.port;
     this.exitCode = details.exitCode;
     this.timeoutReason = details.timeoutReason;
     this.timeoutMs = details.timeoutMs;
@@ -221,9 +180,8 @@ type SpawnProcess = (
 ) => ChildProcess;
 
 export interface FoundryHostLauncherOptions {
-  allocatePort?: () => Promise<number>;
   spawnProcess?: SpawnProcess;
-  buildCommand?: (request: LegacyLspCommandRequest) => HostCommand;
+  buildCommand?: (request: HostLaunchRequest) => HostCommand;
   inactivityTimeoutMs?: number;
   absoluteTimeoutMs?: number;
   pollIntervalMs?: number;
@@ -248,6 +206,7 @@ interface StartupOutputObserver {
 function observeOutput(
   child: ChildProcess,
   state: StartupState,
+  expectedProject: string,
   now: () => number,
   onLine: (stream: HostOutputStream, line: string) => void,
 ): StartupOutputObserver {
@@ -258,7 +217,7 @@ function observeOutput(
 
   const acceptLine = (stream: HostOutputStream, line: string): void => {
     if (stream === "stdout") {
-      state.readiness ??= parseToolingReadinessLine(line);
+      state.readiness ??= parseToolingReadinessLine(line, expectedProject);
     } else if (line.startsWith("FOUNDRY_TOOLING_ERROR ")) {
       try {
         const record = JSON.parse(
@@ -304,23 +263,6 @@ function observeOutput(
   };
 }
 
-function canConnect(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = net.connect({ host: "127.0.0.1", port });
-    let settled = false;
-    const finish = (connected: boolean) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      socket.destroy();
-      resolve(connected);
-    };
-    const timer = setTimeout(() => finish(false), 100);
-    socket.once("connect", () => finish(true));
-    socket.once("error", () => finish(false));
-  });
-}
-
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
@@ -362,20 +304,16 @@ async function stopChild(child: ChildProcess): Promise<void> {
 }
 
 export class FoundryHostLauncher implements ToolingHostLauncher {
-  private readonly allocatePort: () => Promise<number>;
   private readonly spawnProcess: SpawnProcess;
-  private readonly buildCommand: (
-    request: LegacyLspCommandRequest,
-  ) => HostCommand;
+  private readonly buildCommand: (request: HostLaunchRequest) => HostCommand;
   private readonly inactivityTimeoutMs: number;
   private readonly absoluteTimeoutMs: number;
   private readonly pollIntervalMs: number;
   private readonly output: LogOutput | undefined;
 
   constructor(options: FoundryHostLauncherOptions = {}) {
-    this.allocatePort = options.allocatePort ?? allocateLoopbackPort;
     this.spawnProcess = options.spawnProcess ?? spawn;
-    this.buildCommand = options.buildCommand ?? buildLegacyLspCommand;
+    this.buildCommand = options.buildCommand ?? buildToolingHostCommand;
     this.inactivityTimeoutMs = options.inactivityTimeoutMs ?? 15_000;
     this.absoluteTimeoutMs = options.absoluteTimeoutMs ?? 120_000;
     this.pollIntervalMs = options.pollIntervalMs ?? 50;
@@ -384,13 +322,9 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
 
   async launch(request: HostLaunchRequest): Promise<OwnedToolingHost> {
     throwIfAborted(request.signal);
-    const port = await this.allocatePort();
-    throwIfAborted(request.signal);
-    const commandRequest = { ...request, port };
-    const command = this.buildCommand(commandRequest);
+    const command = this.buildCommand(request);
     this.log("info", "lsp.host.launching", {
       project: request.project,
-      port,
       command: command.command,
       args: command.args,
     });
@@ -402,7 +336,7 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
       });
     } catch (error) {
       throw new HostStartupFailure({
-        ...commandRequest,
+        ...request,
         kind:
           isEnginePathError((error as NodeJS.ErrnoException).code) ||
           (error as NodeJS.ErrnoException).code === "ERR_INVALID_ARG_VALUE"
@@ -426,11 +360,11 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
     const outputObserver = observeOutput(
       child,
       state,
+      request.project,
       Date.now,
       (stream, message) => {
         this.log("info", "lsp.host.output", {
           project: request.project,
-          port,
           stream,
           message,
         });
@@ -439,8 +373,7 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
 
     try {
       const readiness = await this.waitForReadiness(
-        child,
-        commandRequest,
+        request,
         state,
         startedAt,
         request.signal,
@@ -469,8 +402,7 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
   }
 
   private async waitForReadiness(
-    child: ChildProcess,
-    request: LegacyLspCommandRequest,
+    request: HostLaunchRequest,
     state: StartupState,
     startedAt: number,
     signal: AbortSignal | undefined,
@@ -514,7 +446,6 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
             : this.inactivityTimeoutMs;
         this.log("error", "lsp.host.timeout", {
           project: request.project,
-          port: request.port,
           reason: timeoutReason,
           timeoutMs,
         });
@@ -524,15 +455,6 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
           timeoutReason,
           timeoutMs,
         });
-      }
-      if (await canConnect(request.port)) {
-        return {
-          project: request.project,
-          pid: child.pid ?? 0,
-          localOnly: true,
-          services: ["lsp"],
-          lspPort: request.port,
-        };
       }
       await delay(
         Math.max(
