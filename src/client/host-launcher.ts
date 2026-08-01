@@ -44,6 +44,11 @@ interface ToolingReadinessRecord {
   dap_port?: unknown;
 }
 
+interface ToolingErrorRecord {
+  error: string;
+  message?: string;
+}
+
 function isPort(value: unknown): value is number {
   return Number.isInteger(value) && Number(value) > 0 && Number(value) <= 65535;
 }
@@ -90,12 +95,40 @@ export function parseToolingReadinessLine(
   };
 }
 
+function parseToolingErrorLine(line: string): ToolingErrorRecord | undefined {
+  const prefix = "FOUNDRY_TOOLING_ERROR ";
+  if (!line.startsWith(prefix)) {
+    return undefined;
+  }
+
+  try {
+    const record = JSON.parse(line.slice(prefix.length)) as {
+      error?: unknown;
+      message?: unknown;
+    };
+    if (
+      typeof record.error !== "string" ||
+      record.error === "" ||
+      (record.message !== undefined && typeof record.message !== "string")
+    ) {
+      return undefined;
+    }
+    return {
+      error: record.error,
+      ...(record.message === undefined ? {} : { message: record.message }),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 export type HostStartupFailureKind =
   | "missing_engine"
   | "spawn_failed"
   | "process_exit"
   | "readiness_timeout"
-  | "port_conflict";
+  | "port_conflict"
+  | "invalid_project";
 
 export type HostStartupTimeoutReason = "inactivity" | "absolute";
 
@@ -104,11 +137,15 @@ export interface HostStartupFailureDetails extends HostLaunchRequest {
   exitCode?: number | null;
   timeoutReason?: HostStartupTimeoutReason;
   timeoutMs?: number;
+  toolingMessage?: string;
   cause?: unknown;
 }
 
 function startupFailureMessage(details: HostStartupFailureDetails): string {
   const target = `project "${details.project}"`;
+  if (details.toolingMessage !== undefined) {
+    return `Foundry tooling host failed for ${target}: ${details.toolingMessage}`;
+  }
   switch (details.kind) {
     case "missing_engine":
       return (
@@ -129,6 +166,8 @@ function startupFailureMessage(details: HostStartupFailureDetails): string {
       );
     case "port_conflict":
       return `Foundry could not bind the tooling host for ${target} because a requested port is already in use.`;
+    case "invalid_project":
+      return `Foundry could not start the tooling host because ${target} is invalid.`;
     case "readiness_timeout": {
       if (
         details.timeoutReason === "inactivity" &&
@@ -192,8 +231,8 @@ interface StartupState {
   spawnError?: NodeJS.ErrnoException;
   exit?: { code: number | null };
   readiness?: ToolingHostReadiness;
+  toolingError?: ToolingErrorRecord;
   stderr: string;
-  structuredBindFailure: boolean;
   lastActivityAt: number;
 }
 
@@ -216,17 +255,9 @@ function observeOutput(
   };
 
   const acceptLine = (stream: HostOutputStream, line: string): void => {
+    state.toolingError ??= parseToolingErrorLine(line);
     if (stream === "stdout") {
       state.readiness ??= parseToolingReadinessLine(line, expectedProject);
-    } else if (line.startsWith("FOUNDRY_TOOLING_ERROR ")) {
-      try {
-        const record = JSON.parse(
-          line.slice("FOUNDRY_TOOLING_ERROR ".length),
-        ) as { error?: unknown };
-        state.structuredBindFailure ||= record.error === "bind_failed";
-      } catch {
-        // Human-readable stderr is classified below.
-      }
     }
     if (line !== "") onLine(stream, line);
   };
@@ -268,9 +299,8 @@ function delay(milliseconds: number): Promise<void> {
 }
 
 function isBindFailure(state: StartupState): boolean {
-  return (
-    state.structuredBindFailure ||
-    /EADDRINUSE|address already in use|bind (?:failed|error)/i.test(state.stderr)
+  return /EADDRINUSE|address already in use|bind (?:failed|error)/i.test(
+    state.stderr,
   );
 }
 
@@ -348,7 +378,6 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
     const startedAt = Date.now();
     const state: StartupState = {
       stderr: "",
-      structuredBindFailure: false,
       lastActivityAt: startedAt,
     };
     child.once("error", (error: NodeJS.ErrnoException) => {
@@ -409,6 +438,21 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
   ): Promise<ToolingHostReadiness> {
     while (true) {
       throwIfAborted(signal);
+      if (state.toolingError !== undefined) {
+        const kind: HostStartupFailureKind =
+          state.toolingError.error === "bind_failed"
+            ? "port_conflict"
+            : state.toolingError.error === "invalid_project"
+              ? "invalid_project"
+              : "spawn_failed";
+        throw new HostStartupFailure({
+          ...request,
+          kind,
+          ...(state.toolingError.message === undefined
+            ? {}
+            : { toolingMessage: state.toolingError.message }),
+        });
+      }
       if (state.readiness !== undefined) {
         return state.readiness;
       }

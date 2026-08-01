@@ -35,6 +35,34 @@ const validReadiness = {
   dap_port: 49153,
 };
 
+const toolingErrors = [
+  {
+    error: "bind_failed",
+    service: "dap",
+    requested_port: 6006,
+    message: "port busy",
+    expectedKind: "port_conflict",
+  },
+  {
+    error: "invalid_project",
+    reason: "missing_project_file",
+    project: "/workspace/game",
+    message:
+      "Project directory does not contain project.foundry: /workspace/game",
+    expectedKind: "invalid_project",
+  },
+  {
+    error: "service_unavailable",
+    service: "lsp",
+    message: "language service unavailable",
+    expectedKind: "spawn_failed",
+  },
+] as const;
+
+const structuredErrorCases = (["stdout", "stderr"] as const).flatMap(
+  (stream) => toolingErrors.map((record) => ({ stream, record })),
+);
+
 describe("host launch abstraction", () => {
   const servers: net.Server[] = [];
 
@@ -201,6 +229,7 @@ describe("host launch abstraction", () => {
     await expect(
       launcher.launch({ enginePath: "foundry", project: "/workspace/game" }),
     ).rejects.toMatchObject({ kind: "readiness_timeout" });
+    expect(child.kill).toHaveBeenCalledOnce();
   });
 
   it("turns a missing executable into an actionable startup failure", async () => {
@@ -233,6 +262,7 @@ describe("host launch abstraction", () => {
       project: "/workspace/game",
     });
     expect((failure as Error).message).toContain("foundryScript.enginePath");
+    expect(child.kill).toHaveBeenCalledOnce();
   });
 
   it("turns a synchronously rejected engine path into the same actionable failure", async () => {
@@ -281,6 +311,7 @@ describe("host launch abstraction", () => {
         project: "/workspace/game",
       }),
     ).rejects.toMatchObject({ kind: "missing_engine" });
+    expect(child.kill).toHaveBeenCalledOnce();
   });
 
   it("reports a non-path spawn error without inventing an exit code", async () => {
@@ -307,6 +338,7 @@ describe("host launch abstraction", () => {
     expect(failure).toMatchObject({ kind: "spawn_failed" });
     expect((failure as Error).message).toContain("EMFILE");
     expect((failure as Error).message).not.toContain("undefined");
+    expect(child.kill).toHaveBeenCalledOnce();
   });
 
   it("distinguishes process exit before readiness", async () => {
@@ -331,6 +363,7 @@ describe("host launch abstraction", () => {
       project: "/workspace/game",
       exitCode: 23,
     });
+    expect(child.kill).not.toHaveBeenCalled();
   });
 
   it("distinguishes a bind conflict from a generic readiness timeout", async () => {
@@ -360,12 +393,111 @@ describe("host launch abstraction", () => {
         project: "/workspace/game",
       }),
     ).rejects.toMatchObject({ kind: "port_conflict" });
+    expect(conflictChild.kill).toHaveBeenCalledOnce();
     await expect(
       timeoutLauncher.launch({
         enginePath: "foundry",
         project: "/workspace/game",
       }),
     ).rejects.toMatchObject({ kind: "readiness_timeout" });
+  });
+
+  it.each(structuredErrorCases)(
+    "classifies $record.error tooling errors from $stream",
+    async ({ stream, record }) => {
+      const child = new FakeChildProcess();
+      const output = { appendLine: vi.fn() };
+      const launcher = new FoundryHostLauncher({
+        spawnProcess: () => {
+          queueMicrotask(() => {
+            child[stream].write(
+              `FOUNDRY_TOOLING_ERROR ${JSON.stringify({ error: record.error, message: record.message })}\n`,
+            );
+            child[stream].write(`${record.error} tail`);
+          });
+          return child.asChildProcess();
+        },
+        output,
+        inactivityTimeoutMs: 20,
+        absoluteTimeoutMs: 100,
+        pollIntervalMs: 5,
+      });
+
+      const failure = await launcher
+        .launch({ enginePath: "foundry", project: "/workspace/game" })
+        .catch((error: unknown) => error);
+
+      expect(failure).toMatchObject({ kind: record.expectedKind });
+      expect((failure as Error).message).toContain(record.message);
+      expect(child.kill).toHaveBeenCalledOnce();
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+      const outputRecords = output.appendLine.mock.calls.map(
+        ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
+      );
+      expect(
+        outputRecords.filter(
+          (outputRecord) => outputRecord.message === `${record.error} tail`,
+        ),
+      ).toHaveLength(1);
+    },
+  );
+
+  it("keeps a structured failure when the child subsequently exits", async () => {
+    const child = new FakeChildProcess();
+    const record = toolingErrors[1];
+    const launcher = new FoundryHostLauncher({
+      spawnProcess: () => {
+        queueMicrotask(() => {
+          child.stdout.write(
+            `FOUNDRY_TOOLING_ERROR ${JSON.stringify({ error: record.error, message: record.message })}\n`,
+          );
+          child.exitCode = 23;
+          child.emit("exit", 23, null);
+        });
+        return child.asChildProcess();
+      },
+      inactivityTimeoutMs: 20,
+      absoluteTimeoutMs: 100,
+      pollIntervalMs: 5,
+    });
+
+    const failure = await launcher
+      .launch({ enginePath: "foundry", project: "/workspace/game" })
+      .catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ kind: "invalid_project" });
+    expect((failure as Error).message).toContain(record.message);
+  });
+
+  it("terminates a child after malformed readiness times out", async () => {
+    const child = new FakeChildProcess();
+    const output = { appendLine: vi.fn() };
+    const launcher = new FoundryHostLauncher({
+      spawnProcess: () => {
+        queueMicrotask(() => {
+          child.stdout.write("FOUNDRY_TOOLING {\n");
+          child.stdout.write("malformed tail");
+        });
+        return child.asChildProcess();
+      },
+      output,
+      inactivityTimeoutMs: 20,
+      absoluteTimeoutMs: 100,
+      pollIntervalMs: 5,
+    });
+
+    await expect(
+      launcher.launch({ enginePath: "foundry", project: "/workspace/game" }),
+    ).rejects.toMatchObject({ kind: "readiness_timeout" });
+    expect(child.kill).toHaveBeenCalledOnce();
+    const outputRecords = output.appendLine.mock.calls.map(
+      ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
+    );
+    expect(
+      outputRecords.filter(
+        (outputRecord) => outputRecord.message === "malformed tail",
+      ),
+    ).toHaveLength(1);
   });
 
   it("reports inactivity when a silent host does not become ready", async () => {
@@ -391,6 +523,7 @@ describe("host launch abstraction", () => {
     expect((failure as Error).message).toContain(
       "produced no startup output for 20 milliseconds",
     );
+    expect(child.kill).toHaveBeenCalledOnce();
     const records = output.appendLine.mock.calls.map(
       ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
     );
@@ -464,6 +597,7 @@ describe("host launch abstraction", () => {
     expect((failure as Error).message).toContain(
       "did not become ready within 40 milliseconds",
     );
+    expect(child.kill).toHaveBeenCalledOnce();
   });
 
   it("logs complete startup lines and flushes unterminated tails once", async () => {
@@ -558,8 +692,10 @@ describe("host launch abstraction", () => {
   it("terminates a child when startup is aborted during readiness", async () => {
     const child = new FakeChildProcess();
     const controller = new AbortController();
+    const output = { appendLine: vi.fn() };
     const launcher = new FoundryHostLauncher({
       spawnProcess: () => child.asChildProcess(),
+      output,
       inactivityTimeoutMs: 50,
       absoluteTimeoutMs: 100,
       pollIntervalMs: 5,
@@ -571,9 +707,19 @@ describe("host launch abstraction", () => {
       signal: controller.signal,
     });
     await Promise.resolve();
+    child.stderr.write("cancel tail");
     controller.abort();
 
     await expect(launching).rejects.toMatchObject({ name: "AbortError" });
+    expect(child.kill).toHaveBeenCalledOnce();
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    const outputRecords = output.appendLine.mock.calls.map(
+      ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
+    );
+    expect(
+      outputRecords.filter(
+        (outputRecord) => outputRecord.message === "cancel tail",
+      ),
+    ).toHaveLength(1);
   });
 });
