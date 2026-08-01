@@ -110,7 +110,8 @@ describe("host launch abstraction", () => {
       allocatePort: () => Promise.resolve(address.port),
       spawnProcess,
       output,
-      timeoutMs: 100,
+      inactivityTimeoutMs: 100,
+      absoluteTimeoutMs: 200,
       pollIntervalMs: 5,
     });
 
@@ -173,7 +174,8 @@ describe("host launch abstraction", () => {
         });
         return child.asChildProcess();
       },
-      timeoutMs: 100,
+      inactivityTimeoutMs: 100,
+      absoluteTimeoutMs: 200,
       pollIntervalMs: 5,
     });
 
@@ -205,7 +207,8 @@ describe("host launch abstraction", () => {
         });
         return child.asChildProcess();
       },
-      timeoutMs: 100,
+      inactivityTimeoutMs: 100,
+      absoluteTimeoutMs: 200,
       pollIntervalMs: 5,
     });
 
@@ -231,7 +234,8 @@ describe("host launch abstraction", () => {
           code: "ERR_INVALID_ARG_VALUE",
         });
       },
-      timeoutMs: 100,
+      inactivityTimeoutMs: 100,
+      absoluteTimeoutMs: 200,
       pollIntervalMs: 5,
     });
 
@@ -260,7 +264,8 @@ describe("host launch abstraction", () => {
         });
         return child.asChildProcess();
       },
-      timeoutMs: 100,
+      inactivityTimeoutMs: 100,
+      absoluteTimeoutMs: 200,
       pollIntervalMs: 5,
     });
 
@@ -285,7 +290,8 @@ describe("host launch abstraction", () => {
         });
         return child.asChildProcess();
       },
-      timeoutMs: 100,
+      inactivityTimeoutMs: 100,
+      absoluteTimeoutMs: 200,
       pollIntervalMs: 5,
     });
 
@@ -309,7 +315,8 @@ describe("host launch abstraction", () => {
         });
         return child.asChildProcess();
       },
-      timeoutMs: 100,
+      inactivityTimeoutMs: 100,
+      absoluteTimeoutMs: 200,
       pollIntervalMs: 5,
     });
 
@@ -334,13 +341,15 @@ describe("host launch abstraction", () => {
         );
         return conflictChild.asChildProcess();
       },
-      timeoutMs: 20,
+      inactivityTimeoutMs: 20,
+      absoluteTimeoutMs: 100,
       pollIntervalMs: 5,
     });
     const timeoutLauncher = new FoundryHostLauncher({
       allocatePort: () => Promise.resolve(49153),
       spawnProcess: () => timeoutChild.asChildProcess(),
-      timeoutMs: 20,
+      inactivityTimeoutMs: 20,
+      absoluteTimeoutMs: 100,
       pollIntervalMs: 5,
     });
 
@@ -358,13 +367,99 @@ describe("host launch abstraction", () => {
     ).rejects.toMatchObject({ kind: "readiness_timeout", port: 49153 });
   });
 
+  it("reports inactivity when a silent host does not become ready", async () => {
+    const child = new FakeChildProcess();
+    const launcher = new FoundryHostLauncher({
+      allocatePort: () => Promise.resolve(49153),
+      spawnProcess: () => child.asChildProcess(),
+      inactivityTimeoutMs: 20,
+      absoluteTimeoutMs: 100,
+      pollIntervalMs: 5,
+    });
+
+    const failure = await launcher
+      .launch({ enginePath: "foundry", project: "/workspace/game" })
+      .catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      kind: "readiness_timeout",
+      timeoutReason: "inactivity",
+      timeoutMs: 20,
+    });
+    expect((failure as Error).message).toContain(
+      "produced no startup output for 20 milliseconds",
+    );
+  });
+
+  it.each(["stdout", "stderr"] as const)(
+    "extends the inactivity window when %s output arrives",
+    async (stream) => {
+      const child = new FakeChildProcess();
+      const launcher = new FoundryHostLauncher({
+        allocatePort: () => Promise.resolve(49154),
+        spawnProcess: () => {
+          setTimeout(() => child[stream].write("still importing"), 10);
+          if (stream === "stdout") {
+            setTimeout(() => child.stdout.write("\n"), 15);
+          }
+          setTimeout(() => {
+            child.stdout.write(
+              'FOUNDRY_TOOLING {"project":"/workspace/game","pid":4321,"local_only":true,"services":["lsp"],"lsp_port":50100}\n',
+            );
+          }, 25);
+          return child.asChildProcess();
+        },
+        inactivityTimeoutMs: 20,
+        absoluteTimeoutMs: 100,
+        pollIntervalMs: 5,
+      });
+
+      const host = await launcher.launch({
+        enginePath: "foundry",
+        project: "/workspace/game",
+      });
+
+      expect(host.readiness.lspPort).toBe(50100);
+      await host.stop();
+    },
+  );
+
+  it("enforces the absolute limit while output continues", async () => {
+    const child = new FakeChildProcess();
+    const launcher = new FoundryHostLauncher({
+      allocatePort: () => Promise.resolve(49155),
+      spawnProcess: () => {
+        const activity = setInterval(() => child.stdout.write("working\n"), 5);
+        child.once("exit", () => clearInterval(activity));
+        return child.asChildProcess();
+      },
+      inactivityTimeoutMs: 20,
+      absoluteTimeoutMs: 40,
+      pollIntervalMs: 5,
+    });
+
+    const failure = await launcher
+      .launch({ enginePath: "foundry", project: "/workspace/game" })
+      .catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      kind: "readiness_timeout",
+      timeoutReason: "absolute",
+      timeoutMs: 40,
+    });
+    expect((failure as Error).message).toContain(
+      "did not become ready within 40 milliseconds",
+    );
+  });
+
   it("terminates a child when startup is aborted during readiness", async () => {
     const child = new FakeChildProcess();
     const controller = new AbortController();
     const launcher = new FoundryHostLauncher({
       allocatePort: () => Promise.resolve(49152),
       spawnProcess: () => child.asChildProcess(),
-      timeoutMs: 50,
+      inactivityTimeoutMs: 50,
+      absoluteTimeoutMs: 100,
       pollIntervalMs: 5,
     });
 

@@ -117,9 +117,13 @@ export type HostStartupFailureKind =
   | "readiness_timeout"
   | "port_conflict";
 
+export type HostStartupTimeoutReason = "inactivity" | "absolute";
+
 export interface HostStartupFailureDetails extends LegacyLspCommandRequest {
   kind: HostStartupFailureKind;
   exitCode?: number | null;
+  timeoutReason?: HostStartupTimeoutReason;
+  timeoutMs?: number;
   cause?: unknown;
 }
 
@@ -145,8 +149,27 @@ function startupFailureMessage(details: HostStartupFailureDetails): string {
       );
     case "port_conflict":
       return `Foundry could not bind the language server for ${target} because the port is already in use.`;
-    case "readiness_timeout":
+    case "readiness_timeout": {
+      if (
+        details.timeoutReason === "inactivity" &&
+        details.timeoutMs !== undefined
+      ) {
+        return (
+          `Foundry produced no startup output for ${details.timeoutMs} milliseconds ` +
+          `while starting the language server for ${target}.`
+        );
+      }
+      if (
+        details.timeoutReason === "absolute" &&
+        details.timeoutMs !== undefined
+      ) {
+        return (
+          `Foundry did not become ready within ${details.timeoutMs} milliseconds ` +
+          `while starting the language server for ${target}.`
+        );
+      }
       return `Timed out waiting for the Foundry language server for ${target}.`;
+    }
   }
 }
 
@@ -156,6 +179,8 @@ export class HostStartupFailure extends Error {
   readonly project: string;
   readonly port: number;
   readonly exitCode: number | null | undefined;
+  readonly timeoutReason: HostStartupTimeoutReason | undefined;
+  readonly timeoutMs: number | undefined;
 
   constructor(details: HostStartupFailureDetails) {
     super(startupFailureMessage(details), { cause: details.cause });
@@ -165,6 +190,8 @@ export class HostStartupFailure extends Error {
     this.project = details.project;
     this.port = details.port;
     this.exitCode = details.exitCode;
+    this.timeoutReason = details.timeoutReason;
+    this.timeoutMs = details.timeoutMs;
   }
 }
 
@@ -178,7 +205,8 @@ export interface FoundryHostLauncherOptions {
   allocatePort?: () => Promise<number>;
   spawnProcess?: SpawnProcess;
   buildCommand?: (request: LegacyLspCommandRequest) => HostCommand;
-  timeoutMs?: number;
+  inactivityTimeoutMs?: number;
+  absoluteTimeoutMs?: number;
   pollIntervalMs?: number;
   output?: LogOutput;
 }
@@ -189,12 +217,20 @@ interface StartupState {
   readiness?: ToolingHostReadiness;
   stderr: string;
   structuredBindFailure: boolean;
+  lastActivityAt: number;
 }
 
-function observeOutput(child: ChildProcess, state: StartupState): void {
+function observeOutput(
+  child: ChildProcess,
+  state: StartupState,
+  now: () => number,
+): void {
   let stdoutBuffer = "";
   child.stdout?.on("data", (chunk: Buffer | string) => {
-    stdoutBuffer += chunk.toString();
+    const text = chunk.toString();
+    if (text.length === 0) return;
+    state.lastActivityAt = now();
+    stdoutBuffer += text;
     const lines = stdoutBuffer.split(/\r?\n/);
     stdoutBuffer = lines.pop() ?? "";
     for (const line of lines) {
@@ -203,6 +239,8 @@ function observeOutput(child: ChildProcess, state: StartupState): void {
   });
   child.stderr?.on("data", (chunk: Buffer | string) => {
     const text = chunk.toString();
+    if (text.length === 0) return;
+    state.lastActivityAt = now();
     state.stderr += text;
     for (const line of text.split(/\r?\n/)) {
       if (!line.startsWith("FOUNDRY_TOOLING_ERROR ")) {
@@ -283,7 +321,8 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
   private readonly buildCommand: (
     request: LegacyLspCommandRequest,
   ) => HostCommand;
-  private readonly timeoutMs: number;
+  private readonly inactivityTimeoutMs: number;
+  private readonly absoluteTimeoutMs: number;
   private readonly pollIntervalMs: number;
   private readonly output: LogOutput | undefined;
 
@@ -291,7 +330,8 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
     this.allocatePort = options.allocatePort ?? allocateLoopbackPort;
     this.spawnProcess = options.spawnProcess ?? spawn;
     this.buildCommand = options.buildCommand ?? buildLegacyLspCommand;
-    this.timeoutMs = options.timeoutMs ?? 10_000;
+    this.inactivityTimeoutMs = options.inactivityTimeoutMs ?? 15_000;
+    this.absoluteTimeoutMs = options.absoluteTimeoutMs ?? 120_000;
     this.pollIntervalMs = options.pollIntervalMs ?? 50;
     this.output = options.output;
   }
@@ -325,9 +365,11 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
         cause: error,
       });
     }
+    const startedAt = Date.now();
     const state: StartupState = {
       stderr: "",
       structuredBindFailure: false,
+      lastActivityAt: startedAt,
     };
     child.once("error", (error: NodeJS.ErrnoException) => {
       state.spawnError = error;
@@ -335,13 +377,14 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
     child.once("exit", (code) => {
       state.exit = { code };
     });
-    observeOutput(child, state);
+    observeOutput(child, state, Date.now);
 
     try {
       const readiness = await this.waitForReadiness(
         child,
         commandRequest,
         state,
+        startedAt,
         request.signal,
       );
       this.log("info", "lsp.host.ready", {
@@ -369,10 +412,10 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
     child: ChildProcess,
     request: LegacyLspCommandRequest,
     state: StartupState,
+    startedAt: number,
     signal: AbortSignal | undefined,
   ): Promise<ToolingHostReadiness> {
-    const deadline = Date.now() + this.timeoutMs;
-    while (Date.now() < deadline) {
+    while (true) {
       throwIfAborted(signal);
       if (state.readiness !== undefined) {
         return state.readiness;
@@ -394,6 +437,28 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
           exitCode: state.exit.code,
         });
       }
+
+      const now = Date.now();
+      const absoluteElapsedMs = now - startedAt;
+      const inactiveElapsedMs = now - state.lastActivityAt;
+      const timeoutReason: HostStartupTimeoutReason | undefined =
+        absoluteElapsedMs >= this.absoluteTimeoutMs
+          ? "absolute"
+          : inactiveElapsedMs >= this.inactivityTimeoutMs
+            ? "inactivity"
+            : undefined;
+      if (timeoutReason !== undefined) {
+        const timeoutMs =
+          timeoutReason === "absolute"
+            ? this.absoluteTimeoutMs
+            : this.inactivityTimeoutMs;
+        throw new HostStartupFailure({
+          ...request,
+          kind: isBindFailure(state) ? "port_conflict" : "readiness_timeout",
+          timeoutReason,
+          timeoutMs,
+        });
+      }
       if (await canConnect(request.port)) {
         return {
           project: request.project,
@@ -403,13 +468,17 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
           lspPort: request.port,
         };
       }
-      await delay(this.pollIntervalMs);
+      await delay(
+        Math.max(
+          1,
+          Math.min(
+            this.pollIntervalMs,
+            this.absoluteTimeoutMs - absoluteElapsedMs,
+            this.inactivityTimeoutMs - inactiveElapsedMs,
+          ),
+        ),
+      );
     }
-
-    throw new HostStartupFailure({
-      ...request,
-      kind: isBindFailure(state) ? "port_conflict" : "readiness_timeout",
-    });
   }
 
   private log(
