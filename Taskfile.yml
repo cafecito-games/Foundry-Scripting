@@ -1,0 +1,58 @@
+version: "3"
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  install-deps:
+    desc: Install locked npm dependencies
+    cmds:
+      - npm ci
+
+  build:
+    desc: Build the extension bundle
+    cmds:
+      - npm run build
+
+  watch:
+    desc: Rebuild the extension as files change
+    cmds:
+      - npm run watch
+
+  typecheck:
+    desc: Type-check the TypeScript sources
+    cmds:
+      - npm run typecheck
+
+  lint:
+    desc: Lint the TypeScript sources
+    cmds:
+      - npm run lint
+
+  test:
+    desc: Run unit and grammar tests
+    cmds:
+      - npm test
+
+  check:
+    desc: Build, type-check, lint, and test the extension
+    cmds:
+      - task: build
+      - task: typecheck
+      - task: lint
+      - task: test
+
+  package:
+    desc: Package the extension as an installable VSIX
+    cmds:
+      - npm run package -- --out dist/foundryscript.vsix
+
+  install:
+    desc: Package and install the extension from this checkout
+    deps:
+      - package
+    cmds:
+      - code --install-extension dist/foundryscript.vsix --force
