@@ -1,0 +1,27 @@
+TAP version 13
+# foundry-test-adapter: 1
+1..3
+not ok 1 - MathTests.adds numbers
+  ---
+  message: "division by zero"
+  _foundry:
+    id: "test-a"
+    duration_ms: 1
+    status_detail: "runtime_error"
+  ...
+not ok 2 - MathTests.adds numbers
+  ---
+  message: "exceeded the time budget"
+  _foundry:
+    id: "test-b"
+    duration_ms: 1
+    status_detail: "timed_out"
+  ...
+not ok 3 - StringTests.joins parts
+  ---
+  message: "the run was aborted"
+  _foundry:
+    id: "test-c"
+    duration_ms: 1
+    status_detail: "aborted"
+  ...

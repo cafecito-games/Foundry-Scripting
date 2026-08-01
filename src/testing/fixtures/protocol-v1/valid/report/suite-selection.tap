@@ -1,0 +1,10 @@
+TAP version 13
+# foundry-test-adapter: 1
+1..1
+ok 1 - StringTests.joins parts
+  ---
+  _foundry:
+    id: "test-c"
+    duration_ms: 1
+    status_detail: ""
+  ...

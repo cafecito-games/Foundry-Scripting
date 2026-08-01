@@ -1,0 +1,17 @@
+TAP version 13
+# foundry-test-adapter: 1
+1..2
+ok 1 - SkipTests.pending case
+  ---
+  _foundry:
+    id: "test-s1"
+    duration_ms: 1
+    status_detail: ""
+  ...
+ok 2 - SkipTests.active case
+  ---
+  _foundry:
+    id: "test-s2"
+    duration_ms: 1
+    status_detail: ""
+  ...

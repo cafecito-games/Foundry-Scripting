@@ -151,6 +151,7 @@
   },
   "dependencies": {
     "vscode-jsonrpc": "^8.2.0",
-    "vscode-languageclient": "^9.0.1"
+    "vscode-languageclient": "^9.0.1",
+    "yaml": "2.9.0"
   }
 }

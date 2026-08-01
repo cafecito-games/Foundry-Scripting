@@ -1,0 +1,7 @@
+TAP version 13
+# foundry-test-adapter: 1
+1..1
+ok 1 - MathTests.adds numbers
+  ---
+  message: !!timestamp "not-a-date"
+  ...

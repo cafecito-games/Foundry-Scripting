@@ -1,0 +1,9 @@
+TAP version 13
+# foundry-test-adapter: 1
+1..1
+ok 1 - MathTests.adds numbers
+  ---
+  _foundry:
+    duration_ms: 1
+    status_detail: ""
+  ...
