@@ -97,8 +97,9 @@ descending user impact:
 8. **`@` has no left boundary** — `a@b` highlights `@b` as an annotation.
 
 These cases are inherent to regex-based, line-oriented TextMate grammars and can still
-appear when semantic highlighting is unavailable. Every case above is documented in a `comment` field in
-[`syntaxes/foundryscript.tmLanguage.json`](syntaxes/foundryscript.tmLanguage.json).
+appear when semantic highlighting is unavailable. The committed fallback is the
+unmodified [engine-published grammar](syntaxes/foundryscript.tmLanguage.json), and its
+behavior is covered by the scope assertions under `tests/grammar/`.
 
 ## Development
 
@@ -107,6 +108,25 @@ npm ci
 npm run build
 npm test
 ```
+
+### Updating the engine grammar
+
+The committed TextMate grammar is the complete release artifact for the engine version
+pinned in [`foundry-grammar.json`](foundry-grammar.json). That manifest is the only place
+to change the version.
+
+To update it:
+
+1. Change `engineVersion` in `foundry-grammar.json`.
+2. Run `npm run sync-grammar`.
+3. Review the grammar and scope-assertion diffs.
+4. Run `npm run test:grammar` and, when an engine checkout is available,
+   `FOUNDRY_ENGINE_PATH=/path/to/Foundry npm run test:corpus`.
+
+`npm run check:grammar-sync` downloads the pinned asset and verifies that its raw bytes
+exactly match the committed grammar. CI runs this as an explicit online drift check.
+Synchronization is not part of installation, building, packaging, or extension startup;
+after `npm ci`, normal builds use only files already in the checkout.
 
 To run the corpus regression check against an engine checkout:
 

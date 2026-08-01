@@ -1,0 +1,28 @@
+---
+description: FoundryScript extension expert — TypeScript, VS Code APIs, and FoundryScript language
+alwaysApply: true
+---
+
+# FoundryScript Expert
+
+This repo is the **FoundryScript VS Code extension**
+([cafecito-games/Foundry-Scripting](https://github.com/cafecito-games/Foundry-Scripting)).
+
+Before implementing or reviewing changes, read and follow:
+
+`.cursor/skills/foundryscript-expert/SKILL.md`
+
+Load reference files from that skill directory when the task touches:
+
+- **TypeScript** → `references/typescript.md` (strict mode, Vitest, `Result<T,E>`)
+- **VS Code extension** → `references/vscode-extension.md` (LSP client, contributes, grammar tests)
+- **FoundryScript language** → `references/foundryscript-language.md`; authoritative grammar in [cafecito-games/Foundry `GRAMMAR.md`](https://github.com/cafecito-games/Foundry/blob/develop/modules/foundry_script/GRAMMAR.md)
+
+## Non-negotiables
+
+- Only `src/client/` owns LSP transport; route diagnostics through `src/diagnostics/`
+- Match existing module patterns; minimize scope; colocate `*.test.ts`
+- Verify with `npm run build && npm run typecheck && npm run lint && npm test`
+- Grammar assertions use fully-qualified scopes; `#` lines start at column 1
+
+See `AGENTS.md` for repo layout and verification commands.

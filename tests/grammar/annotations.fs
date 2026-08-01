@@ -1,10 +1,13 @@
 # SYNTAX TEST "source.foundryscript"
 
 @export
-# <- entity.name.function.decorator.foundryscript
+# <- punctuation.definition.annotation.foundryscript
+# ^ entity.name.function.annotation.foundryscript
 
 @onready var node = null
-# <- entity.name.function.decorator.foundryscript
+# <- punctuation.definition.annotation.foundryscript
+# ^ entity.name.function.annotation.foundryscript
 
 @my_custom(1, 2)
-# <- entity.name.function.decorator.foundryscript
+# <- punctuation.definition.annotation.foundryscript
+# ^ entity.name.function.annotation.foundryscript

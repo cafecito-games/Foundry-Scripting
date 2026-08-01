@@ -1,5 +1,7 @@
 .github/**
+.cursor/**
 .vscode/**
+AGENTS.md
 docs/**
 scripts/**
 src/**
