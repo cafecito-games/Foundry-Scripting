@@ -22,6 +22,9 @@ export interface LiveFoundryTestRunResult {
   readonly pointBeforeExit: boolean;
   readonly applicationStdoutObserved: boolean;
   readonly completion: string;
+  readonly cancelledPointIds: readonly string[];
+  readonly cancellation: string;
+  readonly recovery: string;
   readonly temporaryArtifactsCleaned: boolean;
 }
 
@@ -33,6 +36,12 @@ export async function verifyLiveFoundryTestRun(
   options: LiveFoundryTestRunOptions,
 ): Promise<LiveFoundryTestRunResult> {
   const adapterProcess = new FoundryTestAdapterProcess();
+  const temporaryDirectories: string[] = [];
+  const makeTemporaryDirectory = async (prefix: string): Promise<string> => {
+    const directory = await mkdtemp(prefix);
+    temporaryDirectories.push(directory);
+    return directory;
+  };
   const request = {
     enginePath: options.foundry,
     project: options.project,
@@ -41,11 +50,13 @@ export async function verifyLiveFoundryTestRun(
   } as const;
   const adapter = await new FoundryTestAdapterNegotiator({
     runProcess: (command, signal) => adapterProcess.run(command, signal),
+    makeTemporaryDirectory,
   }).negotiate(request, new AbortController().signal);
   requireCondition(adapter.protocolVersion === 1, "Expected negotiated protocol v1.");
 
   const discoverer = new FoundryTestAdapterDiscoverer({
     runProcess: (command, signal) => adapterProcess.run(command, signal),
+    makeTemporaryDirectory,
   });
   const model = await discoverer.discover(
     { ...request, protocolVersion: adapter.protocolVersion },
@@ -67,7 +78,6 @@ export async function verifyLiveFoundryTestRun(
   const continuationPath = path.join(continuationDirectory, "continue");
   const previousContinuation = process.env[continuationEnvironment];
   process.env[continuationEnvironment] = continuationPath;
-  const executionDirectories: string[] = [];
   let executionExited = false;
   let pointBeforeExit = false;
   const pointIds: string[] = [];
@@ -80,11 +90,7 @@ export async function verifyLiveFoundryTestRun(
         executionExited = true;
         return result;
       },
-      makeTemporaryDirectory: async (prefix) => {
-        const directory = await mkdtemp(prefix);
-        executionDirectories.push(directory);
-        return directory;
-      },
+      makeTemporaryDirectory,
     });
     const streaming = await executor.execute(
       {
@@ -120,6 +126,48 @@ export async function verifyLiveFoundryTestRun(
       "Streaming point IDs did not match the selected discovery-order plan.",
     );
 
+    await rm(continuationPath, { force: true });
+    const cancellationController = new AbortController();
+    const cancelledPointIds: string[] = [];
+    executionExited = false;
+    const cancelled = await executor.execute(
+      {
+        ...request,
+        protocolVersion: adapter.protocolVersion,
+        leaves: leaves.map((leaf) => ({
+          id: leaf.id,
+          skipped: leaf.skipped,
+          skipReason: leaf.skipReason,
+        })),
+      },
+      cancellationController.signal,
+      {
+        onPoint: (point) => {
+          cancelledPointIds.push(point.testId);
+          if (cancelledPointIds.length === 1) {
+            cancellationController.abort();
+          }
+        },
+        onOutput: (text, stream) => output.push({ text, stream }),
+      },
+    );
+    requireCondition(
+      cancelled.kind === "cancelled" &&
+        cancelled.processResult.kind === "cancelled" &&
+        cancelled.completion.valid &&
+        !cancelled.completion.complete &&
+        cancelled.completion.classification === "cancelled",
+      `Cancellation completion was ${cancelled.completion.classification}: ${cancelled.completion.diagnostics.join(" ")}`,
+    );
+    requireCondition(
+      cancelledPointIds.length > 0 && cancelledPointIds.length < leaves.length,
+      "Cancellation did not retain an exact incomplete point prefix.",
+    );
+    requireCondition(
+      same(cancelledPointIds, leaves.slice(0, cancelledPointIds.length).map((leaf) => leaf.id)),
+      "Cancellation retained points outside the selected discovery-order prefix.",
+    );
+
     const cleanRequest = {
       ...request,
       frameworkArgs: ["--path", cleanOutputRoot],
@@ -147,7 +195,9 @@ export async function verifyLiveFoundryTestRun(
       },
     );
     requireCondition(
-      clean.completion.valid && clean.completion.classification === "conforming",
+      clean.completion.valid &&
+        clean.completion.complete &&
+        clean.completion.classification === "conforming",
       "The application-output control run did not conform.",
     );
     const applicationStdoutObserved = output.some(
@@ -159,7 +209,7 @@ export async function verifyLiveFoundryTestRun(
       applicationStdoutObserved,
       "The run-scoped observer did not receive application stdout.",
     );
-    const temporaryArtifactsCleaned = executionDirectories.every(
+    const temporaryArtifactsCleaned = temporaryDirectories.every(
       (directory) => !existsSync(directory),
     );
     requireCondition(
@@ -173,6 +223,9 @@ export async function verifyLiveFoundryTestRun(
       pointBeforeExit,
       applicationStdoutObserved,
       completion: streaming.completion.classification,
+      cancelledPointIds,
+      cancellation: cancelled.completion.classification,
+      recovery: clean.completion.classification,
       temporaryArtifactsCleaned,
     };
   } finally {
