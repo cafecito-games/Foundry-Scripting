@@ -1,5 +1,10 @@
 import * as vscode from "vscode";
 import type { DiagnosticsUnit } from "../diagnostics/index.js";
+import type { ProjectResolutionFailure } from "../project/resolver.js";
+import {
+  createWorkspaceProjectResolver,
+  type ResolveWorkspaceProject,
+} from "../project/workspace.js";
 import {
   FOUNDRY_TASK_KINDS,
   FoundryTaskConfigurationError,
@@ -21,14 +26,18 @@ export const FOUNDRY_TASK_TYPE = "foundryscript";
 
 export interface FoundryTaskProviderOptions extends FoundryTaskProcessOptions {
   readonly diagnostics?: DiagnosticsUnit;
+  readonly resolveProject?: ResolveWorkspaceProject;
 }
 
 export class FoundryTaskProvider implements vscode.TaskProvider {
   private readonly lintPublisher: FoundryLintDiagnosticsPublisher | undefined;
+  private readonly resolveProject: ResolveWorkspaceProject;
 
   constructor(
     private readonly processOptions: FoundryTaskProviderOptions = {},
   ) {
+    this.resolveProject =
+      processOptions.resolveProject ?? createWorkspaceProjectResolver();
     this.lintPublisher =
       processOptions.diagnostics === undefined
         ? undefined
@@ -60,6 +69,7 @@ export class FoundryTaskProvider implements vscode.TaskProvider {
             kind,
             this.processOptions,
             this.lintPublisher,
+            this.resolveProject,
           ),
         ),
     );
@@ -83,11 +93,12 @@ export class FoundryTaskProvider implements vscode.TaskProvider {
 export function registerFoundryTaskProvider(
   context: vscode.ExtensionContext,
   diagnostics?: DiagnosticsUnit,
+  resolveProject?: ResolveWorkspaceProject,
 ): void {
   context.subscriptions.push(
     vscode.tasks.registerTaskProvider(
       FOUNDRY_TASK_TYPE,
-      new FoundryTaskProvider({ diagnostics }),
+      new FoundryTaskProvider({ diagnostics, resolveProject }),
     ),
   );
 }
@@ -104,15 +115,26 @@ class FoundryTaskTerminal implements vscode.Pseudoterminal {
     private readonly kind: FoundryTaskKind,
     private readonly processOptions: FoundryTaskProcessOptions,
     private readonly lintPublisher: FoundryLintDiagnosticsPublisher | undefined,
+    private readonly resolveProject: ResolveWorkspaceProject,
   ) {}
 
   open(): void {
+    void this.start();
+  }
+
+  private async start(): Promise<void> {
     const configuration = vscode.workspace.getConfiguration("foundryScript");
     try {
+      const resolution = await this.resolveProject();
+      if (!resolution.success) {
+        this.reportProjectFailure(resolution.failure);
+        this.closeEmitter.fire(1);
+        return;
+      }
       const command = createFoundryTaskCommand({
         kind: this.kind,
         enginePath: configuration.get("enginePath", "foundry"),
-        project: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+        project: resolution.project,
         testRunner: configuration.get("test.runner", ""),
       });
       this.lintRun =
@@ -145,7 +167,10 @@ class FoundryTaskTerminal implements vscode.Pseudoterminal {
         this.closeEmitter.fire(1);
         return;
       }
-      throw error;
+      const message = `Unable to resolve the Foundry project: ${error instanceof Error ? error.message : String(error)}`;
+      this.writeEmitter.fire(`Error: ${message}\r\n`);
+      void vscode.window.showErrorMessage(message);
+      this.closeEmitter.fire(1);
     }
   }
 
@@ -162,6 +187,17 @@ class FoundryTaskTerminal implements vscode.Pseudoterminal {
       return;
     }
     void showOpenSettingsError(error.message, error.setting);
+  }
+
+  private reportProjectFailure(failure: ProjectResolutionFailure): void {
+    this.writeEmitter.fire(`Error: ${failure.message}\r\n`);
+    if (failure.kind === "missing_workspace") {
+      void showOpenFolderError(failure.message);
+    } else if (failure.setting !== undefined) {
+      void showOpenSettingsError(failure.message, failure.setting);
+    } else {
+      void vscode.window.showErrorMessage(failure.message);
+    }
   }
 
   private reportProcessError(error: FoundryTaskProcessError): void {
