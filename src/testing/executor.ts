@@ -158,9 +158,11 @@ export class FoundryTestExecutor {
         consumed,
         parser,
         true,
-        processResult.kind === "cancelled" || cause !== undefined,
+        processResult.kind === "cancelled" ||
+          cause !== undefined ||
+          isAbnormalProcessExit(processResult) ||
+          (processResult.exitCode !== undefined && processResult.exitCode !== 0),
       );
-      void consumed;
       if (cause === "readiness_timeout") {
         throw new TestAdapterFailure(
           "readiness_timeout",
@@ -173,6 +175,14 @@ export class FoundryTestExecutor {
         );
       }
       if (isAbnormalProcessExit(processResult)) {
+        throw createProcessCrashFailure("execution", processResult);
+      }
+      if (
+        processResult.kind === "exited" &&
+        processResult.exitCode !== undefined &&
+        processResult.exitCode !== 0 &&
+        consumed.length === 0
+      ) {
         throw createProcessCrashFailure("execution", processResult);
       }
       if (processResult.kind === "cancelled" && cause !== "user") {

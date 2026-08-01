@@ -275,13 +275,31 @@ describe("Foundry test executor", () => {
   });
 
   it("classifies a missing final report as a read failure", async () => {
-    const executor = immediateExecutor(undefined, () => Promise.resolve(exited(2)), {
+    const executor = immediateExecutor(undefined, () => Promise.resolve(exited(0)), {
       readArtifact: () => Promise.reject(missing()),
     });
 
     await expect(
       executor.execute(request, new AbortController().signal, observer()),
     ).rejects.toMatchObject({ kind: "report_read_failed" });
+  });
+
+  it("classifies a missing report after nonzero exit as a process crash", async () => {
+    const executor = immediateExecutor(
+      undefined,
+      () => Promise.resolve(exited(2, "ordinary", "fatal detail")),
+      { readArtifact: () => Promise.reject(missing()) },
+    );
+
+    await expect(
+      executor.execute(request, new AbortController().signal, observer()),
+    ).rejects.toMatchObject({
+      kind: "process_crash",
+      phase: "execution",
+      exitCode: 2,
+      stdout: "ordinary",
+      stderr: "fatal detail",
+    });
   });
 
   it("rejects a report whose consumed prefix changes", async () => {
