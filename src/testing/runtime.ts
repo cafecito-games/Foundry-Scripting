@@ -28,6 +28,12 @@ export interface TestingRuntimeOptions {
   readonly onState: (state: TestingState) => void;
 }
 
+export interface TestingReadyContext {
+  readonly configuration: TestingRuntimeConfiguration;
+  readonly adapter: NegotiatedTestAdapter;
+  readonly model: TestDiscoveryModel;
+}
+
 interface ActiveOperation {
   readonly generation: number;
   readonly controller: AbortController;
@@ -42,6 +48,7 @@ export class TestingRuntime {
   private stopped = false;
   private stopPromise: Promise<void> | undefined;
   private currentStateKind: TestingState["kind"] | undefined;
+  private ready: TestingReadyContext | undefined;
 
   constructor(private readonly options: TestingRuntimeOptions) {}
 
@@ -71,6 +78,7 @@ export class TestingRuntime {
     }
     this.configurationKey = key;
     const generation = ++this.generation;
+    this.ready = undefined;
     const previous = this.active;
 
     if (!configuration.enabled) {
@@ -111,6 +119,7 @@ export class TestingRuntime {
     }
     this.stopped = true;
     this.configurationKey = undefined;
+    this.ready = undefined;
     this.generation += 1;
     this.publish({ kind: "disabled" });
     const operation = this.active;
@@ -122,6 +131,10 @@ export class TestingRuntime {
       }
     })();
     return this.stopPromise;
+  }
+
+  readyContext(): TestingReadyContext | undefined {
+    return this.ready;
   }
 
   private async completeGeneration(
@@ -154,6 +167,14 @@ export class TestingRuntime {
       }
       this.options.onDiscovery(request.project, model);
       if (this.isCurrent(generation)) {
+        this.ready = {
+          configuration: {
+            ...this.configurationFor(request),
+            enabled: true,
+          },
+          adapter,
+          model,
+        };
         this.publish({
           kind: "ready",
           adapter,
@@ -186,6 +207,18 @@ export class TestingRuntime {
     }
     this.currentStateKind = state.kind;
     this.options.onState(state);
+  }
+
+  private configurationFor(
+    request: TestAdapterNegotiationRequest,
+  ): TestingRuntimeConfiguration {
+    return {
+      enabled: true,
+      enginePath: request.enginePath,
+      project: request.project,
+      runner: request.runner,
+      frameworkArgs: [...request.frameworkArgs],
+    };
   }
 }
 

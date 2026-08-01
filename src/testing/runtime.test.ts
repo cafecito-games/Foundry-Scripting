@@ -35,6 +35,35 @@ const cleanModel: TestDiscoveryModel = {
 };
 
 describe("testing runtime", () => {
+  it("exposes ready context only for a completed current generation", async () => {
+    const nextNegotiation = deferred<typeof negotiatedAdapter>();
+    const negotiate = vi
+      .fn()
+      .mockResolvedValueOnce(negotiatedAdapter)
+      .mockImplementationOnce(() => nextNegotiation.promise);
+    const harness = createHarness({ negotiate });
+
+    expect(harness.runtime.readyContext()).toBeUndefined();
+    await harness.runtime.configure(enabledConfiguration);
+    expect(harness.runtime.readyContext()).toEqual({
+      configuration: enabledConfiguration,
+      adapter: negotiatedAdapter,
+      model: cleanModel,
+    });
+
+    const refresh = harness.runtime.refresh();
+    expect(harness.runtime.readyContext()).toBeUndefined();
+    nextNegotiation.resolve(negotiatedAdapter);
+    await refresh;
+    expect(harness.runtime.readyContext()).toMatchObject({
+      adapter: negotiatedAdapter,
+      model: cleanModel,
+    });
+
+    await harness.runtime.stop();
+    expect(harness.runtime.readyContext()).toBeUndefined();
+  });
+
   it("publishes disabled, clears once, and starts no adapter operation", async () => {
     const harness = createHarness();
 

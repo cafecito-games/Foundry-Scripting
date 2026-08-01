@@ -21,6 +21,11 @@ export interface FoundryTestItemMetadata {
   readonly caseKey: string | null;
 }
 
+export interface FoundryTestExplorerSnapshot {
+  readonly model: TestDiscoveryModel;
+  readonly item: (id: string) => vscode.TestItem | undefined;
+}
+
 interface DesiredItem {
   readonly record: TestDiscoveryItem;
   readonly nativePath: string | null;
@@ -31,6 +36,7 @@ export class FoundryTestExplorer {
   private readonly items = new Map<string, vscode.TestItem>();
   private readonly metadata = new Map<string, FoundryTestItemMetadata>();
   private readonly nativePaths = new Map<string, string | null>();
+  private model: TestDiscoveryModel | undefined;
 
   constructor(
     private readonly controller: vscode.TestController,
@@ -101,6 +107,7 @@ export class FoundryTestExplorer {
         this.collectionFor(record.parentId).add(item);
       }
     }
+    this.model = model;
   }
 
   clear(): void {
@@ -108,10 +115,22 @@ export class FoundryTestExplorer {
     this.items.clear();
     this.metadata.clear();
     this.nativePaths.clear();
+    this.model = undefined;
   }
 
   getMetadata(id: string): FoundryTestItemMetadata | undefined {
     return this.metadata.get(id);
+  }
+
+  snapshot(): FoundryTestExplorerSnapshot | undefined {
+    if (this.model === undefined) {
+      return undefined;
+    }
+    const items = new Map(this.items);
+    return {
+      model: this.model,
+      item: (id) => items.get(id),
+    };
   }
 
   private detachChildFirst(ids: ReadonlySet<string>): void {
