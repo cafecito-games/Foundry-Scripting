@@ -21,6 +21,24 @@ or `off` to keep syntax highlighting without starting or connecting to Foundry. 
 and auto use `foundryScript.lsp.port` (default `6005`). Hosts spawned by the extension
 are stopped with it; externally started hosts are never terminated by the extension.
 
+### Selecting the Foundry project
+
+The extension first checks `foundryScript.projectPath`. Relative values are resolved
+from the first workspace folder. Without that setting, a workspace-root
+`project.foundry` wins; otherwise, the extension automatically selects exactly one
+nested `project.foundry`.
+
+Wrapper repositories can select their project explicitly:
+
+```json
+{
+  "foundryScript.projectPath": "test_project"
+}
+```
+
+If multiple nested projects exist, configure `foundryScript.projectPath`. The extension
+currently operates one Foundry project per VS Code window.
+
 Cold project initialization may include file scanning, script-class registration, and
 editor setup before the language-server port opens. While Foundry emits startup output,
 the extension allows that work to continue for up to two minutes. A silent startup is

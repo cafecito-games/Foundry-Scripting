@@ -15,6 +15,7 @@ const providerMock = vi.hoisted(() => ({
   showErrorMessage: vi.fn(),
   executeCommand: vi.fn(),
   registerTaskProvider: vi.fn(),
+  resolveProject: vi.fn(),
   DiagnosticSeverity: { Error: 0, Warning: 1, Information: 2, Hint: 3 },
 }));
 
@@ -106,6 +107,10 @@ vi.mock("vscode", () => {
   };
 });
 
+vi.mock("../project/workspace.js", () => ({
+  createWorkspaceProjectResolver: () => providerMock.resolveProject,
+}));
+
 import {
   FOUNDRY_TASK_TYPE,
   FoundryTaskProvider,
@@ -154,6 +159,23 @@ describe("Foundry task provider", () => {
     providerMock.showErrorMessage.mockReset();
     providerMock.executeCommand.mockReset();
     providerMock.registerTaskProvider.mockReset();
+    providerMock.resolveProject.mockReset();
+    providerMock.resolveProject.mockImplementation(() =>
+      Promise.resolve(
+        providerMock.workspaceFolders[0] === undefined
+          ? {
+              success: false,
+              failure: {
+                kind: "missing_workspace",
+                message: "Open a workspace folder before using Foundry tooling.",
+              },
+            }
+          : {
+              success: true,
+              project: providerMock.workspaceFolders[0].uri.fsPath,
+            },
+      ),
+    );
   });
 
   it("registers and provides the five Foundry CLI tasks", () => {
@@ -208,6 +230,7 @@ describe("Foundry task provider", () => {
 
     const terminal = await taskTerminal(task as vscode.Task);
     terminal.open(undefined);
+    await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledOnce());
 
     expect(spawnProcess).toHaveBeenCalledWith(
       "/opt/foundry",
@@ -225,6 +248,94 @@ describe("Foundry task provider", () => {
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
+  });
+
+  it("uses the shared resolved project for the command and cwd", async () => {
+    providerMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/repository" },
+    });
+    providerMock.resolveProject.mockResolvedValue({
+      success: true,
+      project: "/workspace/repository/test_project",
+    });
+    const child = new FakeChildProcess();
+    const spawnProcess = vi.fn(() => child.asChildProcess());
+    const provider = new FoundryTaskProvider({ spawnProcess });
+    const [task] = provider.provideTasks();
+    const terminal = await taskTerminal(task);
+
+    terminal.open(undefined);
+    await vi.waitFor(() => expect(spawnProcess).toHaveBeenCalledOnce());
+
+    expect(spawnProcess).toHaveBeenCalledWith(
+      "foundry",
+      [
+        "project",
+        "import",
+        "--project",
+        "/workspace/repository/test_project",
+      ],
+      expect.objectContaining({ cwd: "/workspace/repository/test_project" }),
+    );
+  });
+
+  it("does not spawn when project selection is ambiguous", async () => {
+    providerMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/repository" },
+    });
+    providerMock.resolveProject.mockResolvedValue({
+      success: false,
+      failure: {
+        kind: "ambiguous_projects",
+        message: "Multiple Foundry projects were found: a/project.foundry, b/project.foundry.",
+        setting: "foundryScript.projectPath",
+        candidates: ["a/project.foundry", "b/project.foundry"],
+      },
+    });
+    providerMock.showErrorMessage.mockResolvedValue("Open Settings");
+    const spawnProcess = vi.fn();
+    const provider = new FoundryTaskProvider({ spawnProcess });
+    const [task] = provider.provideTasks();
+    const terminal = await taskTerminal(task);
+    const closes: Array<number | void> = [];
+    terminal.onDidClose?.((code) => closes.push(code));
+
+    terminal.open(undefined);
+    await vi.waitFor(() => expect(closes).toEqual([1]));
+
+    expect(spawnProcess).not.toHaveBeenCalled();
+    expect(providerMock.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining("Multiple Foundry projects"),
+      "Open Settings",
+    );
+    expect(providerMock.executeCommand).toHaveBeenCalledWith(
+      "workbench.action.openSettings",
+      "foundryScript.projectPath",
+    );
+  });
+
+  it("does not spawn after closing while project resolution is pending", async () => {
+    let finishResolution: ((value: {
+      success: true;
+      project: string;
+    }) => void) | undefined;
+    providerMock.resolveProject.mockReturnValue(
+      new Promise((resolve) => {
+        finishResolution = resolve;
+      }),
+    );
+    const spawnProcess = vi.fn();
+    const provider = new FoundryTaskProvider({ spawnProcess });
+    const [task] = provider.provideTasks();
+    const terminal = await taskTerminal(task);
+
+    terminal.open(undefined);
+    terminal.close();
+    finishResolution?.({ success: true, project: "/workspace/game" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(spawnProcess).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -294,6 +405,7 @@ describe("Foundry task provider", () => {
     const terminal = await taskTerminal(task);
 
     terminal.open(undefined);
+    await vi.waitFor(() => expect(child.listenerCount("error")).toBeGreaterThan(0));
     child.emit(
       "error",
       Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" }),
@@ -326,6 +438,7 @@ describe("Foundry task provider", () => {
     terminal.onDidWrite((text) => writes.push(text));
 
     terminal.open(undefined);
+    await vi.waitFor(() => expect(child.listenerCount("close")).toBeGreaterThan(0));
     const split = Math.floor(capturedFixture.length / 2);
     child.stdout.write(capturedFixture.slice(0, split));
     child.stderr.write("ordinary stderr\n");
@@ -359,6 +472,7 @@ describe("Foundry task provider", () => {
       .find((task) => task.definition.command === "lint");
     const terminal = await taskTerminal(lintTask as vscode.Task);
     terminal.open(undefined);
+    await vi.waitFor(() => expect(child.listenerCount("close")).toBeGreaterThan(0));
     child.stdout.write(testCase.output);
     await Promise.resolve();
     if (testCase.exitCode === null) {
@@ -384,6 +498,7 @@ describe("Foundry task provider", () => {
     const closes: Array<number | void> = [];
     terminal.onDidClose?.((code) => closes.push(code));
     terminal.open(undefined);
+    await vi.waitFor(() => expect(child.listenerCount("close")).toBeGreaterThan(0));
     child.stdout.write("not JSON");
     await Promise.resolve();
 
@@ -410,6 +525,7 @@ describe("Foundry task provider", () => {
       .find((task) => task.definition.command === "lint");
     const terminal = await taskTerminal(lintTask as vscode.Task);
     terminal.open(undefined);
+    await vi.waitFor(() => expect(child.listenerCount("error")).toBeGreaterThan(0));
 
     child.emit(
       "error",

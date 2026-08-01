@@ -123,6 +123,26 @@ describe("testing runtime", () => {
     expect(harness.states).toEqual([{ kind: "disabled" }]);
   });
 
+  it("publishes a project preflight failure without negotiating", async () => {
+    const failure = new TestAdapterFailure(
+      "invalid_project",
+      "Multiple Foundry projects were found.",
+      { setting: "foundryScript.projectPath" },
+    );
+    const harness = createHarness();
+
+    await harness.runtime.configure({
+      ...enabledConfiguration,
+      project: undefined,
+      projectFailure: failure,
+    });
+
+    expect(harness.negotiate).not.toHaveBeenCalled();
+    expect(harness.onClear).toHaveBeenCalledOnce();
+    expect(harness.states.at(-1)).toEqual({ kind: "error", failure });
+    expect(harness.runtime.readyContext()).toBeUndefined();
+  });
+
   it("negotiates, discovers with the selected version, and publishes in order", async () => {
     const events: string[] = [];
     const onDiscovery = vi.fn((project: string) => events.push(`publish:${project}`));

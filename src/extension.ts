@@ -11,10 +11,15 @@ import { HostStartupFailure } from "./client/host-launcher.js";
 import { writeLog } from "./client/logging.js";
 import { createConnectionManager } from "./client/runtime.js";
 import { createDiagnosticsUnit } from "./diagnostics/index.js";
+import type { ProjectResolutionFailure } from "./project/resolver.js";
+import {
+  createWorkspaceProjectResolver,
+  type ResolveWorkspaceProject,
+} from "./project/workspace.js";
 import { registerFoundryTaskProvider } from "./tasks/provider.js";
 import {
   FoundryTestAdapterNegotiator,
-  type TestAdapterFailure,
+  TestAdapterFailure,
 } from "./testing/adapter.js";
 import { FoundryTestAdapterDiscoverer } from "./testing/discoverer.js";
 import { FoundryTestExecutor } from "./testing/executor.js";
@@ -46,6 +51,7 @@ const TESTING_CONFIGURATION_SECTIONS = [
   "foundryScript.testing.runner",
   "foundryScript.testing.args",
   "foundryScript.enginePath",
+  "foundryScript.projectPath",
 ] as const;
 
 function readConnectionSettings(): ConnectionSettings {
@@ -78,18 +84,42 @@ async function showStartupError(error: unknown): Promise<void> {
   await vscode.window.showErrorMessage(message);
 }
 
-function readTestingConfiguration(): TestingRuntimeConfiguration {
+async function readTestingConfiguration(
+  resolveProject: ResolveWorkspaceProject,
+): Promise<TestingRuntimeConfiguration> {
   const configuration = vscode.workspace.getConfiguration("foundryScript");
-  return {
-    enabled: configuration.get("testing.enabled", false),
+  const enabled = configuration.get("testing.enabled", false);
+  const base = {
+    enabled,
     enginePath: configuration.get("enginePath", "foundry"),
-    project: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
     runner: configuration.get("testing.runner", ""),
     frameworkArgs: configuration.get("testing.args", []),
   };
+  if (!enabled) return { ...base, project: undefined };
+
+  const resolution = await resolveProject();
+  if (resolution.success) return { ...base, project: resolution.project };
+  const failure = resolution.failure;
+  return {
+    ...base,
+    project: undefined,
+    projectFailure: new TestAdapterFailure(
+      failure.kind === "missing_workspace"
+        ? "missing_project"
+        : "invalid_project",
+      failure.message,
+      {
+        ...(failure.setting === undefined ? {} : { setting: failure.setting }),
+        ...(failure.cause === undefined ? {} : { cause: failure.cause }),
+      },
+    ),
+  };
 }
 
-function registerTestingRuntime(context: vscode.ExtensionContext): void {
+async function registerTestingRuntime(
+  context: vscode.ExtensionContext,
+  resolveProject: ResolveWorkspaceProject,
+): Promise<void> {
   const output = vscode.window.createOutputChannel("FoundryScript Testing");
   const controller = vscode.tests.createTestController(
     "foundryScript.tests",
@@ -199,15 +229,18 @@ function registerTestingRuntime(context: vscode.ExtensionContext): void {
       );
     }
   };
-  const configure = (): void => {
-    const configuration = readTestingConfiguration();
+  let configurationGeneration = 0;
+  const configure = async (): Promise<void> => {
+    const generation = ++configurationGeneration;
+    const configuration = await readTestingConfiguration(resolveProject);
+    if (generation !== configurationGeneration) return;
     const key = JSON.stringify(configuration);
     if (key !== failureConfigurationKey) {
       failureConfigurationKey = key;
       shownFailureFingerprint = undefined;
     }
     updateWatchers(configuration);
-    void runtime.configure(configuration);
+    await runtime.configure(configuration);
   };
   const runProfile = new FoundryTestRunProfile({
     controller,
@@ -267,10 +300,10 @@ function registerTestingRuntime(context: vscode.ExtensionContext): void {
           event.affectsConfiguration(section),
         )
       ) {
-        configure();
+        void configure();
       }
     }),
-    vscode.workspace.onDidChangeWorkspaceFolders(() => configure()),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => void configure()),
     {
       dispose: () => {
         if (activeTestingLifecycle === lifecycle) {
@@ -280,7 +313,36 @@ function registerTestingRuntime(context: vscode.ExtensionContext): void {
       },
     },
   );
-  configure();
+  await configure();
+}
+
+async function showProjectResolutionFailure(
+  failure: ProjectResolutionFailure,
+): Promise<void> {
+  if (failure.kind === "missing_workspace") {
+    const selection = await vscode.window.showErrorMessage(
+      failure.message,
+      "Open Folder",
+    );
+    if (selection === "Open Folder") {
+      await vscode.commands.executeCommand("workbench.action.files.openFolder");
+    }
+    return;
+  }
+  if (failure.setting !== undefined) {
+    const selection = await vscode.window.showErrorMessage(
+      failure.message,
+      "Open Settings",
+    );
+    if (selection === "Open Settings") {
+      await vscode.commands.executeCommand(
+        "workbench.action.openSettings",
+        failure.setting,
+      );
+    }
+    return;
+  }
+  await vscode.window.showErrorMessage(failure.message);
 }
 
 function writeTestingState(output: vscode.OutputChannel, state: TestingState): void {
@@ -394,7 +456,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.languages.createDiagnosticCollection("foundryscript"),
   );
   context.subscriptions.push(diagnostics);
-  registerFoundryTaskProvider(context, diagnostics);
+  const resolveProject = createWorkspaceProjectResolver();
+  registerFoundryTaskProvider(context, diagnostics, resolveProject);
   const outputChannel = vscode.window.createOutputChannel("FoundryScript LSP");
   context.subscriptions.push(outputChannel);
   const settings = readConnectionSettings();
@@ -427,7 +490,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       statusController.showActions(),
     ),
   );
-  registerTestingRuntime(context);
+  await registerTestingRuntime(context, resolveProject);
   if (settings.mode === "off") {
     statusController.update({ kind: "off" });
     writeLog(outputChannel, "info", "lsp.connection.off");
@@ -435,13 +498,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   }
   statusController.update({ kind: "disconnected" });
 
-  const project = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (project === undefined) {
-    await vscode.window.showErrorMessage(
-      "Open a Foundry project folder before starting the language server.",
-    );
+  const resolution = await resolveProject();
+  if (!resolution.success) {
+    writeLog(outputChannel, "error", "lsp.project.resolution_failed", {
+      kind: resolution.failure.kind,
+      message: resolution.failure.message,
+    });
+    await showProjectResolutionFailure(resolution.failure);
     return;
   }
+  const project = resolution.project;
 
   const manager = createConnectionManager(
     outputChannel,
