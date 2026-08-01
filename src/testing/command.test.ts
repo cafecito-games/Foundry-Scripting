@@ -127,6 +127,24 @@ describe("test adapter capabilities command", () => {
     });
     expect(error.message).toContain("canonical res://");
   });
+
+  it.each([
+    "--path",
+    ["--path", 42],
+  ])("rejects malformed framework arguments %#", (frameworkArgs) => {
+    const error = captureConfigurationError(() =>
+      createTestAdapterCapabilitiesCommand({
+        ...baseRequest,
+        frameworkArgs: frameworkArgs as unknown as readonly string[],
+      }),
+    );
+
+    expect(error).toMatchObject({
+      kind: "invalid_args",
+      setting: "foundryScript.testing.args",
+    });
+    expect(error.message).toContain("array of strings");
+  });
 });
 
 function captureConfigurationError(

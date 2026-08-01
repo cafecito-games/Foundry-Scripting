@@ -67,6 +67,7 @@ export interface FoundryTestAdapterNegotiatorOptions {
   readonly readArtifact?: (artifactPath: string) => Promise<Buffer>;
   readonly makeTemporaryDirectory?: (prefix: string) => Promise<string>;
   readonly removeTemporaryDirectory?: (directory: string) => Promise<void>;
+  readonly onCleanupError?: (error: unknown, directory: string) => void;
   readonly temporaryRoot?: string;
 }
 
@@ -76,6 +77,7 @@ export class FoundryTestAdapterNegotiator {
   private readonly readArtifact;
   private readonly makeTemporaryDirectory;
   private readonly removeTemporaryDirectory;
+  private readonly onCleanupError;
   private readonly temporaryRoot;
 
   constructor(options: FoundryTestAdapterNegotiatorOptions = {}) {
@@ -92,6 +94,7 @@ export class FoundryTestAdapterNegotiator {
     this.removeTemporaryDirectory =
       options.removeTemporaryDirectory ??
       ((directory: string) => rm(directory, { recursive: true, force: true }));
+    this.onCleanupError = options.onCleanupError;
     this.temporaryRoot = options.temporaryRoot ?? os.tmpdir();
   }
 
@@ -124,7 +127,15 @@ export class FoundryTestAdapterNegotiator {
       }
       return adapter;
     } finally {
-      await this.removeTemporaryDirectory(temporaryDirectory);
+      try {
+        await this.removeTemporaryDirectory(temporaryDirectory);
+      } catch (error) {
+        try {
+          this.onCleanupError?.(error, temporaryDirectory);
+        } catch {
+          // Cleanup diagnostics must never replace the negotiation outcome.
+        }
+      }
     }
   }
 

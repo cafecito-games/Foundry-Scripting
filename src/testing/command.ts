@@ -2,7 +2,8 @@ export type TestAdapterConfigurationErrorKind =
   | "missing_engine"
   | "missing_project"
   | "missing_runner"
-  | "invalid_runner";
+  | "invalid_runner"
+  | "invalid_args";
 
 export class TestAdapterConfigurationError extends Error {
   constructor(
@@ -50,6 +51,15 @@ export function createTestAdapterCapabilitiesCommand(
     throw new TestAdapterConfigurationError(
       "invalid_runner",
       "foundryScript.testing.runner",
+    );
+  }
+  if (
+    !Array.isArray(request.frameworkArgs) ||
+    !request.frameworkArgs.every((argument: unknown) => typeof argument === "string")
+  ) {
+    throw new TestAdapterConfigurationError(
+      "invalid_args",
+      "foundryScript.testing.args",
     );
   }
 
@@ -104,5 +114,7 @@ function configurationErrorMessage(
       return "Configure foundryScript.testing.runner before enabling Foundry testing.";
     case "invalid_runner":
       return "Configure foundryScript.testing.runner as a canonical res:// resource path.";
+    case "invalid_args":
+      return "Configure foundryScript.testing.args as an array of strings.";
   }
 }

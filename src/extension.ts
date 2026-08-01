@@ -91,6 +91,11 @@ function registerTestingRuntime(context: vscode.ExtensionContext): void {
   });
   const negotiator = new FoundryTestAdapterNegotiator({
     runProcess: (command, signal) => process.run(command, signal),
+    onCleanupError: (error, directory) => {
+      output.appendLine(
+        `Unable to remove test adapter temporary directory ${directory}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    },
   });
   const runtime = new TestingRuntime({
     negotiate: (request, signal) => negotiator.negotiate(request, signal),

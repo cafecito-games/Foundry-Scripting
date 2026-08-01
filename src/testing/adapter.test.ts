@@ -199,6 +199,14 @@ describe("test adapter negotiation", () => {
       kind: "invalid_runner",
       setting: "foundryScript.testing.runner",
     },
+    {
+      request: {
+        ...baseRequest,
+        frameworkArgs: "--path" as unknown as readonly string[],
+      },
+      kind: "invalid_args",
+      setting: "foundryScript.testing.args",
+    },
   ])("retains actionable $kind configuration failures", async ({ request, kind, setting }) => {
     const runProcess = vi.fn();
     const negotiator = new FoundryTestAdapterNegotiator({ runProcess });
@@ -253,6 +261,48 @@ describe("test adapter negotiation", () => {
 
     await expect(operation).rejects.toMatchObject({ name: "AbortError" });
     await expect(pathExists(path.dirname(outputPath))).resolves.toBe(false);
+  });
+
+  it("preserves a successful negotiation when temporary cleanup fails", async () => {
+    const cleanupError = new Error("cleanup denied");
+    const onCleanupError = vi.fn();
+    const negotiator = new FoundryTestAdapterNegotiator({
+      runProcess: () => Promise.resolve(exited(0)),
+      readArtifact: () => Promise.resolve(validBytes()),
+      makeTemporaryDirectory: () => Promise.resolve("/virtual/cleanup-success"),
+      removeTemporaryDirectory: () => Promise.reject(cleanupError),
+      onCleanupError,
+    });
+
+    await expect(
+      negotiator.negotiate(baseRequest, new AbortController().signal),
+    ).resolves.toMatchObject({
+      protocolVersion: 1,
+      framework: { id: "neutral-spec" },
+    });
+    expect(onCleanupError).toHaveBeenCalledOnce();
+    expect(onCleanupError).toHaveBeenCalledWith(cleanupError, expect.any(String));
+  });
+
+  it("preserves a classified failure when temporary cleanup also fails", async () => {
+    const cleanupError = new Error("cleanup denied");
+    const onCleanupError = vi.fn();
+    const negotiator = new FoundryTestAdapterNegotiator({
+      runProcess: () => Promise.resolve(exited(0)),
+      readArtifact: () =>
+        Promise.reject(Object.assign(new Error("missing"), { code: "ENOENT" })),
+      makeTemporaryDirectory: () => Promise.resolve("/virtual/cleanup-failure"),
+      removeTemporaryDirectory: () => Promise.reject(cleanupError),
+      onCleanupError,
+    });
+
+    await expect(
+      captureFailure(
+        negotiator.negotiate(baseRequest, new AbortController().signal),
+      ),
+    ).resolves.toMatchObject({ kind: "legacy_runner" });
+    expect(onCleanupError).toHaveBeenCalledOnce();
+    expect(onCleanupError).toHaveBeenCalledWith(cleanupError, expect.any(String));
   });
 });
 
