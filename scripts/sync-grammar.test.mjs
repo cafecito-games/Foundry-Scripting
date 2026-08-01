@@ -91,4 +91,124 @@ describe("sync-grammar command", () => {
     ).toEqual(validGrammar);
     expect(requests).toEqual([`/v${version}/${assetName}`]);
   });
+
+  it("passes check mode when the committed bytes match", async () => {
+    await writeFile(
+      path.join(root, "syntaxes/foundryscript.tmLanguage.json"),
+      validGrammar,
+    );
+
+    const result = await runSync(["--check"]);
+
+    expect(result.stdout).toContain("matches the pinned release asset");
+  });
+
+  it("fails check mode without changing a drifted grammar", async () => {
+    const edited = Buffer.from("accidental edit\n");
+    const grammarPath = path.join(root, "syntaxes/foundryscript.tmLanguage.json");
+    await writeFile(grammarPath, edited);
+
+    const error = await runFailure(["--check"]);
+
+    expect(error.stderr).toContain("does not match the pinned release asset");
+    expect(error.stderr).toContain("npm run sync-grammar");
+    expect(await readFile(grammarPath)).toEqual(edited);
+  });
+
+  it("rejects a grammar with the wrong scope without touching the existing file", async () => {
+    const grammarPath = path.join(root, "syntaxes/foundryscript.tmLanguage.json");
+    const existing = Buffer.from("keep this grammar\n");
+    await writeFile(grammarPath, existing);
+    responseBody = Buffer.from(
+      JSON.stringify({
+        scopeName: "source.wrong",
+        fileTypes: ["fs"],
+        patterns: [{}],
+        repository: { rule: {} },
+      }),
+    );
+
+    const error = await runFailure();
+
+    expect(error.stderr).toContain("scopeName must be source.foundryscript");
+    expect(await readFile(grammarPath)).toEqual(existing);
+  });
+
+  it.each([
+    ["invalid JSON", Buffer.from("{"), "valid JSON"],
+    [
+      "a missing fs file type",
+      Buffer.from(
+        JSON.stringify({
+          scopeName: "source.foundryscript",
+          fileTypes: [],
+          patterns: [{}],
+          repository: { rule: {} },
+        }),
+      ),
+      "fileTypes",
+    ],
+    [
+      "empty patterns",
+      Buffer.from(
+        JSON.stringify({
+          scopeName: "source.foundryscript",
+          fileTypes: ["fs"],
+          patterns: [],
+          repository: { rule: {} },
+        }),
+      ),
+      "patterns",
+    ],
+    [
+      "an empty repository",
+      Buffer.from(
+        JSON.stringify({
+          scopeName: "source.foundryscript",
+          fileTypes: ["fs"],
+          patterns: [{}],
+          repository: {},
+        }),
+      ),
+      "repository",
+    ],
+  ])("rejects %s", async (_caseName, body, expectedMessage) => {
+    const grammarPath = path.join(root, "syntaxes/foundryscript.tmLanguage.json");
+    const existing = Buffer.from("keep this grammar\n");
+    await writeFile(grammarPath, existing);
+    responseBody = body;
+
+    const error = await runFailure();
+
+    expect(error.stderr).toContain(expectedMessage);
+    expect(await readFile(grammarPath)).toEqual(existing);
+  });
+
+  it("reports a failed release request before validating or writing", async () => {
+    responseStatus = 404;
+    responseBody = Buffer.from("not found");
+
+    const error = await runFailure();
+
+    expect(error.stderr).toContain("HTTP 404");
+  });
+
+  it("rejects an unsafe engine version", async () => {
+    await writeFile(
+      path.join(root, "foundry-grammar.json"),
+      `${JSON.stringify({ engineVersion: "../wrong" }, null, 2)}\n`,
+    );
+
+    const error = await runFailure();
+
+    expect(error.stderr).toContain("engineVersion");
+    expect(requests).toEqual([]);
+  });
+
+  it("rejects unsupported arguments", async () => {
+    const error = await runFailure(["--write-somewhere-else"]);
+
+    expect(error.stderr).toContain("Usage: node scripts/sync-grammar.mjs [--check]");
+    expect(requests).toEqual([]);
+  });
 });
