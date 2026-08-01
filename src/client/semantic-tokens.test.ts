@@ -3,6 +3,7 @@ import type {
   ClientCapabilities,
   ServerCapabilities,
 } from "vscode-languageclient/node";
+import semanticTokensFixture from "./fixtures/semantic-tokens.json";
 import {
   FoundrySemanticTokensFeature,
   inspectSemanticTokensProvider,
@@ -345,5 +346,166 @@ describe("Foundry semantic token client feature", () => {
 
     expect(result).toBe(hover);
     expect(output.appendLine).not.toHaveBeenCalled();
+  });
+});
+
+interface DecodedFixtureToken {
+  line: number;
+  start: number;
+  length: number;
+  type: string;
+  modifiers: string[];
+}
+
+function decodeFixtureTokens(
+  data: readonly number[],
+  legend: { tokenTypes: readonly string[]; tokenModifiers: readonly string[] },
+): DecodedFixtureToken[] {
+  const tokens: DecodedFixtureToken[] = [];
+  let line = 0;
+  let start = 0;
+  for (let index = 0; index < data.length; index += 5) {
+    const deltaLine = data[index] ?? 0;
+    line += deltaLine;
+    start = deltaLine === 0 ? start + (data[index + 1] ?? 0) : (data[index + 1] ?? 0);
+    const modifierBits = data[index + 4] ?? 0;
+    tokens.push({
+      line,
+      start,
+      length: data[index + 2] ?? 0,
+      type: legend.tokenTypes[data[index + 3] ?? -1] ?? "<unknown>",
+      modifiers: legend.tokenModifiers.filter(
+        (_modifier, modifierIndex) =>
+          (modifierBits & 2 ** modifierIndex) !== 0,
+      ),
+    });
+  }
+  return tokens;
+}
+
+describe("Foundry server semantic token protocol fixture", () => {
+  const provider =
+    semanticTokensFixture.initializeResult.capabilities.semanticTokensProvider;
+
+  it("uses the server initialize legend as the only decoding order", () => {
+    expect(inspectSemanticTokensProvider(provider)).toMatchObject({
+      kind: "supported",
+      legend: provider.legend,
+    });
+  });
+
+  it("decodes every expected token and UTF-16 lexeme through the advertised legend", () => {
+    for (const document of semanticTokensFixture.documents) {
+      for (const exchange of document.exchanges) {
+        expect(
+          validateSemanticTokensResponse(exchange.response, provider.legend),
+        ).toMatchObject({ ok: true });
+        const decoded = decodeFixtureTokens(exchange.response.data, provider.legend);
+        const lines = exchange.text.split("\n");
+        for (const expected of exchange.expect) {
+          expect(
+            lines[expected.line]?.slice(
+              expected.start,
+              expected.start + expected.length,
+            ),
+            `${document.name}/${exchange.phase}: ${expected.lexeme}`,
+          ).toBe(expected.lexeme);
+          expect(decoded, `${document.name}/${exchange.phase}: ${expected.lexeme}`).toContainEqual(
+            {
+              line: expected.line,
+              start: expected.start,
+              length: expected.length,
+              type: expected.type,
+              modifiers: expected.modifiers,
+            },
+          );
+        }
+      }
+    }
+  });
+
+  it("covers contextual roles without globally reserving the same words", () => {
+    const contextual = semanticTokensFixture.documents.find(
+      (document) => document.name === "contextual-and-symbols",
+    );
+    const expectations = contextual?.exchanges[0]?.expect ?? [];
+    for (const word of ["extend", "async", "annotation", "targets", "get", "set"]) {
+      expect(expectations).toContainEqual(
+        expect.objectContaining({ lexeme: word, type: "keyword" }),
+      );
+      expect(expectations).toContainEqual(
+        expect.objectContaining({ lexeme: word, type: "variable" }),
+      );
+    }
+  });
+
+  it("covers every required symbol classification and modifier", () => {
+    const expectations = semanticTokensFixture.documents.flatMap((document) =>
+      document.exchanges.flatMap((exchange) => exchange.expect),
+    );
+    const types = new Set(expectations.map((expected) => expected.type));
+    const modifiers = new Set(
+      expectations.flatMap((expected) => expected.modifiers),
+    );
+
+    expect(types).toEqual(
+      new Set([
+        "namespace",
+        "class",
+        "interface",
+        "struct",
+        "enum",
+        "enumMember",
+        "event",
+        "type",
+        "typeParameter",
+        "function",
+        "method",
+        "property",
+        "variable",
+        "parameter",
+        "decorator",
+        "keyword",
+      ]),
+    );
+    expect(modifiers).toEqual(
+      new Set([
+        "declaration",
+        "static",
+        "abstract",
+        "final",
+        "async",
+        "readonly",
+        "defaultLibrary",
+      ]),
+    );
+  });
+
+  it("records UTF-16 positions after and within astral characters", () => {
+    const astral = semanticTokensFixture.documents.find(
+      (document) => document.name === "utf16-astral",
+    );
+    expect(astral?.exchanges[0]?.expect).toEqual([
+      expect.objectContaining({ lexeme: "value", start: 5, length: 5 }),
+      expect.objectContaining({ lexeme: "😀name", start: 15, length: 6 }),
+    ]);
+  });
+
+  it("changes the full response after a managed-buffer didChange", () => {
+    const managed = semanticTokensFixture.documents.find(
+      (document) => document.name === "managed-buffer",
+    );
+    const opened = managed?.exchanges.find((exchange) => exchange.phase === "didOpen");
+    const changed = managed?.exchanges.find(
+      (exchange) => exchange.phase === "didChange",
+    );
+
+    expect(opened?.response.data).not.toEqual(changed?.response.data);
+    expect(opened?.expect).toContainEqual(
+      expect.objectContaining({ lexeme: "opened", type: "method" }),
+    );
+    expect(changed?.expect).toContainEqual(
+      expect.objectContaining({ lexeme: "Changed", type: "class" }),
+    );
   });
 });
