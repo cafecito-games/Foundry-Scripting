@@ -4,10 +4,10 @@ import { PassThrough } from "node:stream";
 import type { ChildProcess } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  buildToolingHostCommand,
   FoundryHostLauncher,
   HostStartupFailure,
   allocateLoopbackPort,
-  buildLegacyLspCommand,
   parseToolingReadinessLine,
 } from "./host-launcher.js";
 
@@ -42,22 +42,23 @@ describe("host launch abstraction", () => {
     servers.length = 0;
   });
 
-  it("builds the supported command-first lsp invocation", () => {
+  it("builds the canonical combined tooling-host invocation", () => {
     expect(
-      buildLegacyLspCommand({
+      buildToolingHostCommand({
         enginePath: "/opt/foundry",
         project: "/workspace/game",
-        port: 49152,
       }),
     ).toEqual({
       command: "/opt/foundry",
       args: [
-        "lsp",
+        "tooling",
         "serve",
-        "--port",
-        "49152",
         "--project",
         "/workspace/game",
+        "--lsp-port",
+        "0",
+        "--dap-port",
+        "0",
       ],
     });
   });

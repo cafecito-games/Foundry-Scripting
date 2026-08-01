@@ -21,6 +21,25 @@ export interface HostCommand {
   args: string[];
 }
 
+export function buildToolingHostCommand({
+  enginePath,
+  project,
+}: HostLaunchRequest): HostCommand {
+  return {
+    command: enginePath,
+    args: [
+      "tooling",
+      "serve",
+      "--project",
+      project,
+      "--lsp-port",
+      "0",
+      "--dap-port",
+      "0",
+    ],
+  };
+}
+
 export function buildLegacyLspCommand({
   enginePath,
   project,
