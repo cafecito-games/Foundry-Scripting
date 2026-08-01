@@ -1,6 +1,7 @@
 import path from "node:path";
 import type * as vscode from "vscode";
 import { describe, expect, it, vi } from "vitest";
+import { TestAdapterFailure } from "./adapter.js";
 import type { TestDiscoveryModel, TestDiscoveryTest } from "./discovery.js";
 import type {
   TestExecutionObserver,
@@ -136,6 +137,51 @@ describe("Foundry VS Code run profile", () => {
     expect(harness.run.passed).toHaveBeenCalledWith(harness.items.get("test-a"), 5);
     expect(harness.run.skipped).toHaveBeenCalledWith(harness.items.get("test-b"));
     expect(harness.run.errored).not.toHaveBeenCalled();
+    expect(harness.run.appendOutput).toHaveBeenCalledWith(
+      "Foundry test run cancelled by user; completed results were retained.\r\n",
+    );
+  });
+
+  it("includes TAP diagnostic codes and line context for invalid completion", async () => {
+    const harness = createHarness({
+      points: [passPoint("test-a", 5)],
+      invalid: true,
+      invalidCodes: ["report.point"],
+      invalidDiagnostics: ["Line 9 is not a conforming test point."],
+    });
+
+    await harness.profile.run(request(undefined), token());
+
+    expect(harness.run.appendOutput).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "[report.point] Line 9 is not a conforming test point.",
+      ),
+    );
+    expect(harness.run.errored).toHaveBeenCalledTimes(2);
+  });
+
+  it("formats structured executor failures for the full selected plan", async () => {
+    const failure = new TestAdapterFailure(
+      "readiness_timeout",
+      "No report bytes arrived before the deadline.",
+      {
+        phase: "execution",
+        exitCode: 137,
+        stdout: "ordinary output",
+        stderr: "fatal detail",
+      },
+    );
+    const harness = createHarness({ thrown: failure });
+
+    await harness.profile.run(request(undefined), token());
+
+    const output = String(harness.run.appendOutput.mock.calls[0]?.[0]);
+    expect(output).toContain("[readiness_timeout]");
+    expect(output).toContain("Phase: execution");
+    expect(output).toContain("Exit code: 137");
+    expect(output).toContain("stdout: ordinary output");
+    expect(output).toContain("stderr: fatal detail");
+    expect(harness.run.errored).toHaveBeenCalledTimes(2);
   });
 
   it("invalidates every selected state after a non-cancellation infrastructure failure", async () => {
@@ -202,6 +248,9 @@ function createHarness(
     readonly invalid?: boolean;
     readonly ready?: boolean;
     readonly stale?: boolean;
+    readonly thrown?: Error;
+    readonly invalidCodes?: readonly string[];
+    readonly invalidDiagnostics?: readonly string[];
   } = {},
 ): Harness {
   const model = discoveryModel();
@@ -228,6 +277,9 @@ function createHarness(
       _signal: AbortSignal,
       observer: TestExecutionObserver,
     ): Promise<TestExecutionResult> => {
+      if (options.thrown !== undefined) {
+        throw options.thrown;
+      }
       await Promise.resolve();
       harness.executed = executionRequest;
       for (const [text, stream] of options.output ?? []) {
@@ -259,8 +311,12 @@ function createHarness(
             : (options.exitCode ?? 0) === 0
               ? "conforming"
               : "test_failures",
-          codes: options.invalid ? ["report.exit"] : [],
-          diagnostics: options.invalid ? ["exit mismatch"] : [],
+          codes: options.invalid
+            ? (options.invalidCodes ?? ["report.exit"])
+            : [],
+          diagnostics: options.invalid
+            ? (options.invalidDiagnostics ?? ["exit mismatch"])
+            : [],
         },
         processResult: {
           kind: "exited",

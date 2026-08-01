@@ -1,5 +1,6 @@
 import path from "node:path";
 import type * as vscode from "vscode";
+import { TestAdapterFailure } from "./adapter.js";
 import type {
   TestExecutionObserver,
   TestExecutionRequest,
@@ -127,6 +128,9 @@ export class FoundryTestRunProfile {
         return;
       }
       if (isGenuineCancellation(result)) {
+        run.appendOutput(
+          "Foundry test run cancelled by user; completed results were retained.\r\n",
+        );
         for (const item of selected) {
           if (!completed.has(item.id)) {
             run.skipped(item);
@@ -141,7 +145,7 @@ export class FoundryTestRunProfile {
       this.invalidate(
         run,
         selected,
-        `Foundry test infrastructure failed: ${errorMessage(error)}`,
+        formatExecutionFailure(error),
       );
     } finally {
       cancellation?.dispose();
@@ -214,15 +218,45 @@ function isSuccessfulCompletion(result: TestExecutionResult): boolean {
 }
 
 function completionMessage(result: TestExecutionResult): string {
-  const details = result.completion.diagnostics.join(" ").trim();
+  const details = result.completion.diagnostics
+    .map((diagnostic, index) => {
+      const code = result.completion.codes[index];
+      return code === undefined ? diagnostic : `[${code}] ${diagnostic}`;
+    })
+    .concat(
+      result.completion.codes
+        .slice(result.completion.diagnostics.length)
+        .map((code) => `[${code}]`),
+    )
+    .join(" ")
+    .trim();
   if (details.length > 0) {
     return `Foundry test infrastructure failed: ${details}`;
   }
   return `Foundry test infrastructure failed with ${result.completion.classification}.`;
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function formatExecutionFailure(error: unknown): string {
+  if (!(error instanceof TestAdapterFailure)) {
+    return `Foundry test infrastructure failed: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  const details = [`[${error.kind}] ${error.message}`];
+  if (error.phase !== undefined) {
+    details.push(`Phase: ${error.phase}`);
+  }
+  if (error.exitCode !== undefined) {
+    details.push(`Exit code: ${error.exitCode}`);
+  }
+  if (error.signal !== undefined) {
+    details.push(`Signal: ${error.signal}`);
+  }
+  if (error.stdout !== undefined && error.stdout !== "") {
+    details.push(`stdout: ${error.stdout.trimEnd()}`);
+  }
+  if (error.stderr !== undefined && error.stderr !== "") {
+    details.push(`stderr: ${error.stderr.trimEnd()}`);
+  }
+  return details.join("\n");
 }
 
 function toCrlf(text: string): string {
