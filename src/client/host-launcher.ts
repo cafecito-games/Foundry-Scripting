@@ -220,42 +220,69 @@ interface StartupState {
   lastActivityAt: number;
 }
 
+type HostOutputStream = "stdout" | "stderr";
+
+interface StartupOutputObserver {
+  flush(): void;
+}
+
 function observeOutput(
   child: ChildProcess,
   state: StartupState,
   now: () => number,
-): void {
-  let stdoutBuffer = "";
-  child.stdout?.on("data", (chunk: Buffer | string) => {
-    const text = chunk.toString();
-    if (text.length === 0) return;
-    state.lastActivityAt = now();
-    stdoutBuffer += text;
-    const lines = stdoutBuffer.split(/\r?\n/);
-    stdoutBuffer = lines.pop() ?? "";
-    for (const line of lines) {
+  onLine: (stream: HostOutputStream, line: string) => void,
+): StartupOutputObserver {
+  const buffers: Record<HostOutputStream, string> = {
+    stdout: "",
+    stderr: "",
+  };
+
+  const acceptLine = (stream: HostOutputStream, line: string): void => {
+    if (stream === "stdout") {
       state.readiness ??= parseToolingReadinessLine(line);
-    }
-  });
-  child.stderr?.on("data", (chunk: Buffer | string) => {
-    const text = chunk.toString();
-    if (text.length === 0) return;
-    state.lastActivityAt = now();
-    state.stderr += text;
-    for (const line of text.split(/\r?\n/)) {
-      if (!line.startsWith("FOUNDRY_TOOLING_ERROR ")) {
-        continue;
-      }
+    } else if (line.startsWith("FOUNDRY_TOOLING_ERROR ")) {
       try {
-        const record = JSON.parse(line.slice("FOUNDRY_TOOLING_ERROR ".length)) as {
-          error?: unknown;
-        };
+        const record = JSON.parse(
+          line.slice("FOUNDRY_TOOLING_ERROR ".length),
+        ) as { error?: unknown };
         state.structuredBindFailure ||= record.error === "bind_failed";
       } catch {
         // Human-readable stderr is classified below.
       }
     }
+    if (line !== "") onLine(stream, line);
+  };
+
+  const acceptChunk = (
+    stream: HostOutputStream,
+    chunk: Buffer | string,
+  ): void => {
+    const text = chunk.toString();
+    if (text.length === 0) return;
+    state.lastActivityAt = now();
+    if (stream === "stderr") state.stderr += text;
+    buffers[stream] += text;
+    const lines = buffers[stream].split(/\r?\n/);
+    buffers[stream] = lines.pop() ?? "";
+    for (const line of lines) acceptLine(stream, line);
+  };
+
+  child.stdout?.on("data", (chunk: Buffer | string) => {
+    acceptChunk("stdout", chunk);
   });
+  child.stderr?.on("data", (chunk: Buffer | string) => {
+    acceptChunk("stderr", chunk);
+  });
+
+  return {
+    flush: () => {
+      for (const stream of ["stdout", "stderr"] as const) {
+        const tail = buffers[stream];
+        buffers[stream] = "";
+        if (tail !== "") acceptLine(stream, tail);
+      }
+    },
+  };
 }
 
 function canConnect(port: number): Promise<boolean> {
@@ -377,7 +404,19 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
     child.once("exit", (code) => {
       state.exit = { code };
     });
-    observeOutput(child, state, Date.now);
+    const outputObserver = observeOutput(
+      child,
+      state,
+      Date.now,
+      (stream, message) => {
+        this.log("info", "lsp.host.output", {
+          project: request.project,
+          port,
+          stream,
+          message,
+        });
+      },
+    );
 
     try {
       const readiness = await this.waitForReadiness(
@@ -400,10 +439,12 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
           if (stopped) return;
           stopped = true;
           await stopChild(child);
+          outputObserver.flush();
         },
       };
     } catch (error) {
       await stopChild(child);
+      outputObserver.flush();
       throw error;
     }
   }
@@ -452,6 +493,12 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
           timeoutReason === "absolute"
             ? this.absoluteTimeoutMs
             : this.inactivityTimeoutMs;
+        this.log("error", "lsp.host.timeout", {
+          project: request.project,
+          port: request.port,
+          reason: timeoutReason,
+          timeoutMs,
+        });
         throw new HostStartupFailure({
           ...request,
           kind: isBindFailure(state) ? "port_conflict" : "readiness_timeout",

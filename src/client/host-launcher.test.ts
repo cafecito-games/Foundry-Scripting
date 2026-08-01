@@ -369,9 +369,11 @@ describe("host launch abstraction", () => {
 
   it("reports inactivity when a silent host does not become ready", async () => {
     const child = new FakeChildProcess();
+    const output = { appendLine: vi.fn() };
     const launcher = new FoundryHostLauncher({
       allocatePort: () => Promise.resolve(49153),
       spawnProcess: () => child.asChildProcess(),
+      output,
       inactivityTimeoutMs: 20,
       absoluteTimeoutMs: 100,
       pollIntervalMs: 5,
@@ -388,6 +390,21 @@ describe("host launch abstraction", () => {
     });
     expect((failure as Error).message).toContain(
       "produced no startup output for 20 milliseconds",
+    );
+    const records = output.appendLine.mock.calls.map(
+      ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
+    );
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          level: "error",
+          event: "lsp.host.timeout",
+          project: "/workspace/game",
+          port: 49153,
+          reason: "inactivity",
+          timeoutMs: 20,
+        }),
+      ]),
     );
   });
 
@@ -449,6 +466,97 @@ describe("host launch abstraction", () => {
     });
     expect((failure as Error).message).toContain(
       "did not become ready within 40 milliseconds",
+    );
+  });
+
+  it("logs complete startup lines and flushes unterminated tails once", async () => {
+    const child = new FakeChildProcess();
+    const output = { appendLine: vi.fn() };
+    const launcher = new FoundryHostLauncher({
+      allocatePort: () => Promise.resolve(49156),
+      spawnProcess: () => {
+        queueMicrotask(() => {
+          child.stdout.write("scan started\nscan complete\n");
+          child.stderr.write("warning tail");
+          child.stdout.write(
+            'FOUNDRY_TOOLING {"project":"/workspace/game","pid":4321,"local_only":true,"services":["lsp"],"lsp_port":50100}\n',
+          );
+        });
+        return child.asChildProcess();
+      },
+      output,
+      inactivityTimeoutMs: 50,
+      absoluteTimeoutMs: 100,
+      pollIntervalMs: 5,
+    });
+
+    const host = await launcher.launch({
+      enginePath: "foundry",
+      project: "/workspace/game",
+    });
+    await host.stop();
+
+    const records = output.appendLine.mock.calls.map(
+      ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
+    );
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event: "lsp.host.output",
+          stream: "stdout",
+          message: "scan started",
+        }),
+        expect.objectContaining({
+          event: "lsp.host.output",
+          stream: "stdout",
+          message: "scan complete",
+        }),
+        expect.objectContaining({
+          event: "lsp.host.output",
+          stream: "stderr",
+          message: "warning tail",
+        }),
+      ]),
+    );
+    expect(
+      records.filter((record) => record.message === "warning tail"),
+    ).toHaveLength(1);
+  });
+
+  it("flushes an unterminated tail when startup exits", async () => {
+    const child = new FakeChildProcess();
+    const output = { appendLine: vi.fn() };
+    const launcher = new FoundryHostLauncher({
+      allocatePort: () => Promise.resolve(49157),
+      spawnProcess: () => {
+        queueMicrotask(() => {
+          child.stderr.write("fatal tail");
+          child.exitCode = 23;
+          child.emit("exit", 23, null);
+        });
+        return child.asChildProcess();
+      },
+      output,
+      inactivityTimeoutMs: 50,
+      absoluteTimeoutMs: 100,
+      pollIntervalMs: 5,
+    });
+
+    await expect(
+      launcher.launch({ enginePath: "foundry", project: "/workspace/game" }),
+    ).rejects.toMatchObject({ kind: "process_exit", exitCode: 23 });
+
+    const records = output.appendLine.mock.calls.map(
+      ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
+    );
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event: "lsp.host.output",
+          stream: "stderr",
+          message: "fatal tail",
+        }),
+      ]),
     );
   });
 
