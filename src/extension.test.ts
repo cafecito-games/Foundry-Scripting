@@ -1318,6 +1318,10 @@ describe("package.json manifest", () => {
       type: "string",
       default: "foundry",
     });
+    expect(properties["foundryScript.projectPath"]).toMatchObject({
+      type: "string",
+      default: "",
+    });
     expect(properties["foundryScript.test.runner"]).toMatchObject({
       type: "string",
       default: "",

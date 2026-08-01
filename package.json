@@ -98,6 +98,11 @@
           "default": "foundry",
           "description": "Path to the Foundry executable used by the language server and workspace tasks."
         },
+        "foundryScript.projectPath": {
+          "type": "string",
+          "default": "",
+          "description": "Foundry project directory. Relative paths resolve from the first workspace folder. When empty, a root project.foundry is preferred, otherwise exactly one nested project is selected; multiple nested projects require this setting."
+        },
         "foundryScript.test.runner": {
           "type": "string",
           "default": "",
