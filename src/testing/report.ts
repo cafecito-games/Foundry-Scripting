@@ -94,6 +94,7 @@ export class FoundryTap13Parser {
     ignoreBOM: true,
   });
   private phase: ParserPhase = "header";
+  private byteSuffix = new Uint8Array();
   private textSuffix = "";
   private firstText = true;
   private terminalLf = false;
@@ -128,21 +129,30 @@ export class FoundryTap13Parser {
     if (this.decoderFailed || bytes.length === 0) {
       return;
     }
-    let decoded: string;
-    try {
-      decoded = this.decoder.decode(bytes, { stream: true });
-    } catch {
-      this.decoderFailed = true;
-      this.encodingValid = false;
-      this.add("artifact.encoding", "The report is not valid UTF-8.");
-      return;
+    const combined = new Uint8Array(this.byteSuffix.length + bytes.length);
+    combined.set(this.byteSuffix);
+    combined.set(bytes, this.byteSuffix.length);
+    let start = 0;
+    for (let index = 0; index < combined.length; index += 1) {
+      if (combined[index] !== 0x0a) {
+        continue;
+      }
+      if (!this.decode(combined.subarray(start, index + 1))) {
+        this.byteSuffix = new Uint8Array();
+        return;
+      }
+      start = index + 1;
     }
-    this.acceptDecoded(decoded);
+    this.byteSuffix = combined.slice(start);
   }
 
   finish(context: FoundryTapProcessContext): FoundryTapCompletion {
     if (context.kind === "cancelled") {
       return this.finishCancellation(context.exitCode);
+    }
+    if (this.byteSuffix.length > 0) {
+      this.decode(this.byteSuffix);
+      this.byteSuffix = new Uint8Array();
     }
     if (!this.decoderFailed) {
       let decoded: string;
@@ -202,6 +212,18 @@ export class FoundryTap13Parser {
         ? {}
         : { bailoutMessage: this.bailoutMessage }),
     };
+  }
+
+  private decode(bytes: Uint8Array): boolean {
+    try {
+      this.acceptDecoded(this.decoder.decode(bytes, { stream: true }));
+      return true;
+    } catch {
+      this.decoderFailed = true;
+      this.encodingValid = false;
+      this.add("artifact.encoding", "The report is not valid UTF-8.");
+      return false;
+    }
   }
 
   private acceptDecoded(decoded: string): void {

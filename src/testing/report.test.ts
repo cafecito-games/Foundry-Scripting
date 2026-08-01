@@ -48,6 +48,24 @@ describe("streaming Foundry TAP13 parser", () => {
     });
   });
 
+  it("discards an invalid UTF-8 suffix that was never LF-flushed on cancellation", () => {
+    const points: FoundryTapPoint[] = [];
+    const parser = new FoundryTap13Parser(
+      [leaf, { id: "test-b", skipped: false, skipReason: null }],
+      (value) => points.push(value),
+    );
+    parser.push(encoder.encode(report(point()).replace("1..1", "1..2")));
+    parser.push(Uint8Array.from([0xff]));
+
+    expect(parser.finish({ kind: "cancelled" })).toMatchObject({
+      valid: true,
+      complete: false,
+      classification: "cancelled",
+      codes: [],
+    });
+    expect(points.map((value) => value.testId)).toEqual(["test-a"]);
+  });
+
   it.each([
     {
       name: "byte-order mark",
