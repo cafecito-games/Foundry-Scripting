@@ -609,7 +609,6 @@ describe("extension entry point", () => {
         kind: "missing_engine",
         enginePath: "/missing/foundry",
         project: "/workspace/game",
-        port: 49152,
       }),
     );
     extensionMock.showErrorMessage.mockResolvedValue("Open Settings");

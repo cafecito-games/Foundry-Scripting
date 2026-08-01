@@ -13,13 +13,25 @@ the gradually-typed scripting language of the Foundry engine.
 - Language intelligence over the Foundry engine's language-server protocol, including
   completion, hover, go-to-definition, and diagnostics.
 
-By default the extension starts `foundry lsp serve` for the open workspace, so `foundry`
-must be on `PATH` or configured with `foundryScript.enginePath`. Set
-`foundryScript.lsp.mode` to `attach` to connect to an already-running editor/tool host,
-`auto` to attach first and spawn only when the configured port refuses the connection,
-or `off` to keep syntax highlighting without starting or connecting to Foundry. Attach
-and auto use `foundryScript.lsp.port` (default `6005`). Hosts spawned by the extension
-are stopped with it; externally started hosts are never terminated by the extension.
+By default the extension starts Foundry's canonical combined tooling host for the open
+workspace:
+
+```sh
+foundry tooling serve --project <dir> --lsp-port 0 --dap-port 0
+```
+
+Foundry binds two ephemeral loopback ports and reports them in its `FOUNDRY_TOOLING`
+readiness record. The extension connects language features to the reported LSP port and
+retains the DAP port for future debugger integration; it does not currently enable or
+advertise debugging. The `foundry` executable must be on `PATH` or configured with
+`foundryScript.enginePath`.
+
+Set `foundryScript.lsp.mode` to `attach` to connect to an already-running editor/tool
+host, `auto` to attach first and spawn only when the configured port refuses the
+connection, or `off` to keep syntax highlighting without starting or connecting to
+Foundry. Attach and auto's initial attach use `foundryScript.lsp.port` (default `6005`);
+spawned hosts do not use that configured port. Hosts spawned by the extension are
+stopped with it; externally started hosts are never terminated by the extension.
 
 ### Selecting the Foundry project
 
@@ -40,10 +52,10 @@ If multiple nested projects exist, configure `foundryScript.projectPath`. The ex
 currently operates one Foundry project per VS Code window.
 
 Cold project initialization may include file scanning, script-class registration, and
-editor setup before the language-server port opens. While Foundry emits startup output,
-the extension allows that work to continue for up to two minutes. A silent startup is
-treated as stalled after 15 seconds. Startup output and the specific timeout reason are
-available from the `FoundryScript LSP` output channel.
+editor setup before the tooling readiness record appears. While Foundry emits startup
+output, the extension allows that work to continue for up to two minutes. A silent
+startup is treated as stalled after 15 seconds. Startup output and the specific timeout
+reason are available from the `FoundryScript LSP` output channel.
 
 If a running language server disappears, the extension reports the loss in its
 status-bar item and retries five times with capped exponential backoff. Click the item

@@ -48,8 +48,9 @@ function createHost(lspPort = 49152): OwnedToolingHost & {
       project: "/workspace/game",
       pid: 1234,
       localOnly: true,
-      services: ["lsp"],
+      services: ["lsp", "dap"],
       lspPort,
+      dapPort: lspPort + 1,
     },
     stop: vi.fn().mockResolvedValue(undefined),
   };
@@ -174,8 +175,6 @@ describe("connection modes", () => {
   it("exposes an isolated owned-host snapshot for future DAP reuse", async () => {
     const client = createSuccessfulClient();
     const host = createHost(49152);
-    host.readiness.services = ["lsp", "dap"];
-    host.readiness.dapPort = 49153;
     launchHost.mockResolvedValue(host);
     const manager = managerWith([client]);
     await manager.start({
