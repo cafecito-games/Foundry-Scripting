@@ -1,0 +1,2 @@
+{"protocol":"foundry-test-adapter","version":1,"event":"discovery_start","root":"res://tests/.."}
+{"protocol":"foundry-test-adapter","version":1,"event":"discovery_end","suite_count":0,"test_count":0,"error_count":0}
