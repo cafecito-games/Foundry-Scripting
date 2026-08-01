@@ -11,7 +11,7 @@ import type { TestingReadyContext } from "./runtime.js";
 import { selectRunnableLeaves } from "./selection.js";
 
 interface TestMessageValue {
-  message: string;
+  message: unknown;
   location?: unknown;
 }
 

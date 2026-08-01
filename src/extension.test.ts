@@ -145,6 +145,17 @@ const extensionMock = vi.hoisted(() => {
       }
     | undefined,
   testingDiscover: vi.fn(),
+  testingExecutorOptions: undefined as
+    | {
+        runProcess?: (
+          command: unknown,
+          signal: AbortSignal,
+          onOutput?: (text: string, stream: "stdout" | "stderr") => void,
+        ) => Promise<unknown>;
+        onCleanupError?: (error: unknown, directory: string) => void;
+      }
+    | undefined,
+  testingExecute: vi.fn(),
   testingRuntimeOptions: undefined as
     | {
         negotiate: (request: unknown, signal: AbortSignal) => Promise<unknown>;
@@ -157,6 +168,7 @@ const extensionMock = vi.hoisted(() => {
   testingConfigure: vi.fn(),
   testingRefresh: vi.fn(),
   testingStop: vi.fn(),
+  testingReadyContext: vi.fn(),
   testController,
   createTestController: vi.fn(() => testController),
   };
@@ -216,6 +228,7 @@ vi.mock("vscode", () => ({
     registerTaskProvider: extensionMock.registerTaskProvider,
   },
   StatusBarAlignment: { Left: 1 },
+  TestRunProfileKind: { Run: 1, Debug: 2 },
   languages: {
     createDiagnosticCollection: extensionMock.createDiagnosticCollection,
   },
@@ -263,11 +276,22 @@ vi.mock("./testing/discoverer.js", () => ({
   },
 }));
 
+vi.mock("./testing/executor.js", () => ({
+  FoundryTestExecutor: class {
+    readonly execute = extensionMock.testingExecute;
+
+    constructor(options: unknown) {
+      extensionMock.testingExecutorOptions = options as never;
+    }
+  },
+}));
+
 vi.mock("./testing/runtime.js", () => ({
   TestingRuntime: class {
     readonly configure = extensionMock.testingConfigure;
     readonly refresh = extensionMock.testingRefresh;
     readonly stop = extensionMock.testingStop;
+    readonly readyContext = extensionMock.testingReadyContext;
 
     constructor(options: unknown) {
       extensionMock.testingRuntimeOptions = options as never;
@@ -340,6 +364,8 @@ describe("extension entry point", () => {
     extensionMock.testingNegotiate.mockReset();
     extensionMock.testingDiscovererOptions = undefined;
     extensionMock.testingDiscover.mockReset();
+    extensionMock.testingExecutorOptions = undefined;
+    extensionMock.testingExecute.mockReset();
     extensionMock.testingRuntimeOptions = undefined;
     extensionMock.testingConfigure.mockReset();
     extensionMock.testingConfigure.mockResolvedValue(undefined);
@@ -347,6 +373,7 @@ describe("extension entry point", () => {
     extensionMock.testingRefresh.mockResolvedValue(undefined);
     extensionMock.testingStop.mockReset();
     extensionMock.testingStop.mockResolvedValue(undefined);
+    extensionMock.testingReadyContext.mockReset();
     extensionMock.createTestController.mockClear();
     extensionMock.testController.items.replace([]);
     extensionMock.testController.createTestItem.mockClear();
@@ -511,7 +538,7 @@ describe("extension entry point", () => {
     expect(extensionMock.registerFoundryTaskProvider).toHaveBeenCalledOnce();
   });
 
-  it("creates exactly one discovery-only TestController on activation", async () => {
+  it("creates exactly one TestController with one default Run profile", async () => {
     extensionMock.configuration.set("lsp.mode", "off");
     const context = createContext();
 
@@ -522,7 +549,13 @@ describe("extension entry point", () => {
       "foundryScript.tests",
       "FoundryScript",
     );
-    expect(extensionMock.testController.createRunProfile).not.toHaveBeenCalled();
+    expect(extensionMock.testController.createRunProfile).toHaveBeenCalledOnce();
+    expect(extensionMock.testController.createRunProfile).toHaveBeenCalledWith(
+      "Run",
+      1,
+      expect.any(Function),
+      true,
+    );
     expect(context.subscriptions).toContain(extensionMock.testController);
     expect(context.subscriptions).toContain(extensionMock.testingOutputChannel);
   });
@@ -568,14 +601,15 @@ describe("extension entry point", () => {
       label: "works",
       uri: { fsPath: "/workspace/game/tests/example.fs" },
     });
-    expect(extensionMock.testController.createRunProfile).not.toHaveBeenCalled();
+    expect(extensionMock.testController.createRunProfile).toHaveBeenCalledOnce();
   });
 
-  it("shares the owned process and cleanup diagnostics with discovery", async () => {
+  it("shares the owned process and cleanup diagnostics with discovery and runs", async () => {
     extensionMock.configuration.set("lsp.mode", "off");
     await activate(createContext());
     const signal = new AbortController().signal;
     const command = { command: "foundry", args: [], cwd: "/workspace/game" };
+    const onOutput = vi.fn();
     extensionMock.testingProcessRun.mockResolvedValue({
       kind: "exited",
       exitCode: 0,
@@ -584,12 +618,27 @@ describe("extension entry point", () => {
     });
 
     await extensionMock.testingDiscovererOptions?.runProcess?.(command, signal);
+    await extensionMock.testingExecutorOptions?.runProcess?.(
+      command,
+      signal,
+      onOutput,
+    );
     extensionMock.testingDiscovererOptions?.onCleanupError?.(
       new Error("denied"),
       "/tmp/foundryscript-test-discovery-owned",
     );
 
-    expect(extensionMock.testingProcessRun).toHaveBeenCalledWith(command, signal);
+    expect(extensionMock.testingProcessRun).toHaveBeenNthCalledWith(
+      1,
+      command,
+      signal,
+    );
+    expect(extensionMock.testingProcessRun).toHaveBeenNthCalledWith(
+      2,
+      command,
+      signal,
+      onOutput,
+    );
     expect(extensionMock.testingOutputChannel.appendLine).toHaveBeenCalledWith(
       expect.stringContaining("foundryscript-test-discovery-owned"),
     );
