@@ -28,6 +28,7 @@ export interface TestAdapterNegotiationRequest {
 
 export type TestAdapterFailureKind =
   | TestAdapterConfigurationErrorKind
+  | "invalid_project"
   | "malformed_capabilities"
   | "incompatible_adapter"
   | "process_failed"

@@ -12,6 +12,7 @@ import type { TestingState } from "./status.js";
 export interface TestingRuntimeConfiguration
   extends TestAdapterNegotiationRequest {
   readonly enabled: boolean;
+  readonly projectFailure?: TestAdapterFailure;
 }
 
 export interface TestingRuntimeOptions {
@@ -95,6 +96,14 @@ export class TestingRuntime {
       this.options.onClear();
       previous?.controller.abort();
       this.active = undefined;
+      return Promise.resolve();
+    }
+
+    if (configuration.projectFailure !== undefined) {
+      previous?.controller.abort();
+      this.active = undefined;
+      this.options.onClear();
+      this.publish({ kind: "error", failure: configuration.projectFailure });
       return Promise.resolve();
     }
 
@@ -273,6 +282,9 @@ function configurationKey(configuration: TestingRuntimeConfiguration): string {
     configuration.project ?? null,
     configuration.runner,
     configuration.frameworkArgs,
+    configuration.projectFailure?.kind ?? null,
+    configuration.projectFailure?.setting ?? null,
+    configuration.projectFailure?.message ?? null,
   ]);
 }
 
