@@ -16,6 +16,8 @@ import {
   FoundryTestAdapterNegotiator,
   type TestAdapterFailure,
 } from "./testing/adapter.js";
+import { FoundryTestAdapterDiscoverer } from "./testing/discoverer.js";
+import { FoundryTestExplorer } from "./testing/explorer.js";
 import { FoundryTestAdapterProcess } from "./testing/process.js";
 import {
   TestingRuntime,
@@ -83,22 +85,44 @@ function configureTesting(runtime: TestingRuntime): void {
 
 function registerTestingRuntime(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel("FoundryScript Testing");
+  const controller = vscode.tests.createTestController(
+    "foundryScript.tests",
+    "FoundryScript",
+  );
+  const explorer = new FoundryTestExplorer(controller, {
+    createUri: (nativePath) => vscode.Uri.file(nativePath),
+    createRange: (range) =>
+      new vscode.Range(
+        range.start.line,
+        range.start.character,
+        range.end.line,
+        range.end.character,
+      ),
+  });
   const status = new TestingStatusController(() =>
     vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 90),
   );
   const process = new FoundryTestAdapterProcess({
     onOutput: (text) => output.append(text),
   });
+  const onCleanupError = (error: unknown, directory: string): void => {
+    output.appendLine(
+      `Unable to remove test adapter temporary directory ${directory}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  };
   const negotiator = new FoundryTestAdapterNegotiator({
     runProcess: (command, signal) => process.run(command, signal),
-    onCleanupError: (error, directory) => {
-      output.appendLine(
-        `Unable to remove test adapter temporary directory ${directory}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    },
+    onCleanupError,
+  });
+  const discoverer = new FoundryTestAdapterDiscoverer({
+    runProcess: (command, signal) => process.run(command, signal),
+    onCleanupError,
   });
   const runtime = new TestingRuntime({
     negotiate: (request, signal) => negotiator.negotiate(request, signal),
+    discover: (request, signal) => discoverer.discover(request, signal),
+    onDiscovery: (project, model) => explorer.reconcile(project, model),
+    onClear: () => explorer.clear(),
     onState: (state) => {
       status.update(state);
       writeTestingState(output, state);
@@ -107,10 +131,17 @@ function registerTestingRuntime(context: vscode.ExtensionContext): void {
       }
     },
   });
+  controller.refreshHandler = async (token) => {
+    if (token.isCancellationRequested) {
+      return;
+    }
+    await runtime.refresh();
+  };
   activeTestingRuntime = runtime;
   context.subscriptions.push(
     output,
     status,
+    controller,
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (
         TESTING_CONFIGURATION_SECTIONS.some((section) =>
@@ -141,11 +172,18 @@ function writeTestingState(output: vscode.OutputChannel, state: TestingState): v
     case "negotiating":
       output.appendLine(`Negotiating test adapter ${state.runner}.`);
       return;
+    case "discovering":
+      output.appendLine(
+        `Discovering tests with ${state.adapter.framework.name}, ` +
+          `protocol ${state.adapter.protocolVersion}.`,
+      );
+      return;
     case "ready":
       output.appendLine(
         `Test adapter ready: ${state.adapter.framework.name} ` +
           `(${state.adapter.framework.id} ${state.adapter.framework.version}), ` +
-          `protocol ${state.adapter.protocolVersion}.`,
+          `protocol ${state.adapter.protocolVersion}, ` +
+          `discovery errors ${state.discoveryErrorCount}.`,
       );
       return;
     case "error":

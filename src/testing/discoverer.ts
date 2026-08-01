@@ -23,6 +23,7 @@ import {
 
 export interface TestAdapterDiscoveryRequest
   extends TestAdapterNegotiationRequest {
+  readonly project: string;
   readonly protocolVersion: number;
 }
 

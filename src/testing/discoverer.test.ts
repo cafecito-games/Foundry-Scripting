@@ -24,6 +24,7 @@ const negotiationRequest: TestAdapterNegotiationRequest = {
 
 const baseRequest: TestAdapterDiscoveryRequest = {
   ...negotiationRequest,
+  project: "/workspace/game",
   protocolVersion: 1,
 };
 

@@ -6,7 +6,12 @@ import type { NegotiatedTestAdapter } from "./capabilities.js";
 export type TestingState =
   | { readonly kind: "disabled" }
   | { readonly kind: "negotiating"; readonly runner: string }
-  | { readonly kind: "ready"; readonly adapter: NegotiatedTestAdapter }
+  | { readonly kind: "discovering"; readonly adapter: NegotiatedTestAdapter }
+  | {
+      readonly kind: "ready";
+      readonly adapter: NegotiatedTestAdapter;
+      readonly discoveryErrorCount: number;
+    }
   | { readonly kind: "error"; readonly failure: TestAdapterFailure };
 
 export interface TestingStatusPresentation {
@@ -30,16 +35,34 @@ export function renderTestingState(
         text: "$(loading~spin) Tests: Negotiating",
         tooltip: `Negotiating Foundry test adapter ${state.runner}.`,
       };
+    case "discovering":
+      return {
+        text: "$(loading~spin) Tests: Discovering",
+        tooltip:
+          `Discovering tests with ${state.adapter.framework.name} ` +
+          `using protocol version ${state.adapter.protocolVersion}.`,
+      };
     case "ready": {
       const { adapter } = state;
+      const metadata =
+        `Framework: ${adapter.framework.name}\n` +
+        `Framework ID: ${adapter.framework.id}\n` +
+        `Framework version: ${adapter.framework.version}\n` +
+        `Protocol version: ${adapter.protocolVersion}\n` +
+        `Extensions: ${adapter.extensions.join(", ") || "none"}`;
+      if (state.discoveryErrorCount > 0) {
+        const noun = state.discoveryErrorCount === 1 ? "error" : "errors";
+        return {
+          text:
+            `$(warning) Tests: ${adapter.framework.name} ` +
+            `(${state.discoveryErrorCount} discovery ${noun})`,
+          tooltip:
+            `${metadata}\nDiscovery errors: ${state.discoveryErrorCount}`,
+        };
+      }
       return {
         text: `$(beaker) Tests: ${adapter.framework.name}`,
-        tooltip:
-          `Framework: ${adapter.framework.name}\n` +
-          `Framework ID: ${adapter.framework.id}\n` +
-          `Framework version: ${adapter.framework.version}\n` +
-          `Protocol version: ${adapter.protocolVersion}\n` +
-          `Extensions: ${adapter.extensions.join(", ") || "none"}`,
+        tooltip: metadata,
       };
     }
     case "error":

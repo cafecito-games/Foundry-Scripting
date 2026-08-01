@@ -3,6 +3,10 @@ import {
   type TestAdapterNegotiationRequest,
 } from "./adapter.js";
 import type { NegotiatedTestAdapter } from "./capabilities.js";
+import type {
+  TestAdapterDiscoveryRequest,
+} from "./discoverer.js";
+import type { TestDiscoveryModel } from "./discovery.js";
 import type { TestingState } from "./status.js";
 
 export interface TestingRuntimeConfiguration
@@ -15,6 +19,12 @@ export interface TestingRuntimeOptions {
     request: TestAdapterNegotiationRequest,
     signal: AbortSignal,
   ) => Promise<NegotiatedTestAdapter>;
+  readonly discover: (
+    request: TestAdapterDiscoveryRequest,
+    signal: AbortSignal,
+  ) => Promise<TestDiscoveryModel>;
+  readonly onDiscovery: (project: string, model: TestDiscoveryModel) => void;
+  readonly onClear: () => void;
   readonly onState: (state: TestingState) => void;
 }
 
@@ -27,6 +37,7 @@ interface ActiveOperation {
 export class TestingRuntime {
   private generation = 0;
   private configurationKey: string | undefined;
+  private configuration: TestingRuntimeConfiguration | undefined;
   private active: ActiveOperation | undefined;
   private stopped = false;
   private stopPromise: Promise<void> | undefined;
@@ -35,11 +46,27 @@ export class TestingRuntime {
   constructor(private readonly options: TestingRuntimeOptions) {}
 
   async configure(configuration: TestingRuntimeConfiguration): Promise<void> {
+    this.configuration = configuration;
+    await this.start(configuration, false);
+  }
+
+  async refresh(): Promise<void> {
+    const configuration = this.configuration;
+    if (configuration === undefined || !configuration.enabled) {
+      return;
+    }
+    await this.start(configuration, true);
+  }
+
+  private async start(
+    configuration: TestingRuntimeConfiguration,
+    force: boolean,
+  ): Promise<void> {
     if (this.stopped) {
       return;
     }
     const key = configurationKey(configuration);
-    if (key === this.configurationKey) {
+    if (!force && key === this.configurationKey) {
       return;
     }
     this.configurationKey = key;
@@ -48,6 +75,7 @@ export class TestingRuntime {
 
     if (!configuration.enabled) {
       this.publish({ kind: "disabled" });
+      this.options.onClear();
     }
     if (previous !== undefined) {
       previous.controller.abort();
@@ -103,8 +131,34 @@ export class TestingRuntime {
   ): Promise<void> {
     try {
       const adapter = await this.options.negotiate(request, signal);
+      if (!this.isCurrent(generation)) {
+        return;
+      }
+      this.publish({ kind: "discovering", adapter });
+      if (request.project === undefined) {
+        throw new TestAdapterFailure(
+          "missing_project",
+          "Open a Foundry project folder before starting test discovery.",
+        );
+      }
+      const model = await this.options.discover(
+        {
+          ...request,
+          project: request.project,
+          protocolVersion: adapter.protocolVersion,
+        },
+        signal,
+      );
+      if (!this.isCurrent(generation)) {
+        return;
+      }
+      this.options.onDiscovery(request.project, model);
       if (this.isCurrent(generation)) {
-        this.publish({ kind: "ready", adapter });
+        this.publish({
+          kind: "ready",
+          adapter,
+          discoveryErrorCount: model.errorCount,
+        });
       }
     } catch (error) {
       if (!this.isCurrent(generation) || isAbortError(error)) {
@@ -115,7 +169,7 @@ export class TestingRuntime {
           ? error
           : new TestAdapterFailure(
               "spawn_failed",
-              `Foundry test adapter negotiation failed: ${errorMessage(error)}`,
+              `Foundry test adapter operation failed: ${errorMessage(error)}`,
               { cause: error },
             );
       this.publish({ kind: "error", failure });

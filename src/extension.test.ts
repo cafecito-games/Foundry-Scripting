@@ -9,7 +9,75 @@ import {
 } from "./client/connection-status.js";
 import { HostStartupFailure } from "./client/host-launcher.js";
 
-const extensionMock = vi.hoisted(() => ({
+const extensionMock = vi.hoisted(() => {
+  const createCollection = (owner: { id: string } | undefined) => {
+    const values = new Map<string, Record<string, unknown>>();
+    const collection = {
+      values,
+      get size() {
+        return values.size;
+      },
+      replace: (items: Array<Record<string, unknown>>) => {
+        for (const item of values.values()) {
+          item.parent = undefined;
+        }
+        values.clear();
+        for (const item of items) {
+          values.set(String(item.id), item);
+          item.parent = owner;
+        }
+      },
+      forEach: (callback: (item: Record<string, unknown>, collection: unknown) => void) => {
+        for (const item of values.values()) {
+          callback(item, collection);
+        }
+      },
+      add: (item: Record<string, unknown>) => {
+        values.set(String(item.id), item);
+        item.parent = owner;
+      },
+      delete: (id: string) => {
+        const item = values.get(id);
+        if (item !== undefined) {
+          item.parent = undefined;
+        }
+        values.delete(id);
+      },
+      get: (id: string) => values.get(id),
+      [Symbol.iterator]: () => values[Symbol.iterator](),
+    };
+    return collection;
+  };
+  const rootItems = createCollection(undefined);
+  const createTestItem = vi.fn((id: string, label: string, uri?: unknown) => {
+    const item: Record<string, unknown> = {
+      id,
+      label,
+      uri,
+      parent: undefined,
+      tags: [],
+      canResolveChildren: false,
+      busy: false,
+      range: undefined,
+      error: undefined,
+    };
+    item.children = createCollection(item as { id: string });
+    return item;
+  });
+  const testController = {
+    id: "foundryScript.tests",
+    label: "FoundryScript",
+    items: rootItems,
+    createTestItem,
+    createRunProfile: vi.fn(),
+    createTestRun: vi.fn(),
+    invalidateTestResults: vi.fn(),
+    refreshHandler: undefined as
+      | ((token: { isCancellationRequested: boolean }) => Promise<void> | void)
+      | undefined,
+    dispose: vi.fn(),
+  };
+  return {
   configuration: new Map<string, unknown>(),
   workspaceFolders: [] as Array<{ uri: { fsPath: string } }>,
   outputChannel: {
@@ -70,17 +138,51 @@ const extensionMock = vi.hoisted(() => ({
     | { runProcess?: (command: unknown, signal: AbortSignal) => Promise<unknown> }
     | undefined,
   testingNegotiate: vi.fn(),
+  testingDiscovererOptions: undefined as
+    | {
+        runProcess?: (command: unknown, signal: AbortSignal) => Promise<unknown>;
+        onCleanupError?: (error: unknown, directory: string) => void;
+      }
+    | undefined,
+  testingDiscover: vi.fn(),
   testingRuntimeOptions: undefined as
     | {
         negotiate: (request: unknown, signal: AbortSignal) => Promise<unknown>;
+        discover: (request: unknown, signal: AbortSignal) => Promise<unknown>;
+        onDiscovery: (project: string, model: unknown) => void;
+        onClear: () => void;
         onState: (state: unknown) => void;
       }
     | undefined,
   testingConfigure: vi.fn(),
+  testingRefresh: vi.fn(),
   testingStop: vi.fn(),
-}));
+  testController,
+  createTestController: vi.fn(() => testController),
+  };
+});
 
 vi.mock("vscode", () => ({
+  tests: {
+    createTestController: extensionMock.createTestController,
+  },
+  Uri: {
+    file: (fsPath: string) => ({ fsPath }),
+  },
+  Range: class {
+    readonly start: { readonly line: number; readonly character: number };
+    readonly end: { readonly line: number; readonly character: number };
+
+    constructor(
+      startLine: number,
+      startCharacter: number,
+      endLine: number,
+      endCharacter: number,
+    ) {
+      this.start = { line: startLine, character: startCharacter };
+      this.end = { line: endLine, character: endCharacter };
+    }
+  },
   workspace: {
     get workspaceFolders() {
       return extensionMock.workspaceFolders;
@@ -151,9 +253,20 @@ vi.mock("./testing/adapter.js", () => ({
   },
 }));
 
+vi.mock("./testing/discoverer.js", () => ({
+  FoundryTestAdapterDiscoverer: class {
+    readonly discover = extensionMock.testingDiscover;
+
+    constructor(options: unknown) {
+      extensionMock.testingDiscovererOptions = options as never;
+    }
+  },
+}));
+
 vi.mock("./testing/runtime.js", () => ({
   TestingRuntime: class {
     readonly configure = extensionMock.testingConfigure;
+    readonly refresh = extensionMock.testingRefresh;
     readonly stop = extensionMock.testingStop;
 
     constructor(options: unknown) {
@@ -225,11 +338,21 @@ describe("extension entry point", () => {
     extensionMock.testingProcessRun.mockReset();
     extensionMock.testingNegotiatorOptions = undefined;
     extensionMock.testingNegotiate.mockReset();
+    extensionMock.testingDiscovererOptions = undefined;
+    extensionMock.testingDiscover.mockReset();
     extensionMock.testingRuntimeOptions = undefined;
     extensionMock.testingConfigure.mockReset();
     extensionMock.testingConfigure.mockResolvedValue(undefined);
+    extensionMock.testingRefresh.mockReset();
+    extensionMock.testingRefresh.mockResolvedValue(undefined);
     extensionMock.testingStop.mockReset();
     extensionMock.testingStop.mockResolvedValue(undefined);
+    extensionMock.createTestController.mockClear();
+    extensionMock.testController.items.replace([]);
+    extensionMock.testController.createTestItem.mockClear();
+    extensionMock.testController.createRunProfile.mockClear();
+    extensionMock.testController.refreshHandler = undefined;
+    extensionMock.testController.dispose.mockClear();
     extensionMock.createDiagnosticCollection.mockReset();
     extensionMock.createDiagnosticCollection.mockReturnValue(
       extensionMock.diagnosticCollection,
@@ -388,6 +511,152 @@ describe("extension entry point", () => {
     expect(extensionMock.registerFoundryTaskProvider).toHaveBeenCalledOnce();
   });
 
+  it("creates exactly one discovery-only TestController on activation", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    const context = createContext();
+
+    await activate(context);
+
+    expect(extensionMock.createTestController).toHaveBeenCalledOnce();
+    expect(extensionMock.createTestController).toHaveBeenCalledWith(
+      "foundryScript.tests",
+      "FoundryScript",
+    );
+    expect(extensionMock.testController.createRunProfile).not.toHaveBeenCalled();
+    expect(context.subscriptions).toContain(extensionMock.testController);
+    expect(context.subscriptions).toContain(extensionMock.testingOutputChannel);
+  });
+
+  it("wires negotiation, discovery, and authoritative hierarchy publication", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    extensionMock.configuration.set("testing.enabled", true);
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game" },
+    });
+    const adapter = {
+      protocolVersion: 1,
+      framework: { id: "neutral", name: "Neutral", version: "1" },
+      extensions: [],
+    };
+    const discovered = nestedDiscoveryModel();
+    extensionMock.testingNegotiate.mockResolvedValue(adapter);
+    extensionMock.testingDiscover.mockResolvedValue(discovered);
+
+    await activate(createContext());
+    const options = extensionMock.testingRuntimeOptions;
+    const signal = new AbortController().signal;
+    const request = {
+      enginePath: "/opt/foundry",
+      project: "/workspace/game",
+      runner: "res://tests/runner.fs",
+      frameworkArgs: [],
+    };
+
+    await expect(options?.negotiate(request, signal)).resolves.toBe(adapter);
+    await expect(
+      options?.discover({ ...request, protocolVersion: 1 }, signal),
+    ).resolves.toBe(discovered);
+    options?.onDiscovery("/workspace/game", discovered);
+
+    expect(extensionMock.testingNegotiate).toHaveBeenCalledWith(request, signal);
+    expect(extensionMock.testingDiscover).toHaveBeenCalledWith(
+      { ...request, protocolVersion: 1 },
+      signal,
+    );
+    expect(controllerChild("suite-a", "test-a")).toMatchObject({
+      id: "test-a",
+      label: "works",
+      uri: { fsPath: "/workspace/game/tests/example.fs" },
+    });
+    expect(extensionMock.testController.createRunProfile).not.toHaveBeenCalled();
+  });
+
+  it("shares the owned process and cleanup diagnostics with discovery", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    await activate(createContext());
+    const signal = new AbortController().signal;
+    const command = { command: "foundry", args: [], cwd: "/workspace/game" };
+    extensionMock.testingProcessRun.mockResolvedValue({
+      kind: "exited",
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+    });
+
+    await extensionMock.testingDiscovererOptions?.runProcess?.(command, signal);
+    extensionMock.testingDiscovererOptions?.onCleanupError?.(
+      new Error("denied"),
+      "/tmp/foundryscript-test-discovery-owned",
+    );
+
+    expect(extensionMock.testingProcessRun).toHaveBeenCalledWith(command, signal);
+    expect(extensionMock.testingOutputChannel.appendLine).toHaveBeenCalledWith(
+      expect.stringContaining("foundryscript-test-discovery-owned"),
+    );
+  });
+
+  it("awaits controller refresh and skips an already-cancelled request", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    const refresh = deferred<void>();
+    extensionMock.testingRefresh.mockReturnValue(refresh.promise);
+    await activate(createContext());
+
+    const refreshPromise = extensionMock.testController.refreshHandler?.({
+      isCancellationRequested: false,
+    });
+    expect(extensionMock.testingRefresh).toHaveBeenCalledOnce();
+    refresh.resolve(undefined);
+    await refreshPromise;
+
+    extensionMock.testingRefresh.mockClear();
+    await extensionMock.testController.refreshHandler?.({
+      isCancellationRequested: true,
+    });
+    expect(extensionMock.testingRefresh).not.toHaveBeenCalled();
+  });
+
+  it("retains last-known-good items when a refresh reports malformed discovery", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    await activate(createContext());
+    const options = extensionMock.testingRuntimeOptions;
+    options?.onDiscovery("/workspace/game", nestedDiscoveryModel());
+    const original = controllerChild("suite-a", "test-a");
+
+    await extensionMock.testController.refreshHandler?.({
+      isCancellationRequested: false,
+    });
+    options?.onState({
+      kind: "error",
+      failure: {
+        kind: "malformed_discovery",
+        message: "Malformed discovery artifact.",
+      },
+    });
+
+    expect(
+      controllerChild("suite-a", "test-a"),
+    ).toBe(original);
+    expect(extensionMock.testingStatusItem.text).toContain("Unavailable");
+    expect(extensionMock.testingOutputChannel.appendLine).toHaveBeenCalledWith(
+      expect.stringContaining("malformed_discovery"),
+    );
+  });
+
+  it("authoritatively clears on valid empty discovery and explicit disable", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    await activate(createContext());
+    const options = extensionMock.testingRuntimeOptions;
+    options?.onDiscovery("/workspace/game", nestedDiscoveryModel());
+
+    options?.onDiscovery("/workspace/game", emptyDiscoveryModel());
+    expect(extensionMock.testController.items.size).toBe(0);
+
+    options?.onDiscovery("/workspace/game", nestedDiscoveryModel());
+    options?.onClear();
+    expect(extensionMock.testController.items.size).toBe(0);
+    expect(extensionMock.registerFoundryTaskProvider).toHaveBeenCalledOnce();
+  });
+
   it("passes enabled adapter settings and the first workspace project exactly", async () => {
     extensionMock.configuration.set("lsp.mode", "off");
     extensionMock.configuration.set("testing.enabled", true);
@@ -495,6 +764,7 @@ describe("extension entry point", () => {
         },
         extensions: ["neutral.coverage"],
       },
+      discoveryErrorCount: 0,
     });
     extensionMock.testingProcessOptions?.onOutput?.(
       '{"application":"stdout"}\n',
@@ -624,6 +894,71 @@ describe("extension entry point", () => {
     expect(extensionMock.reconnectNow).not.toHaveBeenCalled();
   });
 });
+
+function emptyDiscoveryModel() {
+  return {
+    root: "res://tests",
+    items: [],
+    suiteCount: 0,
+    testCount: 0,
+    errorCount: 0,
+  };
+}
+
+function controllerChild(parentId: string, childId: string) {
+  const parent = extensionMock.testController.items.get(parentId);
+  const children = parent?.children as
+    | { get: (id: string) => Record<string, unknown> | undefined }
+    | undefined;
+  return children?.get(childId);
+}
+
+function nestedDiscoveryModel() {
+  return {
+    root: "res://tests",
+    items: [
+      {
+        kind: "suite",
+        id: "suite-a",
+        label: "Suite",
+        parentId: null,
+        resourcePath: "res://tests/example.fs",
+        range: null,
+        runnable: true,
+        skipped: false,
+        skipReason: null,
+      },
+      {
+        kind: "test",
+        id: "test-a",
+        label: "works",
+        parentId: "suite-a",
+        resourcePath: "res://tests/example.fs",
+        range: {
+          start: { line: 3, character: 2 },
+          end: { line: 3, character: 30 },
+        },
+        runnable: true,
+        skipped: false,
+        skipReason: null,
+        caseKey: null,
+      },
+    ],
+    suiteCount: 1,
+    testCount: 1,
+    errorCount: 0,
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  return { promise, resolve, reject };
+}
 
 describe("package.json manifest", () => {
   it("declares the foundryscript language for .fs files", () => {
