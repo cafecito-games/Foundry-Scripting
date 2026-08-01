@@ -362,6 +362,19 @@ describe("package.json manifest", () => {
       type: "string",
       default: "",
     });
+    expect(properties["foundryScript.testing.enabled"]).toMatchObject({
+      type: "boolean",
+      default: false,
+    });
+    expect(properties["foundryScript.testing.runner"]).toMatchObject({
+      type: "string",
+      default: "",
+    });
+    expect(properties["foundryScript.testing.args"]).toMatchObject({
+      type: "array",
+      default: [],
+      items: { type: "string" },
+    });
   });
 
   it("contributes tasks.json definitions for the five Foundry CLI verbs", () => {

@@ -96,6 +96,24 @@
           "type": "string",
           "default": "",
           "description": "Runner passed to foundry project test. Required by the FoundryScript test task."
+        },
+        "foundryScript.testing.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Foundry Test Adapter Protocol negotiation for future Test Explorer integration."
+        },
+        "foundryScript.testing.runner": {
+          "type": "string",
+          "default": "",
+          "description": "Canonical res:// runner resource implementing the Foundry Test Adapter Protocol."
+        },
+        "foundryScript.testing.args": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Framework-specific arguments passed after the test adapter's reserved options."
         }
       }
     }
