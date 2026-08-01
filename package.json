@@ -133,6 +133,7 @@
     "test:unit": "vitest run",
     "test:grammar": "vscode-tmgrammar-test \"tests/grammar/**/*.fs\" && node scripts/check-assertions.mjs",
     "test:corpus": "node scripts/check-corpus.mjs",
+    "test:live-foundry": "node scripts/verify-foundry-test-run.mjs",
     "package": "vsce package"
   },
   "devDependencies": {

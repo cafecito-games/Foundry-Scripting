@@ -203,6 +203,8 @@ describe("normative Foundry v1 report fixtures", () => {
     );
 
     if (contextInvalid) {
+      // Discovery validation owns the unavailable plan context. These entries
+      // exercise only the report artifact that remains valid in isolation.
       expect(result.valid).toBe(true);
       expect(result.complete).toBe(true);
       return;

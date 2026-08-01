@@ -48,6 +48,20 @@ describe("Foundry VS Code run profile", () => {
     );
   });
 
+  it("invalidates the full plan when a callback reports an unknown ID", async () => {
+    const harness = createHarness({
+      points: [passPoint("test-a", 5), passPoint("unknown-id", 1)],
+    });
+
+    await harness.profile.run(request(undefined), token());
+
+    expect(harness.run.passed).toHaveBeenCalledWith(harness.items.get("test-a"), 5);
+    expect(harness.run.errored).toHaveBeenCalledTimes(2);
+    expect(harness.run.appendOutput).toHaveBeenCalledWith(
+      expect.stringContaining("unknown test ID"),
+    );
+  });
+
   it.each([
     { detail: "", method: "failed" },
     { detail: "discovery_error", method: "errored" },
@@ -158,6 +172,14 @@ describe("Foundry VS Code run profile", () => {
       expect.stringContaining("not ready"),
     );
     expect(unavailable.run.end).toHaveBeenCalledOnce();
+
+    const stale = createHarness({ stale: true });
+    await stale.profile.run(request(undefined), token());
+    expect(stale.execute).not.toHaveBeenCalled();
+    expect(stale.run.appendOutput).toHaveBeenCalledWith(
+      expect.stringContaining("not ready"),
+    );
+    expect(stale.run.end).toHaveBeenCalledOnce();
   });
 });
 
@@ -179,6 +201,7 @@ function createHarness(
     readonly cancelled?: boolean;
     readonly invalid?: boolean;
     readonly ready?: boolean;
+    readonly stale?: boolean;
   } = {},
 ): Harness {
   const model = discoveryModel();
@@ -268,7 +291,10 @@ function createHarness(
             },
             model,
           },
-    snapshot: () => ({ model, item: (id) => items.get(id) }),
+    snapshot: () => ({
+      model: options.stale ? { ...model } : model,
+      item: (id) => items.get(id),
+    }),
     execute: harness.execute,
     createMessage: (message) => ({ message }),
     createLocation,

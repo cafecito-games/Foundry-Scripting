@@ -666,6 +666,8 @@ export class FoundryTap13Parser {
       return;
     }
     const expectedIds = this.expectedLeaves.map((leaf) => leaf.id);
+    // Structural diagnostics own malformed blocks. Selection/order diagnostics
+    // are meaningful only when each completed block supplied one authoritative ID.
     if (this.plan !== expectedIds.length || this.reportedIds.length !== this.pointCount) {
       return;
     }

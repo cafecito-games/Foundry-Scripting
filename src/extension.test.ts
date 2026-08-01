@@ -378,6 +378,7 @@ describe("extension entry point", () => {
     extensionMock.testController.items.replace([]);
     extensionMock.testController.createTestItem.mockClear();
     extensionMock.testController.createRunProfile.mockClear();
+    extensionMock.testController.createTestRun.mockReset();
     extensionMock.testController.refreshHandler = undefined;
     extensionMock.testController.dispose.mockClear();
     extensionMock.createDiagnosticCollection.mockReset();
@@ -602,6 +603,66 @@ describe("extension entry point", () => {
       uri: { fsPath: "/workspace/game/tests/example.fs" },
     });
     expect(extensionMock.testController.createRunProfile).toHaveBeenCalledOnce();
+  });
+
+  it("runs the registered profile through current runtime and explorer state", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    const model = nestedDiscoveryModel();
+    const adapter = {
+      protocolVersion: 1,
+      framework: { id: "neutral", name: "Neutral", version: "1" },
+      extensions: [],
+    };
+    const run = {
+      enqueued: vi.fn(),
+      started: vi.fn(),
+      passed: vi.fn(),
+      skipped: vi.fn(),
+      failed: vi.fn(),
+      errored: vi.fn(),
+      appendOutput: vi.fn(),
+      end: vi.fn(),
+    };
+    extensionMock.testController.createTestRun.mockReturnValue(run);
+    extensionMock.testingExecute.mockResolvedValue({
+      kind: "completed",
+      completion: {
+        valid: true,
+        complete: true,
+        classification: "conforming",
+        codes: [],
+        diagnostics: [],
+      },
+      processResult: { kind: "exited", exitCode: 0, stdout: "", stderr: "" },
+    });
+
+    await activate(createContext());
+    extensionMock.testingRuntimeOptions?.onDiscovery("/workspace/game", model);
+    extensionMock.testingReadyContext.mockReturnValue({
+      configuration: {
+        enabled: true,
+        enginePath: "/opt/foundry",
+        project: "/workspace/game",
+        runner: "res://tests/runner.fs",
+        frameworkArgs: [],
+      },
+      adapter,
+      model,
+    });
+    const handler = extensionMock.testController.createRunProfile.mock.calls[0]?.[2] as
+      | ((request: unknown, token: unknown) => Promise<void>)
+      | undefined;
+    await handler?.(
+      {},
+      {
+        isCancellationRequested: false,
+        onCancellationRequested: () => ({ dispose: vi.fn() }),
+      },
+    );
+
+    expect(extensionMock.testingReadyContext).toHaveBeenCalled();
+    expect(extensionMock.testingExecute).toHaveBeenCalledOnce();
+    expect(run.end).toHaveBeenCalledOnce();
   });
 
   it("shares the owned process and cleanup diagnostics with discovery and runs", async () => {

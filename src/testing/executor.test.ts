@@ -66,6 +66,10 @@ describe("Foundry test executor", () => {
     artifact = Buffer.from(
       report(2, point(1, "test-a"), point(2, "test-b")),
     );
+    await vi.waitFor(() => expect(polls).toHaveLength(2));
+    polls[1]?.resolve(undefined);
+    await vi.waitFor(() => expect(points).toEqual(["test-a", "test-b"]));
+    expect(child.settled).toBe(false);
     child.resolve(exited(0));
 
     await expect(execution).resolves.toMatchObject({
