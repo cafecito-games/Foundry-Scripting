@@ -110,6 +110,7 @@ class FoundryTaskTerminal implements vscode.Pseudoterminal {
   readonly onDidClose = this.closeEmitter.event;
   private process: FoundryTaskProcess | undefined;
   private lintRun: FoundryLintRun | undefined;
+  private closed = false;
 
   constructor(
     private readonly kind: FoundryTaskKind,
@@ -126,6 +127,7 @@ class FoundryTaskTerminal implements vscode.Pseudoterminal {
     const configuration = vscode.workspace.getConfiguration("foundryScript");
     try {
       const resolution = await this.resolveProject();
+      if (this.closed) return;
       if (!resolution.success) {
         this.reportProjectFailure(resolution.failure);
         this.closeEmitter.fire(1);
@@ -175,6 +177,7 @@ class FoundryTaskTerminal implements vscode.Pseudoterminal {
   }
 
   close(): void {
+    this.closed = true;
     this.process?.cancel();
   }
 

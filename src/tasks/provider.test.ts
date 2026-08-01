@@ -314,6 +314,30 @@ describe("Foundry task provider", () => {
     );
   });
 
+  it("does not spawn after closing while project resolution is pending", async () => {
+    let finishResolution: ((value: {
+      success: true;
+      project: string;
+    }) => void) | undefined;
+    providerMock.resolveProject.mockReturnValue(
+      new Promise((resolve) => {
+        finishResolution = resolve;
+      }),
+    );
+    const spawnProcess = vi.fn();
+    const provider = new FoundryTaskProvider({ spawnProcess });
+    const [task] = provider.provideTasks();
+    const terminal = await taskTerminal(task);
+
+    terminal.open(undefined);
+    terminal.close();
+    finishResolution?.({ success: true, project: "/workspace/game" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(spawnProcess).not.toHaveBeenCalled();
+  });
+
   it.each([
     {
       name: "engine",
