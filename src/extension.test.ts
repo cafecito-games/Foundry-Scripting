@@ -17,10 +17,22 @@ const extensionMock = vi.hoisted(() => ({
     show: vi.fn(),
     dispose: vi.fn(),
   },
+  testingOutputChannel: {
+    append: vi.fn(),
+    appendLine: vi.fn(),
+    show: vi.fn(),
+    dispose: vi.fn(),
+  },
   statusItem: {
     text: "",
     tooltip: "",
     command: undefined as string | undefined,
+    show: vi.fn(),
+    dispose: vi.fn(),
+  },
+  testingStatusItem: {
+    text: "",
+    tooltip: "",
     show: vi.fn(),
     dispose: vi.fn(),
   },
@@ -44,6 +56,28 @@ const extensionMock = vi.hoisted(() => ({
   taskProviderDisposable: { dispose: vi.fn() },
   registerTaskProvider: vi.fn(),
   registerFoundryTaskProvider: vi.fn(),
+  configurationChangeHandler: undefined as
+    | ((event: { affectsConfiguration(section: string): boolean }) => void)
+    | undefined,
+  workspaceFoldersChangeHandler: undefined as (() => void) | undefined,
+  onDidChangeConfiguration: vi.fn(),
+  onDidChangeWorkspaceFolders: vi.fn(),
+  testingProcessOptions: undefined as
+    | { onOutput?: (text: string, stream: "stdout" | "stderr") => void }
+    | undefined,
+  testingProcessRun: vi.fn(),
+  testingNegotiatorOptions: undefined as
+    | { runProcess?: (command: unknown, signal: AbortSignal) => Promise<unknown> }
+    | undefined,
+  testingNegotiate: vi.fn(),
+  testingRuntimeOptions: undefined as
+    | {
+        negotiate: (request: unknown, signal: AbortSignal) => Promise<unknown>;
+        onState: (state: unknown) => void;
+      }
+    | undefined,
+  testingConfigure: vi.fn(),
+  testingStop: vi.fn(),
 }));
 
 vi.mock("vscode", () => ({
@@ -55,10 +89,20 @@ vi.mock("vscode", () => ({
       get: (key: string, defaultValue: unknown) =>
         extensionMock.configuration.get(key) ?? defaultValue,
     }),
+    onDidChangeConfiguration: extensionMock.onDidChangeConfiguration,
+    onDidChangeWorkspaceFolders: extensionMock.onDidChangeWorkspaceFolders,
   },
   window: {
-    createOutputChannel: vi.fn(() => extensionMock.outputChannel),
-    createStatusBarItem: vi.fn(() => extensionMock.statusItem),
+    createOutputChannel: vi.fn((name: string) =>
+      name === "FoundryScript Testing"
+        ? extensionMock.testingOutputChannel
+        : extensionMock.outputChannel,
+    ),
+    createStatusBarItem: vi.fn((_alignment: unknown, priority: number) =>
+      priority === 90
+        ? extensionMock.testingStatusItem
+        : extensionMock.statusItem,
+    ),
     showErrorMessage: extensionMock.showErrorMessage,
     showQuickPick: extensionMock.showQuickPick,
   },
@@ -87,6 +131,37 @@ vi.mock("./tasks/provider.js", () => ({
   registerFoundryTaskProvider: extensionMock.registerFoundryTaskProvider,
 }));
 
+vi.mock("./testing/process.js", () => ({
+  FoundryTestAdapterProcess: class {
+    readonly run = extensionMock.testingProcessRun;
+
+    constructor(options: unknown) {
+      extensionMock.testingProcessOptions = options as never;
+    }
+  },
+}));
+
+vi.mock("./testing/adapter.js", () => ({
+  FoundryTestAdapterNegotiator: class {
+    readonly negotiate = extensionMock.testingNegotiate;
+
+    constructor(options: unknown) {
+      extensionMock.testingNegotiatorOptions = options as never;
+    }
+  },
+}));
+
+vi.mock("./testing/runtime.js", () => ({
+  TestingRuntime: class {
+    readonly configure = extensionMock.testingConfigure;
+    readonly stop = extensionMock.testingStop;
+
+    constructor(options: unknown) {
+      extensionMock.testingRuntimeOptions = options as never;
+    }
+  },
+}));
+
 import { activate, deactivate } from "./extension.js";
 
 function createContext(): vscode.ExtensionContext {
@@ -101,11 +176,19 @@ describe("extension entry point", () => {
     extensionMock.outputChannel.appendLine.mockClear();
     extensionMock.outputChannel.show.mockClear();
     extensionMock.outputChannel.dispose.mockClear();
+    extensionMock.testingOutputChannel.append.mockClear();
+    extensionMock.testingOutputChannel.appendLine.mockClear();
+    extensionMock.testingOutputChannel.show.mockClear();
+    extensionMock.testingOutputChannel.dispose.mockClear();
     extensionMock.statusItem.text = "";
     extensionMock.statusItem.tooltip = "";
     extensionMock.statusItem.command = undefined;
     extensionMock.statusItem.show.mockClear();
     extensionMock.statusItem.dispose.mockClear();
+    extensionMock.testingStatusItem.text = "";
+    extensionMock.testingStatusItem.tooltip = "";
+    extensionMock.testingStatusItem.show.mockClear();
+    extensionMock.testingStatusItem.dispose.mockClear();
     extensionMock.showErrorMessage.mockReset();
     extensionMock.showQuickPick.mockReset();
     extensionMock.executeCommand.mockReset();
@@ -122,6 +205,31 @@ describe("extension entry point", () => {
       },
     );
     extensionMock.registerFoundryTaskProvider.mockReset();
+    extensionMock.configurationChangeHandler = undefined;
+    extensionMock.workspaceFoldersChangeHandler = undefined;
+    extensionMock.onDidChangeConfiguration.mockReset();
+    extensionMock.onDidChangeConfiguration.mockImplementation(
+      (handler: (event: { affectsConfiguration(section: string): boolean }) => void) => {
+      extensionMock.configurationChangeHandler = handler;
+      return { dispose: vi.fn() };
+      },
+    );
+    extensionMock.onDidChangeWorkspaceFolders.mockReset();
+    extensionMock.onDidChangeWorkspaceFolders.mockImplementation(
+      (handler: () => void) => {
+        extensionMock.workspaceFoldersChangeHandler = handler;
+        return { dispose: vi.fn() };
+      },
+    );
+    extensionMock.testingProcessOptions = undefined;
+    extensionMock.testingProcessRun.mockReset();
+    extensionMock.testingNegotiatorOptions = undefined;
+    extensionMock.testingNegotiate.mockReset();
+    extensionMock.testingRuntimeOptions = undefined;
+    extensionMock.testingConfigure.mockReset();
+    extensionMock.testingConfigure.mockResolvedValue(undefined);
+    extensionMock.testingStop.mockReset();
+    extensionMock.testingStop.mockResolvedValue(undefined);
     extensionMock.createDiagnosticCollection.mockReset();
     extensionMock.createDiagnosticCollection.mockReturnValue(
       extensionMock.diagnosticCollection,
@@ -264,6 +372,199 @@ describe("extension entry point", () => {
     expect(extensionMock.stop).toHaveBeenCalledOnce();
   });
 
+  it("configures testing independently while disabled", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+
+    await activate(createContext());
+
+    expect(extensionMock.testingConfigure).toHaveBeenCalledWith({
+      enabled: false,
+      enginePath: "foundry",
+      project: undefined,
+      runner: "",
+      frameworkArgs: [],
+    });
+    expect(extensionMock.testingStatusItem.show).not.toHaveBeenCalled();
+    expect(extensionMock.registerFoundryTaskProvider).toHaveBeenCalledOnce();
+  });
+
+  it("passes enabled adapter settings and the first workspace project exactly", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    extensionMock.configuration.set("testing.enabled", true);
+    extensionMock.configuration.set(
+      "testing.runner",
+      "res://addons/neutral/runner.fs",
+    );
+    extensionMock.configuration.set("testing.args", [
+      "--path",
+      "res://specs",
+      "--output",
+      "opaque",
+    ]);
+    extensionMock.configuration.set("enginePath", "/opt/foundry");
+    extensionMock.workspaceFolders.push(
+      { uri: { fsPath: "/workspace/first" } },
+      { uri: { fsPath: "/workspace/second" } },
+    );
+
+    await activate(createContext());
+
+    expect(extensionMock.testingConfigure).toHaveBeenCalledWith({
+      enabled: true,
+      enginePath: "/opt/foundry",
+      project: "/workspace/first",
+      runner: "res://addons/neutral/runner.fs",
+      frameworkArgs: ["--path", "res://specs", "--output", "opaque"],
+    });
+    expect(extensionMock.createConnectionManager).not.toHaveBeenCalled();
+  });
+
+  it("reconfigures only for relevant settings and workspace changes", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    await activate(createContext());
+    extensionMock.testingConfigure.mockClear();
+
+    extensionMock.configuration.set("testing.enabled", true);
+    extensionMock.configurationChangeHandler?.({
+      affectsConfiguration: (section) =>
+        section === "foundryScript.testing.enabled",
+    });
+    extensionMock.configurationChangeHandler?.({
+      affectsConfiguration: () => false,
+    });
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/changed" },
+    });
+    extensionMock.workspaceFoldersChangeHandler?.();
+
+    expect(extensionMock.testingConfigure).toHaveBeenCalledTimes(2);
+    expect(extensionMock.testingConfigure).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        enabled: true,
+        project: "/workspace/changed",
+      }),
+    );
+  });
+
+  it("disabling testing does not stop LSP or ordinary tasks", async () => {
+    extensionMock.configuration.set("testing.enabled", true);
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game" },
+    });
+    await activate(createContext());
+
+    extensionMock.configuration.set("testing.enabled", false);
+    extensionMock.configurationChangeHandler?.({
+      affectsConfiguration: (section) =>
+        section === "foundryScript.testing.enabled",
+    });
+
+    expect(extensionMock.testingConfigure).toHaveBeenLastCalledWith(
+      expect.objectContaining({ enabled: false }),
+    );
+    expect(extensionMock.stop).not.toHaveBeenCalled();
+    expect(extensionMock.registerFoundryTaskProvider).toHaveBeenCalledOnce();
+  });
+
+  it("deactivation stops testing and LSP exactly once", async () => {
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game" },
+    });
+    await activate(createContext());
+
+    await deactivate();
+    await deactivate();
+
+    expect(extensionMock.testingStop).toHaveBeenCalledOnce();
+    expect(extensionMock.stop).toHaveBeenCalledOnce();
+  });
+
+  it("renders negotiated framework status and preserves process output", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    await activate(createContext());
+    const options = extensionMock.testingRuntimeOptions;
+
+    options?.onState({
+      kind: "ready",
+      adapter: {
+        protocolVersion: 1,
+        framework: {
+          id: "neutral-spec",
+          name: "Neutral Spec",
+          version: "2.4.0",
+        },
+        extensions: ["neutral.coverage"],
+      },
+    });
+    extensionMock.testingProcessOptions?.onOutput?.(
+      '{"application":"stdout"}\n',
+      "stdout",
+    );
+
+    expect(extensionMock.testingStatusItem.text).toContain("Neutral Spec");
+    expect(extensionMock.testingStatusItem.tooltip).toContain("neutral-spec");
+    expect(extensionMock.testingOutputChannel.append).toHaveBeenCalledWith(
+      '{"application":"stdout"}\n',
+    );
+  });
+
+  it("opens the precise setting for testing configuration failures", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    extensionMock.showErrorMessage.mockResolvedValue("Open Settings");
+    await activate(createContext());
+
+    extensionMock.testingRuntimeOptions?.onState({
+      kind: "error",
+      failure: {
+        kind: "missing_runner",
+        setting: "foundryScript.testing.runner",
+        message: "Configure a test adapter runner.",
+      },
+    });
+    await Promise.resolve();
+
+    expect(extensionMock.executeCommand).toHaveBeenCalledWith(
+      "workbench.action.openSettings",
+      "foundryScript.testing.runner",
+    );
+  });
+
+  it("offers a workspace folder for testing missing-project failures", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    extensionMock.showErrorMessage.mockResolvedValue("Open Folder");
+    await activate(createContext());
+
+    extensionMock.testingRuntimeOptions?.onState({
+      kind: "error",
+      failure: {
+        kind: "missing_project",
+        message: "Open a Foundry project folder.",
+      },
+    });
+    await Promise.resolve();
+
+    expect(extensionMock.executeCommand).toHaveBeenCalledWith(
+      "workbench.action.files.openFolder",
+    );
+  });
+
+  it("offers the testing log for protocol and process failures", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    extensionMock.showErrorMessage.mockResolvedValue("Open Testing Log");
+    await activate(createContext());
+
+    extensionMock.testingRuntimeOptions?.onState({
+      kind: "error",
+      failure: {
+        kind: "legacy_runner",
+        message: "The runner does not implement adapter capabilities.",
+      },
+    });
+    await Promise.resolve();
+
+    expect(extensionMock.testingOutputChannel.show).toHaveBeenCalledOnce();
+  });
+
   it("cleans up and forgets a connection manager after cancelled startup", async () => {
     extensionMock.workspaceFolders.push({
       uri: { fsPath: "/workspace/game" },
@@ -361,6 +662,19 @@ describe("package.json manifest", () => {
     expect(properties["foundryScript.test.runner"]).toMatchObject({
       type: "string",
       default: "",
+    });
+    expect(properties["foundryScript.testing.enabled"]).toMatchObject({
+      type: "boolean",
+      default: false,
+    });
+    expect(properties["foundryScript.testing.runner"]).toMatchObject({
+      type: "string",
+      default: "",
+    });
+    expect(properties["foundryScript.testing.args"]).toMatchObject({
+      type: "array",
+      default: [],
+      items: { type: "string" },
     });
   });
 
