@@ -400,21 +400,21 @@ git commit -m "feat: wire test adapter lifecycle"
 **Files:**
 - Modify only test/production files if a verified integration defect requires a TDD fix.
 
-- [ ] **Step 1: Run all focused testing tests**
+- [x] **Step 1: Run all focused testing tests**
 
 Run: `npx vitest run src/testing src/extension.test.ts src/tasks/provider.test.ts src/client/runtime.test.ts`
 
 Expected: all focused tests pass.
 
-- [ ] **Step 2: Build and verify an exact Foundry dependency checkout**
+- [x] **Step 2: Build and verify an exact Foundry dependency checkout**
 
 Use a temporary checkout at Foundry commit `af7af3946a9c554b6f35285ee59b8411b5c3f4d0`. Build there with the repository-supported macOS agent build command and confirm the resulting binary reports the exact checkout commit/build. Do not write to the user's Foundry checkout.
 
-- [ ] **Step 3: Run the exact FoundryLib reference adapter**
+- [x] **Step 3: Run the exact FoundryLib reference adapter**
 
 Use a temporary FoundryLib checkout at `6df2b4d7ff43c013a4c9e9033c01cdadbdeda19a`. Invoke its runner with the exact capabilities command and an output path under a unique temporary directory. Validate the artifact through the extension parser and assert negotiated protocol `1`, framework ID `foundrylib-testlib`, name `FoundryLib TestLib`, version `1.0.0`, exit `0`, and complete cleanup. Confirm captured engine/application stdout and stderr are absent from the JSON artifact.
 
-- [ ] **Step 4: Run the complete fresh gate**
+- [x] **Step 4: Run the complete fresh gate**
 
 Run:
 
@@ -429,6 +429,12 @@ git status --short --branch
 ```
 
 Expected: every command exits zero, the VSIX exists, and the worktree is clean.
+
+Verification record (2026-07-31):
+
+- A clean temporary Foundry checkout at `af7af3946a9c554b6f35285ee59b8411b5c3f4d0` built successfully with `python3 scripts/agent_build.py --platform macos --jobs 10 --heartbeat 30`; the build completed in 35m44s, `foundry --version` reported `0.1.dev.custom_build.af7af3946`, and generated metadata recorded the full commit with `git_dirty: False`.
+- The production `FoundryTestAdapterNegotiator` ran against a clean temporary FoundryLib checkout at `6df2b4d7ff43c013a4c9e9033c01cdadbdeda19a`, including opaque framework arguments after the second `--`. It negotiated protocol `1` and framework `foundrylib-testlib` / `FoundryLib TestLib` / `1.0.0`; temporary adapter directories were empty both before and after the operation.
+- The fresh publication gate passed with 23 test files and 278 unit tests, all grammar fixtures and negative assertions, typecheck, lint, build, VSIX packaging, `git diff --check`, and a clean worktree.
 
 - [ ] **Step 5: Rebase and review**
 
