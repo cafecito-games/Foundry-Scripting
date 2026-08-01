@@ -3,7 +3,8 @@ export type TestAdapterConfigurationErrorKind =
   | "missing_project"
   | "missing_runner"
   | "invalid_runner"
-  | "invalid_args";
+  | "invalid_args"
+  | "invalid_protocol_version";
 
 export class TestAdapterConfigurationError extends Error {
   constructor(
@@ -15,11 +16,21 @@ export class TestAdapterConfigurationError extends Error {
   }
 }
 
-export interface TestAdapterCapabilitiesCommandRequest {
+export interface TestAdapterCommandRequestFields {
   readonly enginePath: string;
   readonly project: string | undefined;
   readonly runner: string;
   readonly frameworkArgs: readonly string[];
+}
+
+export interface TestAdapterCapabilitiesCommandRequest
+  extends TestAdapterCommandRequestFields {
+  readonly outputPath: string;
+}
+
+export interface TestAdapterDiscoveryCommandRequest
+  extends TestAdapterCommandRequestFields {
+  readonly protocolVersion: number;
   readonly outputPath: string;
 }
 
@@ -32,6 +43,69 @@ export interface TestAdapterCommand {
 export function createTestAdapterCapabilitiesCommand(
   request: TestAdapterCapabilitiesCommandRequest,
 ): TestAdapterCommand {
+  const validated = validateCommandRequest(request);
+
+  const args = [
+    "--headless",
+    "--no-header",
+    "project",
+    "test",
+    "--project",
+    validated.project,
+    "--runner",
+    request.runner,
+    "--",
+    "adapter",
+    "capabilities",
+    "--output",
+    request.outputPath,
+  ];
+  appendFrameworkArguments(args, request.frameworkArgs);
+
+  return {
+    command: request.enginePath,
+    args,
+    cwd: validated.project,
+  };
+}
+
+export function createTestAdapterDiscoveryCommand(
+  request: TestAdapterDiscoveryCommandRequest,
+): TestAdapterCommand {
+  const validated = validateCommandRequest(request);
+  if (!Number.isInteger(request.protocolVersion) || request.protocolVersion <= 0) {
+    throw new TestAdapterConfigurationError("invalid_protocol_version");
+  }
+
+  const args = [
+    "--headless",
+    "--no-header",
+    "project",
+    "test",
+    "--project",
+    validated.project,
+    "--runner",
+    request.runner,
+    "--",
+    "adapter",
+    "discover",
+    "--protocol-version",
+    String(request.protocolVersion),
+    "--output",
+    request.outputPath,
+  ];
+  appendFrameworkArguments(args, request.frameworkArgs);
+
+  return {
+    command: request.enginePath,
+    args,
+    cwd: validated.project,
+  };
+}
+
+function validateCommandRequest(
+  request: TestAdapterCommandRequestFields,
+): { readonly project: string } {
   if (request.enginePath.trim() === "") {
     throw new TestAdapterConfigurationError(
       "missing_engine",
@@ -62,31 +136,16 @@ export function createTestAdapterCapabilitiesCommand(
       "foundryScript.testing.args",
     );
   }
+  return { project: request.project };
+}
 
-  const args = [
-    "--headless",
-    "--no-header",
-    "project",
-    "test",
-    "--project",
-    request.project,
-    "--runner",
-    request.runner,
-    "--",
-    "adapter",
-    "capabilities",
-    "--output",
-    request.outputPath,
-  ];
-  if (request.frameworkArgs.length > 0) {
-    args.push("--", ...request.frameworkArgs);
+function appendFrameworkArguments(
+  args: string[],
+  frameworkArgs: readonly string[],
+): void {
+  if (frameworkArgs.length > 0) {
+    args.push("--", ...frameworkArgs);
   }
-
-  return {
-    command: request.enginePath,
-    args,
-    cwd: request.project,
-  };
 }
 
 function isCanonicalRunnerResource(runner: string): boolean {
@@ -116,5 +175,7 @@ function configurationErrorMessage(
       return "Configure foundryScript.testing.runner as a canonical res:// resource path.";
     case "invalid_args":
       return "Configure foundryScript.testing.args as an array of strings.";
+    case "invalid_protocol_version":
+      return "Use a negotiated positive integer Foundry test adapter protocol version.";
   }
 }

@@ -2,67 +2,32 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
-  TestAdapterCapabilitiesError,
-  type NegotiatedTestAdapter,
-  parseAndNegotiateCapabilities,
-} from "./capabilities.js";
+  TestAdapterFailure,
+  type TestAdapterNegotiationRequest,
+} from "./adapter.js";
 import {
   TestAdapterConfigurationError,
-  type TestAdapterConfigurationErrorKind,
   type TestAdapterCommand,
-  createTestAdapterCapabilitiesCommand,
+  createTestAdapterDiscoveryCommand,
 } from "./command.js";
+import {
+  TestDiscoveryParseError,
+  type TestDiscoveryModel,
+  parseTestDiscovery,
+} from "./discovery.js";
 import {
   FoundryTestAdapterProcess,
   TestAdapterProcessFailure,
   type TestAdapterProcessResult,
 } from "./process.js";
-import type { TestDiscoveryParseErrorKind } from "./discovery.js";
 
-export interface TestAdapterNegotiationRequest {
-  readonly enginePath: string;
-  readonly project: string | undefined;
-  readonly runner: string;
-  readonly frameworkArgs: readonly string[];
+export interface TestAdapterDiscoveryRequest
+  extends TestAdapterNegotiationRequest {
+  readonly project: string;
+  readonly protocolVersion: number;
 }
 
-export type TestAdapterFailureKind =
-  | TestAdapterConfigurationErrorKind
-  | "malformed_capabilities"
-  | "incompatible_adapter"
-  | "process_failed"
-  | "legacy_runner"
-  | "spawn_failed"
-  | "read_failed"
-  | TestDiscoveryParseErrorKind
-  | "discovery_exit_mismatch";
-
-interface TestAdapterFailureOptions extends ErrorOptions {
-  readonly setting?: string;
-  readonly stdout?: string;
-  readonly stderr?: string;
-}
-
-export class TestAdapterFailure extends Error {
-  readonly setting: string | undefined;
-  readonly stdout: string | undefined;
-  readonly stderr: string | undefined;
-
-  constructor(
-    readonly kind: TestAdapterFailureKind,
-    message: string,
-    options: TestAdapterFailureOptions = {},
-  ) {
-    super(message, options);
-    this.name = "TestAdapterFailure";
-    this.setting = options.setting;
-    this.stdout = options.stdout;
-    this.stderr = options.stderr;
-  }
-}
-
-export interface FoundryTestAdapterNegotiatorOptions {
-  readonly clientVersions?: readonly number[];
+export interface FoundryTestAdapterDiscovererOptions {
   readonly runProcess?: (
     command: TestAdapterCommand,
     signal: AbortSignal,
@@ -74,8 +39,7 @@ export interface FoundryTestAdapterNegotiatorOptions {
   readonly temporaryRoot?: string;
 }
 
-export class FoundryTestAdapterNegotiator {
-  private readonly clientVersions;
+export class FoundryTestAdapterDiscoverer {
   private readonly runProcess;
   private readonly readArtifact;
   private readonly makeTemporaryDirectory;
@@ -83,8 +47,7 @@ export class FoundryTestAdapterNegotiator {
   private readonly onCleanupError;
   private readonly temporaryRoot;
 
-  constructor(options: FoundryTestAdapterNegotiatorOptions = {}) {
-    this.clientVersions = options.clientVersions ?? [1];
+  constructor(options: FoundryTestAdapterDiscovererOptions = {}) {
     if (options.runProcess === undefined) {
       const process = new FoundryTestAdapterProcess();
       this.runProcess = (command: TestAdapterCommand, signal: AbortSignal) =>
@@ -101,14 +64,14 @@ export class FoundryTestAdapterNegotiator {
     this.temporaryRoot = options.temporaryRoot ?? os.tmpdir();
   }
 
-  async negotiate(
-    request: TestAdapterNegotiationRequest,
+  async discover(
+    request: TestAdapterDiscoveryRequest,
     signal: AbortSignal,
-  ): Promise<NegotiatedTestAdapter> {
+  ): Promise<TestDiscoveryModel> {
     const temporaryDirectory = await this.makeTemporaryDirectory(
-      path.join(this.temporaryRoot, "foundryscript-test-adapter-"),
+      path.join(this.temporaryRoot, "foundryscript-test-discovery-"),
     );
-    const outputPath = path.join(temporaryDirectory, "capabilities.json");
+    const outputPath = path.join(temporaryDirectory, "discovery.jsonl");
     try {
       const command = this.createCommand(request, outputPath);
       const processResult = await this.run(command, signal);
@@ -116,19 +79,20 @@ export class FoundryTestAdapterNegotiator {
         throw abortError();
       }
 
-      const bytes = await this.readCapabilities(outputPath, processResult);
-      const adapter = this.parseCapabilities(bytes, processResult);
-      if (processResult.exitCode !== 0) {
+      const bytes = await this.readDiscovery(outputPath, processResult);
+      const model = this.parseDiscovery(bytes, processResult);
+      const expectedExit = model.errorCount > 0 ? 1 : 0;
+      if (processResult.exitCode !== expectedExit) {
         throw new TestAdapterFailure(
-          "process_failed",
-          `Foundry test adapter capabilities exited with exit code ${processResult.exitCode}.`,
+          "discovery_exit_mismatch",
+          `Foundry test adapter discovery exited with exit code ${String(processResult.exitCode)}; expected ${expectedExit}.`,
           {
             stdout: processResult.stdout,
             stderr: processResult.stderr,
           },
         );
       }
-      return adapter;
+      return model;
     } finally {
       try {
         await this.removeTemporaryDirectory(temporaryDirectory);
@@ -136,18 +100,18 @@ export class FoundryTestAdapterNegotiator {
         try {
           this.onCleanupError?.(error, temporaryDirectory);
         } catch {
-          // Cleanup diagnostics must never replace the negotiation outcome.
+          // Cleanup diagnostics must never replace the discovery outcome.
         }
       }
     }
   }
 
   private createCommand(
-    request: TestAdapterNegotiationRequest,
+    request: TestAdapterDiscoveryRequest,
     outputPath: string,
   ): TestAdapterCommand {
     try {
-      return createTestAdapterCapabilitiesCommand({ ...request, outputPath });
+      return createTestAdapterDiscoveryCommand({ ...request, outputPath });
     } catch (error) {
       if (!(error instanceof TestAdapterConfigurationError)) {
         throw error;
@@ -176,27 +140,19 @@ export class FoundryTestAdapterNegotiator {
     }
   }
 
-  private async readCapabilities(
+  private async readDiscovery(
     outputPath: string,
     processResult: TestAdapterProcessResult,
   ): Promise<Buffer> {
     try {
       return await this.readArtifact(outputPath);
     } catch (error) {
-      if (errorCode(error) === "ENOENT") {
-        throw new TestAdapterFailure(
-          "legacy_runner",
-          "The configured runner does not implement Foundry Test Adapter Protocol capabilities.",
-          {
-            stdout: processResult.stdout,
-            stderr: processResult.stderr,
-            cause: error,
-          },
-        );
-      }
+      const missing = errorCode(error) === "ENOENT";
       throw new TestAdapterFailure(
         "read_failed",
-        "Unable to read the Foundry test adapter capabilities artifact.",
+        missing
+          ? "The Foundry test adapter discovery artifact does not exist."
+          : "Unable to read the Foundry test adapter discovery artifact.",
         {
           stdout: processResult.stdout,
           stderr: processResult.stderr,
@@ -206,14 +162,14 @@ export class FoundryTestAdapterNegotiator {
     }
   }
 
-  private parseCapabilities(
+  private parseDiscovery(
     bytes: Buffer,
     processResult: TestAdapterProcessResult,
-  ): NegotiatedTestAdapter {
+  ): TestDiscoveryModel {
     try {
-      return parseAndNegotiateCapabilities(bytes, this.clientVersions);
+      return parseTestDiscovery(bytes);
     } catch (error) {
-      if (!(error instanceof TestAdapterCapabilitiesError)) {
+      if (!(error instanceof TestDiscoveryParseError)) {
         throw error;
       }
       throw new TestAdapterFailure(error.kind, error.message, {
@@ -233,7 +189,7 @@ function errorCode(error: unknown): string | undefined {
 }
 
 function abortError(): Error {
-  const error = new Error("Foundry test adapter negotiation was cancelled.");
+  const error = new Error("Foundry test adapter discovery was cancelled.");
   error.name = "AbortError";
   return error;
 }

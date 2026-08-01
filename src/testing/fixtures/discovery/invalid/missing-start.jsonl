@@ -1,0 +1,2 @@
+{"protocol":"foundry-test-adapter","version":1,"event":"suite","id":"suite-a","label":"MathTests","parent_id":null,"path":"res://tests/math_tests.fs","range":{"start":{"line":0,"character":0},"end":{"line":20,"character":0}},"runnable":true,"skipped":false,"skip_reason":null}
+{"protocol":"foundry-test-adapter","version":1,"event":"discovery_end","suite_count":1,"test_count":0,"error_count":0}

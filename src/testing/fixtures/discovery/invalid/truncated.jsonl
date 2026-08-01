@@ -1,0 +1,3 @@
+{"protocol":"foundry-test-adapter","version":1,"event":"discovery_start","root":"res://tests"}
+{"protocol":"foundry-test-adapter","version":1,"event":"suite","id":"suite-a","label":"MathTests","parent_id":null,"path":"res://tests/math_tests.fs","range":{"start":{"line":0,"character":0},"end":{"line":20,"character":0}},"runnable":true,"skipped":false,"skip_reason":null}
+{"protocol":"foundry-test-adapter","version":1,"event":"test","id":"test-a","label":"adds numbers","parent_id":"suite-a","path":"res://tests/math_tests.fs","range":{"start":{"line":4,"character":0},"end":{"line":6,"character":1}},"runnable":true,"skipped":false,"skip_reason":null,"case_key":null}

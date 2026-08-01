@@ -20,6 +20,7 @@ describe("testing status", () => {
           },
           extensions: ["neutral.coverage", "neutral.watch"],
         },
+        discoveryErrorCount: 0,
       }),
     ).toEqual({
       text: "$(beaker) Tests: Neutral Spec",
@@ -44,14 +45,54 @@ describe("testing status", () => {
     });
     expect(
       renderTestingState({
+        kind: "discovering",
+        adapter: {
+          protocolVersion: 1,
+          framework: { id: "neutral", name: "Neutral", version: "1" },
+          extensions: [],
+        },
+      }),
+    ).toEqual({
+      text: "$(loading~spin) Tests: Discovering",
+      tooltip: "Discovering tests with Neutral using protocol version 1.",
+    });
+    expect(
+      renderTestingState({
         kind: "ready",
         adapter: {
           protocolVersion: 1,
           framework: { id: "neutral", name: "Neutral", version: "1" },
           extensions: [],
         },
+        discoveryErrorCount: 0,
       }).tooltip,
     ).toContain("Extensions: none");
+  });
+
+  it.each([
+    { count: 1, noun: "error" },
+    { count: 3, noun: "errors" },
+  ])("renders $count represented discovery $noun", ({ count, noun }) => {
+    expect(
+      renderTestingState({
+        kind: "ready",
+        adapter: {
+          protocolVersion: 1,
+          framework: { id: "neutral", name: "Neutral", version: "1" },
+          extensions: [],
+        },
+        discoveryErrorCount: count,
+      }),
+    ).toEqual({
+      text: `$(warning) Tests: Neutral (${count} discovery ${noun})`,
+      tooltip:
+        "Framework: Neutral\n" +
+        "Framework ID: neutral\n" +
+        "Framework version: 1\n" +
+        "Protocol version: 1\n" +
+        "Extensions: none\n" +
+        `Discovery errors: ${count}`,
+    });
   });
 
   it.each([
@@ -65,6 +106,10 @@ describe("testing status", () => {
     "legacy_runner",
     "spawn_failed",
     "read_failed",
+    "invalid_protocol_version",
+    "malformed_discovery",
+    "incomplete_discovery",
+    "discovery_exit_mismatch",
   ] as TestAdapterFailureKind[])("surfaces actionable %s failures", (kind) => {
     const failure = new TestAdapterFailure(kind, `Action required for ${kind}.`);
 

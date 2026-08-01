@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { TestAdapterFailure } from "./adapter.js";
+import type { TestDiscoveryModel } from "./discovery.js";
 import {
   TestingRuntime,
   type TestingRuntimeConfiguration,
+  type TestingRuntimeOptions,
 } from "./runtime.js";
 import type { TestingState } from "./status.js";
 
@@ -24,192 +26,341 @@ const negotiatedAdapter = {
   extensions: ["neutral.coverage"],
 };
 
+const cleanModel: TestDiscoveryModel = {
+  root: "res://tests",
+  items: [],
+  suiteCount: 0,
+  testCount: 0,
+  errorCount: 0,
+};
+
 describe("testing runtime", () => {
-  it("publishes disabled without starting adapter operations", async () => {
-    const negotiate = vi.fn();
-    const onState = vi.fn<(state: TestingState) => void>();
-    const runtime = new TestingRuntime({ negotiate, onState });
+  it("publishes disabled, clears once, and starts no adapter operation", async () => {
+    const harness = createHarness();
 
-    await runtime.configure({ ...enabledConfiguration, enabled: false });
+    await harness.runtime.configure({ ...enabledConfiguration, enabled: false });
 
-    expect(negotiate).not.toHaveBeenCalled();
-    expect(onState).toHaveBeenCalledWith({ kind: "disabled" });
+    expect(harness.negotiate).not.toHaveBeenCalled();
+    expect(harness.discover).not.toHaveBeenCalled();
+    expect(harness.onClear).toHaveBeenCalledOnce();
+    expect(harness.states).toEqual([{ kind: "disabled" }]);
   });
 
-  it("publishes negotiating then complete framework metadata", async () => {
-    const onState = vi.fn<(state: TestingState) => void>();
-    const runtime = new TestingRuntime({
-      negotiate: vi.fn().mockResolvedValue(negotiatedAdapter),
-      onState,
+  it("negotiates, discovers with the selected version, and publishes in order", async () => {
+    const events: string[] = [];
+    const onDiscovery = vi.fn((project: string) => events.push(`publish:${project}`));
+    const harness = createHarness({
+      negotiate: vi.fn(() => {
+        events.push("negotiate");
+        return Promise.resolve(negotiatedAdapter);
+      }),
+      discover: vi.fn(() => {
+        events.push("discover");
+        return Promise.resolve(cleanModel);
+      }),
+      onDiscovery,
+      onState: (state) => events.push(`state:${state.kind}`),
     });
 
-    await runtime.configure(enabledConfiguration);
+    await harness.runtime.configure(enabledConfiguration);
 
-    expect(onState.mock.calls.map(([state]) => state)).toEqual([
-      { kind: "negotiating", runner: "res://tests/runner.fs" },
-      { kind: "ready", adapter: negotiatedAdapter },
+    expect(events).toEqual([
+      "state:negotiating",
+      "negotiate",
+      "state:discovering",
+      "discover",
+      "publish:/workspace/game",
+      "state:ready",
     ]);
+    expect(harness.negotiate).toHaveBeenCalledWith(
+      {
+        enginePath: "/opt/foundry",
+        project: "/workspace/game",
+        runner: "res://tests/runner.fs",
+        frameworkArgs: ["--path", "res://specs"],
+      },
+      expect.any(AbortSignal),
+    );
+    expect(harness.discover).toHaveBeenCalledWith(
+      {
+        enginePath: "/opt/foundry",
+        project: "/workspace/game",
+        runner: "res://tests/runner.fs",
+        frameworkArgs: ["--path", "res://specs"],
+        protocolVersion: 1,
+      },
+      expect.any(AbortSignal),
+    );
+    expect(onDiscovery).toHaveBeenCalledWith("/workspace/game", cleanModel);
+    expect(harness.states).toEqual([]);
   });
 
-  it("makes a stale success inert before starting the changed generation", async () => {
-    const first = deferred<typeof negotiatedAdapter>();
-    const second = deferred<typeof negotiatedAdapter>();
-    const signals: AbortSignal[] = [];
-    const negotiate = vi.fn((_request, signal: AbortSignal) => {
-      signals.push(signal);
-      return signals.length === 1 ? first.promise : second.promise;
+  it("publishes a complete empty model authoritatively", async () => {
+    const harness = createHarness();
+
+    await harness.runtime.configure(enabledConfiguration);
+
+    expect(harness.onDiscovery).toHaveBeenCalledWith(
+      "/workspace/game",
+      cleanModel,
+    );
+    expect(harness.states.at(-1)).toEqual({
+      kind: "ready",
+      adapter: negotiatedAdapter,
+      discoveryErrorCount: 0,
     });
-    const states: TestingState[] = [];
-    const runtime = new TestingRuntime({
-      negotiate,
-      onState: (state) => states.push(state),
+  });
+
+  it("publishes complete discovery with represented errors as ready", async () => {
+    const errorModel = { ...cleanModel, errorCount: 2 };
+    const harness = createHarness({
+      discover: vi.fn().mockResolvedValue(errorModel),
     });
-    const firstConfigure = runtime.configure(enabledConfiguration);
-    const secondConfigure = runtime.configure({
+
+    await harness.runtime.configure(enabledConfiguration);
+
+    expect(harness.onDiscovery).toHaveBeenCalledWith(
+      "/workspace/game",
+      errorModel,
+    );
+    expect(harness.states.at(-1)).toEqual({
+      kind: "ready",
+      adapter: negotiatedAdapter,
+      discoveryErrorCount: 2,
+    });
+  });
+
+  it.each([
+    "malformed_discovery",
+    "incomplete_discovery",
+    "discovery_exit_mismatch",
+  ] as const)("retains the prior tree after %s", async (kind) => {
+    const failure = new TestAdapterFailure(kind, `Discovery failed: ${kind}`);
+    const harness = createHarness({
+      discover: vi.fn().mockRejectedValue(failure),
+    });
+
+    await harness.runtime.configure(enabledConfiguration);
+
+    expect(harness.onDiscovery).not.toHaveBeenCalled();
+    expect(harness.onClear).not.toHaveBeenCalled();
+    expect(harness.states.at(-1)).toEqual({ kind: "error", failure });
+  });
+
+  it("makes stale discovery success inert before starting the changed generation", async () => {
+    const first = deferred<TestDiscoveryModel>();
+    const second = deferred<TestDiscoveryModel>();
+    const discoverySignals: AbortSignal[] = [];
+    const discover = vi.fn((_request, signal: AbortSignal) => {
+      discoverySignals.push(signal);
+      return discoverySignals.length === 1 ? first.promise : second.promise;
+    });
+    const harness = createHarness({ discover });
+    const firstConfigure = harness.runtime.configure(enabledConfiguration);
+    await vi.waitFor(() => expect(discover).toHaveBeenCalledOnce());
+
+    const secondConfigure = harness.runtime.configure({
       ...enabledConfiguration,
       runner: "res://tests/changed.fs",
     });
-
-    expect(signals[0]?.aborted).toBe(true);
-    first.resolve(negotiatedAdapter);
+    expect(discoverySignals[0]?.aborted).toBe(true);
+    first.resolve(cleanModel);
     await firstConfigure;
-    await Promise.resolve();
-    expect(negotiate).toHaveBeenCalledTimes(2);
-    second.resolve({
-      ...negotiatedAdapter,
-      framework: { ...negotiatedAdapter.framework, name: "Changed" },
-    });
+    await vi.waitFor(() => expect(discover).toHaveBeenCalledTimes(2));
+    second.resolve(cleanModel);
     await secondConfigure;
 
-    expect(states.filter((state) => state.kind === "ready")).toEqual([
-      {
-        kind: "ready",
-        adapter: {
-          ...negotiatedAdapter,
-          framework: { ...negotiatedAdapter.framework, name: "Changed" },
-        },
-      },
-    ]);
+    expect(harness.onDiscovery).toHaveBeenCalledOnce();
+    expect(harness.onDiscovery).toHaveBeenCalledWith(
+      "/workspace/game",
+      cleanModel,
+    );
+    expect(harness.states.filter((state) => state.kind === "ready")).toHaveLength(1);
   });
 
-  it("makes a stale failure inert", async () => {
-    const first = deferred<typeof negotiatedAdapter>();
-    const second = deferred<typeof negotiatedAdapter>();
-    let call = 0;
-    const states: TestingState[] = [];
-    const runtime = new TestingRuntime({
-      negotiate: () => (call++ === 0 ? first.promise : second.promise),
-      onState: (state) => states.push(state),
-    });
-    const firstConfigure = runtime.configure(enabledConfiguration);
-    const secondConfigure = runtime.configure({
+  it("makes stale discovery failure inert", async () => {
+    const first = deferred<TestDiscoveryModel>();
+    const second = deferred<TestDiscoveryModel>();
+    const discover = vi
+      .fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+    const harness = createHarness({ discover });
+    const firstConfigure = harness.runtime.configure(enabledConfiguration);
+    await vi.waitFor(() => expect(discover).toHaveBeenCalledOnce());
+    const secondConfigure = harness.runtime.configure({
       ...enabledConfiguration,
       frameworkArgs: ["--changed"],
     });
 
-    first.reject(new TestAdapterFailure("process_failed", "stale failure"));
+    first.reject(new TestAdapterFailure("process_failed", "stale"));
     await firstConfigure;
-    await Promise.resolve();
-    second.resolve(negotiatedAdapter);
+    await vi.waitFor(() => expect(discover).toHaveBeenCalledTimes(2));
+    second.resolve(cleanModel);
     await secondConfigure;
 
-    expect(states.some((state) => state.kind === "error")).toBe(false);
-    expect(states.at(-1)).toEqual({ kind: "ready", adapter: negotiatedAdapter });
+    expect(harness.states.some((state) => state.kind === "error")).toBe(false);
+    expect(harness.onDiscovery).toHaveBeenCalledOnce();
   });
 
-  it("does not restart identical completed configuration", async () => {
-    const negotiate = vi.fn().mockResolvedValue(negotiatedAdapter);
-    const onState = vi.fn<(state: TestingState) => void>();
-    const runtime = new TestingRuntime({ negotiate, onState });
+  it("refreshes an unchanged enabled configuration", async () => {
+    const harness = createHarness();
+    await harness.runtime.configure(enabledConfiguration);
 
-    await runtime.configure(enabledConfiguration);
-    await runtime.configure({
+    await harness.runtime.refresh();
+
+    expect(harness.negotiate).toHaveBeenCalledTimes(2);
+    expect(harness.discover).toHaveBeenCalledTimes(2);
+    expect(harness.onDiscovery).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not refresh before configuration or while disabled", async () => {
+    const harness = createHarness();
+    await harness.runtime.refresh();
+    await harness.runtime.configure({ ...enabledConfiguration, enabled: false });
+    await harness.runtime.refresh();
+
+    expect(harness.negotiate).not.toHaveBeenCalled();
+    expect(harness.discover).not.toHaveBeenCalled();
+  });
+
+  it("does not restart identical configuration without an explicit refresh", async () => {
+    const harness = createHarness();
+    await harness.runtime.configure(enabledConfiguration);
+    await harness.runtime.configure({
       ...enabledConfiguration,
       frameworkArgs: [...enabledConfiguration.frameworkArgs],
     });
 
-    expect(negotiate).toHaveBeenCalledOnce();
-    expect(onState).toHaveBeenCalledTimes(2);
+    expect(harness.negotiate).toHaveBeenCalledOnce();
+    expect(harness.discover).toHaveBeenCalledOnce();
   });
 
-  it("publishes disabled immediately and cancels the active generation", async () => {
-    const operation = deferred<typeof negotiatedAdapter>();
-    let signal: AbortSignal | undefined;
-    const states: TestingState[] = [];
-    const runtime = new TestingRuntime({
-      negotiate: (_request, operationSignal) => {
-        signal = operationSignal;
+  it("disables immediately, clears once, and cancels active discovery", async () => {
+    const operation = deferred<TestDiscoveryModel>();
+    let discoverySignal: AbortSignal | undefined;
+    const harness = createHarness({
+      discover: (_request, signal) => {
+        discoverySignal = signal;
         return operation.promise;
       },
-      onState: (state) => states.push(state),
     });
-    const configure = runtime.configure(enabledConfiguration);
+    const configure = harness.runtime.configure(enabledConfiguration);
+    await vi.waitFor(() => expect(discoverySignal).toBeDefined());
 
-    const disable = runtime.configure({ ...enabledConfiguration, enabled: false });
+    const disable = harness.runtime.configure({
+      ...enabledConfiguration,
+      enabled: false,
+    });
 
-    expect(states.at(-1)).toEqual({ kind: "disabled" });
-    expect(signal?.aborted).toBe(true);
+    expect(harness.states.at(-1)).toEqual({ kind: "disabled" });
+    expect(harness.onClear).toHaveBeenCalledOnce();
+    expect(discoverySignal?.aborted).toBe(true);
     operation.reject(abortError());
     await Promise.all([configure, disable]);
-    expect(states.some((state) => state.kind === "error")).toBe(false);
+    expect(harness.states.some((state) => state.kind === "error")).toBe(false);
   });
 
-  it("publishes actionable negotiation failures", async () => {
+  it("does not present discovery cancellation as an adapter error", async () => {
+    const harness = createHarness({
+      discover: vi.fn().mockRejectedValue(abortError()),
+    });
+
+    await harness.runtime.configure(enabledConfiguration);
+
+    expect(harness.onDiscovery).not.toHaveBeenCalled();
+    expect(harness.states.map((state) => state.kind)).toEqual([
+      "negotiating",
+      "discovering",
+    ]);
+  });
+
+  it("publishes negotiation failure without starting discovery", async () => {
     const failure = new TestAdapterFailure(
       "incompatible_adapter",
       "No shared version.",
     );
-    const states: TestingState[] = [];
-    const runtime = new TestingRuntime({
+    const harness = createHarness({
       negotiate: vi.fn().mockRejectedValue(failure),
-      onState: (state) => states.push(state),
     });
 
-    await runtime.configure(enabledConfiguration);
+    await harness.runtime.configure(enabledConfiguration);
 
-    expect(states.at(-1)).toEqual({ kind: "error", failure });
-  });
-
-  it("does not present internal cancellation as an adapter error", async () => {
-    const states: TestingState[] = [];
-    const runtime = new TestingRuntime({
-      negotiate: vi.fn().mockRejectedValue(abortError()),
-      onState: (state) => states.push(state),
-    });
-
-    await runtime.configure(enabledConfiguration);
-
-    expect(states).toEqual([
-      { kind: "negotiating", runner: "res://tests/runner.fs" },
-    ]);
+    expect(harness.discover).not.toHaveBeenCalled();
+    expect(harness.states.at(-1)).toEqual({ kind: "error", failure });
   });
 
   it("stops idempotently and leaves later completion inert", async () => {
-    const operation = deferred<typeof negotiatedAdapter>();
-    let signal: AbortSignal | undefined;
-    const states: TestingState[] = [];
-    const runtime = new TestingRuntime({
-      negotiate: (_request, operationSignal) => {
-        signal = operationSignal;
+    const operation = deferred<TestDiscoveryModel>();
+    let discoverySignal: AbortSignal | undefined;
+    const harness = createHarness({
+      discover: (_request, signal) => {
+        discoverySignal = signal;
         return operation.promise;
       },
-      onState: (state) => states.push(state),
     });
-    const configure = runtime.configure(enabledConfiguration);
+    const configure = harness.runtime.configure(enabledConfiguration);
+    await vi.waitFor(() => expect(discoverySignal).toBeDefined());
 
-    const firstStop = runtime.stop();
-    const secondStop = runtime.stop();
-    expect(signal?.aborted).toBe(true);
-    operation.resolve(negotiatedAdapter);
+    const firstStop = harness.runtime.stop();
+    const secondStop = harness.runtime.stop();
+    expect(firstStop).toBe(secondStop);
+    expect(discoverySignal?.aborted).toBe(true);
+    operation.resolve(cleanModel);
     await Promise.all([configure, firstStop, secondStop]);
 
-    expect(states.at(-1)).toEqual({ kind: "disabled" });
-    expect(states.filter((state) => state.kind === "disabled")).toHaveLength(1);
-    expect(states.some((state) => state.kind === "ready")).toBe(false);
-    await runtime.configure(enabledConfiguration);
-    expect(states.at(-1)).toEqual({ kind: "disabled" });
+    expect(harness.states.at(-1)).toEqual({ kind: "disabled" });
+    expect(harness.states.filter((state) => state.kind === "disabled")).toHaveLength(1);
+    expect(harness.onDiscovery).not.toHaveBeenCalled();
+    await harness.runtime.configure(enabledConfiguration);
+    expect(harness.negotiate).toHaveBeenCalledOnce();
   });
 });
+
+interface RuntimeHarness {
+  readonly runtime: TestingRuntime;
+  readonly negotiate: ReturnType<typeof vi.fn>;
+  readonly discover: ReturnType<typeof vi.fn>;
+  readonly onDiscovery: ReturnType<typeof vi.fn>;
+  readonly onClear: ReturnType<typeof vi.fn>;
+  readonly states: TestingState[];
+}
+
+function createHarness(overrides: Partial<TestingRuntimeOptions> = {}): RuntimeHarness {
+  const states: TestingState[] = [];
+  const negotiate = vi.fn().mockResolvedValue(negotiatedAdapter);
+  const discover = vi.fn().mockResolvedValue(cleanModel);
+  const onDiscovery = vi.fn();
+  const onClear = vi.fn();
+  const runtime = new TestingRuntime({
+    negotiate,
+    discover,
+    onDiscovery,
+    onClear,
+    onState: (state) => states.push(state),
+    ...overrides,
+  });
+  return {
+    runtime,
+    negotiate:
+      overrides.negotiate === undefined
+        ? negotiate
+        : (overrides.negotiate as ReturnType<typeof vi.fn>),
+    discover:
+      overrides.discover === undefined
+        ? discover
+        : (overrides.discover as ReturnType<typeof vi.fn>),
+    onDiscovery:
+      overrides.onDiscovery === undefined
+        ? onDiscovery
+        : (overrides.onDiscovery as ReturnType<typeof vi.fn>),
+    onClear:
+      overrides.onClear === undefined
+        ? onClear
+        : (overrides.onClear as ReturnType<typeof vi.fn>),
+    states,
+  };
+}
 
 function deferred<T>(): {
   promise: Promise<T>;

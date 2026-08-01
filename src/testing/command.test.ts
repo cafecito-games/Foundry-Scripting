@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   TestAdapterConfigurationError,
   createTestAdapterCapabilitiesCommand,
+  createTestAdapterDiscoveryCommand,
 } from "./command.js";
 
 const baseRequest = {
@@ -145,6 +146,105 @@ describe("test adapter capabilities command", () => {
     });
     expect(error.message).toContain("array of strings");
   });
+});
+
+describe("test adapter discovery command", () => {
+  const discoveryRequest = {
+    ...baseRequest,
+    protocolVersion: 1,
+    outputPath: "/tmp/discovery.jsonl",
+  };
+
+  it("places the negotiated version and opaque arguments after reserved options", () => {
+    const command = createTestAdapterDiscoveryCommand({
+      ...discoveryRequest,
+      frameworkArgs: ["--path", "res://specs", "--output", "opaque"],
+    });
+
+    expect(command).toEqual({
+      command: "/opt/foundry",
+      cwd: "/workspace/game",
+      args: [
+        "--headless",
+        "--no-header",
+        "project",
+        "test",
+        "--project",
+        "/workspace/game",
+        "--runner",
+        "res://tests/runner.fs",
+        "--",
+        "adapter",
+        "discover",
+        "--protocol-version",
+        "1",
+        "--output",
+        "/tmp/discovery.jsonl",
+        "--",
+        "--path",
+        "res://specs",
+        "--output",
+        "opaque",
+      ],
+    });
+  });
+
+  it("omits only the adapter-level boundary when framework arguments are empty", () => {
+    const command = createTestAdapterDiscoveryCommand(discoveryRequest);
+
+    expect(command.args).toEqual([
+      "--headless",
+      "--no-header",
+      "project",
+      "test",
+      "--project",
+      "/workspace/game",
+      "--runner",
+      "res://tests/runner.fs",
+      "--",
+      "adapter",
+      "discover",
+      "--protocol-version",
+      "1",
+      "--output",
+      "/tmp/discovery.jsonl",
+    ]);
+  });
+
+  it("preserves empty and option-looking framework values exactly", () => {
+    const command = createTestAdapterDiscoveryCommand({
+      ...discoveryRequest,
+      frameworkArgs: ["", "--", "--protocol-version", "99"],
+    });
+
+    expect(command.args.slice(-5)).toEqual([
+      "--",
+      "",
+      "--",
+      "--protocol-version",
+      "99",
+    ]);
+  });
+
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects invalid protocol version %s",
+    (protocolVersion) => {
+      const error = captureConfigurationError(() =>
+        createTestAdapterDiscoveryCommand({
+          ...discoveryRequest,
+          protocolVersion,
+        }),
+      );
+
+      expect(error).toMatchObject({
+        kind: "invalid_protocol_version",
+        setting: undefined,
+      });
+      expect(error.message).toBe(
+        "Use a negotiated positive integer Foundry test adapter protocol version.",
+      );
+    },
+  );
 });
 
 function captureConfigurationError(

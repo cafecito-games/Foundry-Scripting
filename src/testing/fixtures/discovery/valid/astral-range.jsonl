@@ -1,0 +1,4 @@
+{"protocol":"foundry-test-adapter","version":1,"event":"discovery_start","root":"res://tests"}
+{"protocol":"foundry-test-adapter","version":1,"event":"suite","id":"suite-astral","label":"Emoji \ud83d\ude00 suite","parent_id":null,"path":"res://tests/emoji_tests.fs","range":{"start":{"line":0,"character":0},"end":{"line":20,"character":0}},"runnable":true,"skipped":false,"skip_reason":null}
+{"protocol":"foundry-test-adapter","version":1,"event":"test","id":"test-astral","label":"\ud83d\ude00 handles astral text","parent_id":"suite-astral","path":"res://tests/emoji_tests.fs","range":{"start":{"line":3,"character":2},"end":{"line":3,"character":30}},"runnable":true,"skipped":false,"skip_reason":null,"case_key":null}
+{"protocol":"foundry-test-adapter","version":1,"event":"discovery_end","suite_count":1,"test_count":1,"error_count":0}
