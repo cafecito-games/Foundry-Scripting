@@ -5,7 +5,7 @@ var a = "hello\n"
 #             ^^ constant.character.escape.foundryscript
 
 var b = 'single'
-#       ^^^^^^^^ string.quoted.foundryscript
+#       ^^^^^^^^ string.quoted.single.foundryscript
 
 var c = &"string_name"
 #       ^ storage.type.string.foundryscript
@@ -15,7 +15,7 @@ var d = ^"Node/Path"
 
 var e = r"raw\nnot_escape"
 #       ^ storage.type.string.foundryscript
-#             ^^ string.quoted.raw.foundryscript
+#             ^^ string.quoted.double.raw.foundryscript
 
 var f = """triple quoted"""
 #       ^^^ punctuation.definition.string.begin.foundryscript
@@ -24,7 +24,7 @@ var g = '''triple single'''
 #       ^^^ punctuation.definition.string.begin.foundryscript
 
 var h = "bad \q escape"
-#            ^^ invalid.illegal.unknown-escape.foundryscript
+#            ^^ string.quoted.double.foundryscript
 
 var bad = "unterminated
 var after = 1
@@ -32,7 +32,7 @@ var after = 1
 
 var cont = "a\
 b"
-# <- string.quoted.foundryscript
+# <- string.quoted.double.foundryscript
 
 var rawc = r"a\
 var after2 = 1

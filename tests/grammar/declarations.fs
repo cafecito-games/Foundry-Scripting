@@ -1,10 +1,10 @@
 # SYNTAX TEST "source.foundryscript"
 
 namespace Game.Combat
-#         ^^^^^^^^^^^ entity.name.namespace.foundryscript
+#         ^^^^^^^^^^^ entity.name.type.foundryscript
 
 import Game.Entities
-#      ^^^^^^^^^^^^^ entity.name.namespace.foundryscript
+#      ^^^^^^^^^^^^^ entity.name.type.foundryscript
 
 class_name Player
 #          ^^^^^^ entity.name.type.foundryscript
@@ -23,13 +23,13 @@ uses Damageable
 
 func take_damage(amount: int) -> void:
 #    ^^^^^^^^^^^ entity.name.function.foundryscript
-#                        ^^^ support.type.builtin.foundryscript
+#                                ^^^^ storage.type.void.foundryscript
 
 var items: Array = []
-#          ^^^^^ support.type.builtin.foundryscript
+#          ^^^^^ entity.name.type.foundryscript
 
 extends "res://base.fs"
-# <- storage.modifier.foundryscript
+# <- storage.modifier.extends.foundryscript
 #       ^ punctuation.definition.string.begin.foundryscript
 
 class_name Player extends Node2D
@@ -38,9 +38,7 @@ class_name Player extends Node2D
 
 func f() -> Dictionary[String, int]:
 #    ^ entity.name.function.foundryscript
-#           ^^^^^^^^^^ support.type.builtin.foundryscript
-#                      ^^^^^^ support.type.builtin.foundryscript
-#                              ^^^ support.type.builtin.foundryscript
+#           ^^^^^^^^^^ entity.name.type.foundryscript
 
 var v: Vector4 = null
-#      ^^^^^^^ support.type.builtin.foundryscript
+#      ^^^^^^^ entity.name.type.foundryscript

@@ -1,28 +1,28 @@
 # SYNTAX TEST "source.foundryscript"
 
 if health <= 0:
-# <- keyword.control.foundryscript
+# <- keyword.control.conditional.foundryscript
 
 while running:
-# <- keyword.control.foundryscript
+# <- keyword.control.loop.while.foundryscript
 
 await coroutine
-# <- keyword.control.foundryscript
+# <- keyword.control.flow.await.foundryscript
 
 func take_damage():
-# <- keyword.declaration.foundryscript
+# <- storage.type.function.foundryscript
 
 var health = 0
-# <- keyword.declaration.foundryscript
+# <- storage.type.var.foundryscript
 
 static func helper():
 # <- storage.modifier.foundryscript
 
 var is_ready = a and b
-#                ^^^ keyword.operator.word.foundryscript
+#                ^^^ keyword.operator.logical.foundryscript
 
 var check = value is int
-#                 ^^ keyword.operator.word.foundryscript
+#                 ^^ keyword.operator.expression.is.foundryscript
 
 var t = true
 #       ^^^^ constant.language.foundryscript

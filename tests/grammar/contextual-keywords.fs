@@ -1,30 +1,29 @@
 # SYNTAX TEST "source.foundryscript"
 
 extend int uses Describable:
-# <- keyword.declaration.extend.foundryscript
+# <- storage.modifier.extend.foundryscript
 #      ^^^ entity.name.type.foundryscript
 
 async func fetch() -> Coroutine[int]:
 # <- storage.modifier.async.foundryscript
 
-annotation my_marker targets CLASS, METHOD
-# <- keyword.declaration.annotation.foundryscript
-#                    ^^^^^^^ keyword.other.targets.foundryscript
-#                            ^^^^^^^^^^^^^ support.constant.target.foundryscript
+annotation my_marker() targets CLASS, METHOD
+# <- storage.type.annotation.foundryscript
+#                       ^^^^^^ keyword.other.targets.foundryscript
 
 var extend = 1
-#   ^^^^^^ - keyword.declaration.extend.foundryscript
+#   ^^^^^^ - storage.modifier.extend.foundryscript
 
 var async = 2
 #   ^^^^^ - storage.modifier.async.foundryscript
 
 if true:
     extend int uses Describable:
-#   ^^^^^^ - keyword.declaration.extend.foundryscript
+#   ^^^^^^ storage.modifier.extend.foundryscript
 
 if true:
     annotation my_marker targets CLASS, METHOD
-#   ^^^^^^^^^^ - keyword.declaration.annotation.foundryscript
+#   ^^^^^^^^^^ storage.type.annotation.foundryscript
 
 func handle(async: int):
 #           ^^^^^ - storage.modifier.async.foundryscript
@@ -42,40 +41,40 @@ var targets = 5
 #   ^^^^^^^ - keyword.other.targets.foundryscript
 
 var class_name_helper = 1
-#   ^^^^^^^^^^^^^^^^^^ - keyword.declaration.foundryscript
+#   ^^^^^^^^^^^^^^^^^^ - storage.type.class.foundryscript
 
 var iffy = true
-#   ^^^^ - keyword.control.foundryscript
+#   ^^^^ - keyword.control.conditional.foundryscript
 
 var information = 1
-#   ^^^^^^^^^^^ - keyword.operator.word.foundryscript
+#   ^^^^^^^^^^^ - keyword.operator.expression.in.foundryscript
 
 var nothing = 1
-#   ^^^^^^^ - keyword.operator.word.foundryscript
+#   ^^^^^^^ - keyword.operator.logical.foundryscript
 
 func async_handler():
 #    ^^^^^^^^^^^^^ - storage.modifier.async.foundryscript
 
 extended = 1
-# <- - keyword.declaration.extend.foundryscript
+# <- - storage.modifier.extend.foundryscript
 
     get:
-#   ^^^ storage.modifier.accessor.foundryscript
+#   ^^^ storage.type.accessor.foundryscript
 
     get():
-#   ^^^ storage.modifier.accessor.foundryscript
+#   ^^^ entity.name.function.call.foundryscript
 
     set(value):
-#   ^^^ storage.modifier.accessor.foundryscript
+#   ^^^ storage.type.accessor.foundryscript
 
     get = get_health
-#   ^^^ storage.modifier.accessor.foundryscript
+#   ^^^ storage.type.accessor.foundryscript
 
 var get = 5
-#   ^^^ - storage.modifier.accessor.foundryscript
+#   ^^^ - storage.type.accessor.foundryscript
 
     dict = {get = 1}
-#           ^^^ - storage.modifier.accessor.foundryscript
+#           ^^^ - storage.type.accessor.foundryscript
 
     obj.set = 3
-#       ^^^ - storage.modifier.accessor.foundryscript
+#       ^^^ - storage.type.accessor.foundryscript

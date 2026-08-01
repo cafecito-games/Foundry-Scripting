@@ -1,36 +1,47 @@
 # SYNTAX TEST "source.foundryscript"
 
 var sprite = $Sprite2D
-#            ^ keyword.operator.getnode.foundryscript
-#             ^^^^^^^^ variable.other.nodepath.foundryscript
+#            ^ meta.node-path.foundryscript punctuation.definition.node.foundryscript
+#             ^^^^^^^^ meta.node-path.foundryscript variable.other.node.foundryscript
 
 var child = $Enemy/Health
-#            ^^^^^^^^^^^^ variable.other.nodepath.foundryscript
+#           ^ meta.node-path.foundryscript punctuation.definition.node.foundryscript
+#            ^^^^^ meta.node-path.foundryscript variable.other.node.foundryscript
+#                 ^ meta.node-path.foundryscript punctuation.separator.node.foundryscript
+#                  ^^^^^^ meta.node-path.foundryscript variable.other.node.foundryscript
 
 var unique = %HealthBar
-#            ^ keyword.operator.getnode.foundryscript
+#            ^ meta.node-path.foundryscript punctuation.definition.node.foundryscript
+#             ^^^^^^^^^ meta.node-path.foundryscript variable.other.node.foundryscript
 
 var quoted = $"Some Node/Child"
-#            ^ keyword.operator.getnode.foundryscript
-#             ^ punctuation.definition.string.begin.foundryscript
+#            ^ meta.node-path.foundryscript punctuation.definition.node.foundryscript
+#             ^^^^^^^^^^^^^^^^^ meta.node-path.foundryscript string.quoted.node.foundryscript
 
 var e = $Player/for
-#               ^^^ - keyword.control.foundryscript
+#               ^^^ - keyword.control.loop.for.foundryscript
 
 var g = $Node/class
-#             ^^^^^ - keyword.declaration.foundryscript
+#             ^^^^^ - storage.type.class.foundryscript
 
 var h = %Unique/match
-#               ^^^^^ - keyword.control.foundryscript
+#               ^^^^^ - keyword.control.match.foundryscript
 
 var b = x%y
-#        ^ - keyword.operator.getnode.foundryscript
+#        ^ keyword.operator.arithmetic.foundryscript
+#        ^ - punctuation.definition.node.foundryscript
 
 var b = arr[0]%n
-#             ^ - keyword.operator.getnode.foundryscript
+#             ^ keyword.operator.arithmetic.foundryscript
+#             ^ - punctuation.definition.node.foundryscript
 
 var u = %Unique
-#       ^ keyword.operator.getnode.foundryscript
+#       ^ meta.node-path.foundryscript punctuation.definition.node.foundryscript
+#        ^^^^^^ meta.node-path.foundryscript variable.other.node.foundryscript
 
 var u = $%Unique/child
-#        ^^^^^^^^^^^^^ variable.other.nodepath.foundryscript
+#       ^ meta.node-path.foundryscript punctuation.definition.node.foundryscript
+#        ^ meta.node-path.foundryscript punctuation.definition.node.unique.foundryscript
+#         ^^^^^^ meta.node-path.foundryscript variable.other.node.foundryscript
+#               ^ meta.node-path.foundryscript punctuation.separator.node.foundryscript
+#                ^^^^^ meta.node-path.foundryscript variable.other.node.foundryscript
