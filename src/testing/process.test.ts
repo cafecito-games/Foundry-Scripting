@@ -72,6 +72,36 @@ describe("Foundry test adapter child process", () => {
     ]);
   });
 
+  it("notifies constructor and run-scoped output observers without changing buffers", async () => {
+    const child = new FakeChildProcess();
+    const sharedOutput = vi.fn();
+    const runOutput = vi.fn();
+    const process = new FoundryTestAdapterProcess({
+      spawnProcess: () => child.asChildProcess(),
+      onOutput: sharedOutput,
+    });
+    const resultPromise = process.run(
+      command,
+      new AbortController().signal,
+      runOutput,
+    );
+
+    child.stdout.write("application output\n");
+    child.stderr.write("application error\n");
+    await Promise.resolve();
+    child.complete(0);
+
+    await expect(resultPromise).resolves.toMatchObject({
+      stdout: "application output\n",
+      stderr: "application error\n",
+    });
+    expect(sharedOutput.mock.calls).toEqual(runOutput.mock.calls);
+    expect(runOutput.mock.calls).toEqual([
+      ["application output\n", "stdout"],
+      ["application error\n", "stderr"],
+    ]);
+  });
+
   it.each(["ENOENT", "EACCES", "ENOTDIR", "ERR_INVALID_ARG_VALUE"])(
     "maps synchronous %s process creation errors to missing engine",
     async (code) => {

@@ -54,6 +54,7 @@ export class FoundryTestAdapterProcess {
   run(
     command: TestAdapterCommand,
     signal: AbortSignal,
+    onOutput?: (text: string, stream: "stdout" | "stderr") => void,
   ): Promise<TestAdapterProcessResult> {
     if (signal.aborted) {
       return Promise.resolve(cancelledResult("", ""));
@@ -82,11 +83,13 @@ export class FoundryTestAdapterProcess {
         const text = data.toString();
         stdout += text;
         this.onOutput?.(text, "stdout");
+        onOutput?.(text, "stdout");
       };
       const onStderr = (data: Buffer | string): void => {
         const text = data.toString();
         stderr += text;
         this.onOutput?.(text, "stderr");
+        onOutput?.(text, "stderr");
       };
       const cleanup = (): void => {
         signal.removeEventListener("abort", onAbort);

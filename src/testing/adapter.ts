@@ -34,6 +34,10 @@ export type TestAdapterFailureKind =
   | "legacy_runner"
   | "spawn_failed"
   | "read_failed"
+  | "report_read_failed"
+  | "malformed_report"
+  | "incomplete_report"
+  | "report_exit_mismatch"
   | TestDiscoveryParseErrorKind
   | "discovery_exit_mismatch";
 
