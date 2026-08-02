@@ -471,7 +471,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   registerFoundryScriptDebugRuntime(context, {
     resolveProject,
     getCoordinator: () => activeToolingHostCoordinator,
-    getMode: () => settings.mode,
+    getMode: () => readConnectionSettings().mode,
     output: debugOutput,
   });
   const outputChannel = vscode.window.createOutputChannel("FoundryScript LSP");
