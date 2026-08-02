@@ -9,7 +9,10 @@ import {
 } from "./client/connection-status.js";
 import { HostStartupFailure } from "./client/host-launcher.js";
 import { writeLog } from "./client/logging.js";
-import { createConnectionManager } from "./client/runtime.js";
+import {
+  createConnectionManager,
+  createToolingHostCoordinator,
+} from "./client/runtime.js";
 import { createDiagnosticsUnit } from "./diagnostics/index.js";
 import { registerFoundryScriptDebugConfigurationProvider } from "./debug/runtime.js";
 import type { ProjectResolutionFailure } from "./project/resolver.js";
@@ -39,8 +42,10 @@ import {
   TestingStatusController,
   type TestingState,
 } from "./testing/status.js";
+import type { ToolingHostCoordinator } from "./tooling/coordinator.js";
 
 let activeConnectionManager: ConnectionManager | undefined;
+let activeToolingHostCoordinator: ToolingHostCoordinator | undefined;
 interface ActiveTestingLifecycle {
   readonly stop: () => Promise<void>;
 }
@@ -60,6 +65,7 @@ function readConnectionSettings(): ConnectionSettings {
   return {
     mode: configuration.get("lsp.mode", "spawn"),
     port: configuration.get("lsp.port", 6005),
+    dapPort: configuration.get("dap.port", 6006),
     enginePath: configuration.get("enginePath", "foundry"),
   };
 }
@@ -511,16 +517,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   }
   const project = resolution.project;
 
+  const coordinator = createToolingHostCoordinator(outputChannel);
   const manager = createConnectionManager(
     outputChannel,
     project,
     (state) => statusController.update(state),
     diagnostics,
+    coordinator,
   );
+  activeToolingHostCoordinator = coordinator;
   activeConnectionManager = manager;
   context.subscriptions.push({
     dispose: () => {
-      void manager.stop();
+      void manager.stop().finally(() => coordinator.dispose());
     },
   });
 
@@ -546,8 +555,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
 export async function deactivate(): Promise<void> {
   const manager = activeConnectionManager;
+  const coordinator = activeToolingHostCoordinator;
   const testingLifecycle = activeTestingLifecycle;
   activeConnectionManager = undefined;
+  activeToolingHostCoordinator = undefined;
   activeTestingLifecycle = undefined;
-  await Promise.all([manager?.stop(), testingLifecycle?.stop()]);
+  try {
+    await Promise.all([manager?.stop(), testingLifecycle?.stop()]);
+  } finally {
+    await coordinator?.dispose();
+  }
 }

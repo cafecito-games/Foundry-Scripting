@@ -4,10 +4,13 @@ import {
   ConnectionManager,
   type ConnectionState,
   type LanguageClientHandle,
-  type OwnedToolingHost,
-  type ToolingHostLauncher,
 } from "./connection-manager.js";
 import type { TcpEndpoint } from "./transport.js";
+import {
+  ToolingHostCoordinator,
+  type OwnedToolingHost,
+  type ToolingHostLauncher,
+} from "../tooling/coordinator.js";
 
 interface TestClient extends LanguageClientHandle {
   start: ReturnType<typeof vi.fn>;
@@ -42,7 +45,9 @@ function createSuccessfulClient(): TestClient {
 
 function createHost(lspPort = 49152): OwnedToolingHost & {
   stop: ReturnType<typeof vi.fn>;
+  exit: (code?: number | null) => void;
 } {
+  const exitListeners = new Set<(code: number | null) => void>();
   return {
     readiness: {
       project: "/workspace/game",
@@ -53,6 +58,13 @@ function createHost(lspPort = 49152): OwnedToolingHost & {
       dapPort: lspPort + 1,
     },
     stop: vi.fn().mockResolvedValue(undefined),
+    onExit: (listener) => {
+      exitListeners.add(listener);
+      return { dispose: () => exitListeners.delete(listener) };
+    },
+    exit: (code = 1) => {
+      for (const listener of exitListeners) listener(code);
+    },
   };
 }
 
@@ -83,6 +95,7 @@ describe("connection modes", () => {
   const output = { appendLine: vi.fn() };
   let launchHost: ReturnType<typeof vi.fn>;
   let launcher: ToolingHostLauncher;
+  let coordinator: ToolingHostCoordinator;
 
   beforeEach(() => {
     endpoints.length = 0;
@@ -91,6 +104,7 @@ describe("connection modes", () => {
     output.appendLine.mockClear();
     launchHost = vi.fn();
     launcher = { launch: launchHost };
+    coordinator = new ToolingHostCoordinator({ launcher });
   });
 
   afterEach(() => {
@@ -108,7 +122,7 @@ describe("connection modes", () => {
         clients.push(client);
         return client;
       },
-      launcher,
+      coordinator,
       onStateChange: (state) => states.push(state),
       output,
     });
@@ -141,10 +155,10 @@ describe("connection modes", () => {
     expect(client.start).toHaveBeenCalledOnce();
     expect(client.stop).toHaveBeenCalledOnce();
     expect(launchHost).not.toHaveBeenCalled();
-    expect(manager.ownedToolingHost).toBeUndefined();
+    expect(coordinator.state).toMatchObject({ kind: "ready-external" });
   });
 
-  it("spawn connects to one owned host and terminates it on stop", async () => {
+  it("spawn connects to one coordinator-owned host without terminating it on LSP stop", async () => {
     const client = createSuccessfulClient();
     const host = createHost(49152);
     launchHost.mockResolvedValue(host);
@@ -164,11 +178,16 @@ describe("connection modes", () => {
       project: "/workspace/game",
     }));
     expect(endpoints).toEqual([{ host: "127.0.0.1", port: 49152 }]);
-    expect(manager.ownedToolingHost).toEqual(host.readiness);
+    expect(coordinator.state).toMatchObject({
+      kind: "ready-owned",
+      snapshot: { lsp: { port: 49152 }, dap: { port: 49153 } },
+    });
     expect(states).toEqual([{ kind: "spawning" }, { kind: "connected" }]);
 
     await manager.stop();
     expect(client.stop).toHaveBeenCalledOnce();
+    expect(host.stop).not.toHaveBeenCalled();
+    await coordinator.dispose();
     expect(host.stop).toHaveBeenCalledOnce();
   });
 
@@ -182,17 +201,20 @@ describe("connection modes", () => {
       project: "/workspace/game",
     });
 
-    const snapshot = manager.ownedToolingHost;
-    if (snapshot === undefined) {
+    const state = coordinator.state;
+    if (state.kind !== "ready-owned") {
       throw new Error("spawn did not expose its owned tooling host");
     }
-    snapshot.services.splice(0, snapshot.services.length, "mutated");
-    snapshot.dapPort = 1;
+    const snapshot = state.snapshot;
+    (snapshot.services as string[]).splice(0, snapshot.services.length, "mutated");
+    (snapshot.dap as { port: number }).port = 1;
 
-    expect(manager.ownedToolingHost).toMatchObject({
-      services: ["lsp", "dap"],
-      lspPort: 49152,
-      dapPort: 49153,
+    expect(coordinator.state).toMatchObject({
+      snapshot: {
+        services: ["lsp", "dap"],
+        lsp: { port: 49152 },
+        dap: { port: 49153 },
+      },
     });
     expect(launchHost).toHaveBeenCalledOnce();
   });
@@ -272,7 +294,7 @@ describe("connection modes", () => {
     expect(states.at(-1)).toEqual({ kind: "disconnected" });
   });
 
-  it("cleans up an owned host when its language client cannot start", async () => {
+  it("retains a living owned host when its language client cannot start", async () => {
     const host = createHost(49154);
     launchHost.mockResolvedValue(host);
     const refusal = Object.assign(new Error("connect ECONNREFUSED"), {
@@ -286,11 +308,11 @@ describe("connection modes", () => {
         project: "/workspace/game",
       }),
     ).rejects.toMatchObject({ kind: "tcp_refused" });
-    expect(host.stop).toHaveBeenCalledOnce();
-    expect(manager.ownedToolingHost).toBeUndefined();
+    expect(host.stop).not.toHaveBeenCalled();
+    expect(coordinator.state).toMatchObject({ kind: "ready-owned" });
   });
 
-  it("still terminates an owned host when client shutdown fails", async () => {
+  it("does not terminate an owned host when client shutdown fails", async () => {
     const shutdownError = new Error("client shutdown failed");
     const client = createSuccessfulClient();
     client.stop.mockRejectedValue(shutdownError);
@@ -304,7 +326,7 @@ describe("connection modes", () => {
 
     await expect(manager.stop()).rejects.toBe(shutdownError);
 
-    expect(host.stop).toHaveBeenCalledOnce();
+    expect(host.stop).not.toHaveBeenCalled();
   });
 
   it("cancels startup and terminates a host that becomes ready after stop", async () => {
@@ -341,7 +363,7 @@ describe("connection modes", () => {
         project: "/workspace/game",
       })
       .catch((error: unknown) => error);
-    await Promise.resolve();
+    await vi.waitFor(() => expect(client.start).toHaveBeenCalledOnce());
     const stopping = manager.stop();
     pendingStart.resolve(undefined);
 
@@ -485,7 +507,7 @@ describe("connection modes", () => {
     await manager.stop();
   });
 
-  it("replaces only its owned spawned host after server loss", async () => {
+  it("reuses its living owned host after isolated LSP loss", async () => {
     vi.useFakeTimers();
     const firstClient = createSuccessfulClient();
     const secondClient = createSuccessfulClient();
@@ -501,11 +523,33 @@ describe("connection modes", () => {
     firstClient.fireUnexpectedStop();
     await vi.advanceTimersByTimeAsync(500);
 
-    expect(firstHost.stop).toHaveBeenCalledOnce();
-    expect(launchHost).toHaveBeenCalledTimes(2);
-    expect(manager.ownedToolingHost?.lspPort).toBe(49161);
+    expect(firstHost.stop).not.toHaveBeenCalled();
+    expect(launchHost).toHaveBeenCalledOnce();
+    expect(endpoints.at(-1)).toEqual({ host: "127.0.0.1", port: 49160 });
     await manager.stop();
-    expect(secondHost.stop).toHaveBeenCalledOnce();
+    expect(secondHost.stop).not.toHaveBeenCalled();
+  });
+
+  it("recovers a new owned endpoint after the coordinator observes host exit", async () => {
+    vi.useFakeTimers();
+    const firstClient = createSuccessfulClient();
+    const secondClient = createSuccessfulClient();
+    const firstHost = createHost(55100);
+    const secondHost = createHost(55200);
+    launchHost.mockResolvedValueOnce(firstHost).mockResolvedValueOnce(secondHost);
+    const manager = managerWith([firstClient, secondClient]);
+    await manager.start({
+      settings: { mode: "spawn", port: 6005, enginePath: "foundry" },
+      project: "/workspace/game",
+    });
+
+    firstHost.exit(17);
+    firstClient.fireUnexpectedStop();
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(launchHost).toHaveBeenCalledTimes(2);
+    expect(endpoints.at(-1)).toEqual({ host: "127.0.0.1", port: 55200 });
+    expect(states.at(-1)).toEqual({ kind: "connected" });
   });
 
   it("cancels a pending reconnect when the manager stops", async () => {

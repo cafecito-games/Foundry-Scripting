@@ -145,6 +145,9 @@ const extensionMock = vi.hoisted(() => {
   stop: vi.fn(),
   reconnectNow: vi.fn(),
   createConnectionManager: vi.fn(),
+  coordinatorDispose: vi.fn(),
+  toolingHostCoordinator: { dispose: vi.fn() },
+  createToolingHostCoordinator: vi.fn(),
   diagnosticsUnit: {
     accept: vi.fn(),
     setLanguageServerConnected: vi.fn(),
@@ -292,6 +295,7 @@ vi.mock("vscode", () => ({
 
 vi.mock("./client/runtime.js", () => ({
   createConnectionManager: extensionMock.createConnectionManager,
+  createToolingHostCoordinator: extensionMock.createToolingHostCoordinator,
 }));
 
 vi.mock("./diagnostics/index.js", () => ({
@@ -494,6 +498,13 @@ describe("extension entry point", () => {
     extensionMock.start = vi.fn().mockResolvedValue(undefined);
     extensionMock.stop = vi.fn().mockResolvedValue(undefined);
     extensionMock.reconnectNow = vi.fn().mockResolvedValue(undefined);
+    extensionMock.coordinatorDispose = vi.fn().mockResolvedValue(undefined);
+    extensionMock.toolingHostCoordinator.dispose =
+      extensionMock.coordinatorDispose;
+    extensionMock.createToolingHostCoordinator.mockReset();
+    extensionMock.createToolingHostCoordinator.mockReturnValue(
+      extensionMock.toolingHostCoordinator,
+    );
     extensionMock.createConnectionManager.mockReset();
     extensionMock.createConnectionManager.mockImplementation(() => ({
       start: extensionMock.start,
@@ -505,6 +516,7 @@ describe("extension entry point", () => {
   it("starts the configured connection mode for the open project", async () => {
     extensionMock.configuration.set("lsp.mode", "attach");
     extensionMock.configuration.set("lsp.port", 7001);
+    extensionMock.configuration.set("dap.port", 7002);
     extensionMock.configuration.set("enginePath", "/opt/foundry");
     extensionMock.workspaceFolders.push({
       uri: { fsPath: "/workspace/game" },
@@ -518,11 +530,13 @@ describe("extension entry point", () => {
       "/workspace/game",
       expect.any(Function),
       extensionMock.diagnosticsUnit,
+      extensionMock.toolingHostCoordinator,
     );
     expect(extensionMock.start).toHaveBeenCalledWith({
       settings: {
         mode: "attach",
         port: 7001,
+        dapPort: 7002,
         enginePath: "/opt/foundry",
       },
       project: "/workspace/game",
@@ -547,6 +561,7 @@ describe("extension entry point", () => {
       "/workspace/repository/test_project",
       expect.any(Function),
       extensionMock.diagnosticsUnit,
+      extensionMock.toolingHostCoordinator,
     );
     expect(extensionMock.start).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1208,6 +1223,13 @@ describe("extension entry point", () => {
     expect(extensionMock.testingStop).toHaveBeenCalledOnce();
     expect(extensionMock.testingProcessStop).toHaveBeenCalledOnce();
     expect(extensionMock.stop).toHaveBeenCalledOnce();
+    expect(extensionMock.coordinatorDispose).toHaveBeenCalledOnce();
+    expect(extensionMock.stop.mock.invocationCallOrder[0]).toBeLessThan(
+      extensionMock.coordinatorDispose.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(extensionMock.testingStop.mock.invocationCallOrder[0]).toBeLessThan(
+      extensionMock.coordinatorDispose.mock.invocationCallOrder[0] ?? 0,
+    );
   });
 
   it("renders negotiated framework status and preserves process output", async () => {

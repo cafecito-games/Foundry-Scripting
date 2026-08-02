@@ -5,14 +5,30 @@ import {
 } from "./connection-manager.js";
 import { FoundryHostLauncher } from "./host-launcher.js";
 import { FoundryScriptLanguageClient } from "./language-client.js";
+import { writeLog } from "./logging.js";
 import { createWorkspaceMismatchHandler } from "./workspace-mismatch.js";
 import type { DiagnosticsUnit } from "../diagnostics/index.js";
+import { ToolingHostCoordinator } from "../tooling/coordinator.js";
+
+export function createToolingHostCoordinator(
+  outputChannel: vscode.OutputChannel,
+): ToolingHostCoordinator {
+  return new ToolingHostCoordinator({
+    launcher: new FoundryHostLauncher({ output: outputChannel }),
+    onStateChange: (state) => {
+      writeLog(outputChannel, "info", "tooling.host.state", {
+        state: state.kind,
+      });
+    },
+  });
+}
 
 export function createConnectionManager(
   outputChannel: vscode.OutputChannel,
   workspacePath: string,
   onStateChange: (state: ConnectionState) => void,
   diagnostics: DiagnosticsUnit,
+  coordinator: ToolingHostCoordinator,
 ): ConnectionManager {
   const workspaceMismatchHandler = createWorkspaceMismatchHandler({
     workspacePath,
@@ -39,7 +55,7 @@ export function createConnectionManager(
         },
         workspaceMismatchHandler,
     }),
-    launcher: new FoundryHostLauncher({ output: outputChannel }),
+    coordinator,
     onStateChange: (state) => {
       diagnostics.setLanguageServerConnected(state.kind === "connected");
       onStateChange(state);
