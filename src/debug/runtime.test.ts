@@ -718,13 +718,20 @@ describe("FoundryScript debug runtime registration", () => {
     });
     const factory = runtimeMock.registerDebugAdapterDescriptorFactory.mock
       .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
+    const trackerFactory = runtimeMock.registerDebugAdapterTrackerFactory.mock
+      .calls[0][1] as vscode.DebugAdapterTrackerFactory;
+    const terminate = runtimeMock.onDidTerminateDebugSession.mock
+      .calls[0][0] as (session: vscode.DebugSession) => void;
     const firstSession = createSession("draining-first");
+    const tracker = await trackerFactory.createDebugAdapterTracker(firstSession);
     await factory.createDebugAdapterDescriptor(firstSession, undefined);
 
     firstHost.exit(51);
     await vi.waitFor(() =>
       expect(runtimeMock.stopDebugging).toHaveBeenCalledWith(firstSession),
     );
+    tracker?.onWillStopSession?.call(tracker);
+    terminate(firstSession);
     await coordinator.start(request);
 
     await expect(
@@ -737,7 +744,7 @@ describe("FoundryScript debug runtime registration", () => {
     stopping.resolve(true);
     await vi.waitFor(() =>
       expect(appendLine).toHaveBeenCalledWith(
-        expect.stringMatching(/draining-first.*session ended/i),
+        expect.stringMatching(/draining-first.*failure drain completed/i),
       ),
     );
     await expect(

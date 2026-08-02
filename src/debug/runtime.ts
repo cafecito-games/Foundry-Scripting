@@ -45,6 +45,7 @@ export function registerFoundryScriptDebugRuntime(
   options: FoundryScriptDebugRuntimeOptions,
 ): FoundryScriptDebugRuntime {
   const sessions = new Map<string, DebugSessionAcquisition>();
+  const drainingSessions = new Set<string>();
   const loggedLaunches = new Set<string>();
   const reportedFailures = new Set<string>();
   const contextualizeStartupFailure = (
@@ -129,6 +130,7 @@ export function registerFoundryScriptDebugRuntime(
         ? state.error
         : new Error(String(state.error));
     if (!reportSessionFailure(session, error)) return;
+    drainingSessions.add(session.id);
     acquisition.controller.abort();
     void Promise.resolve(vscode.debug.stopDebugging(session))
       .catch((stopError: unknown) => {
@@ -137,7 +139,14 @@ export function registerFoundryScriptDebugRuntime(
             `${stopError instanceof Error ? stopError.message : String(stopError)}`,
         );
       })
-      .finally(() => endSession(session, "owned tooling host failure"));
+      .finally(() => {
+        drainingSessions.delete(session.id);
+        endSession(session, "owned tooling host failure");
+        options.output.appendLine(
+          `[${session.id}] Owned tooling-host failure drain completed; ` +
+            "replacement debug sessions may start.",
+        );
+      });
   };
   const provider = new FoundryScriptDebugConfigurationProvider({
     resolveProject: options.resolveProject,
@@ -167,11 +176,13 @@ export function registerFoundryScriptDebugRuntime(
       throw error;
     }
     const activeSession = sessions.values().next().value;
-    if (activeSession !== undefined) {
+    const activeSessionId =
+      activeSession?.session.id ?? drainingSessions.values().next().value;
+    if (activeSessionId !== undefined) {
       const error = contextualizeStartupFailure(
         session,
         new Error(
-          `A FoundryScript debug session (${activeSession.session.id}) is already active. ` +
+          `A FoundryScript debug session (${activeSessionId}) is already active. ` +
             "Stop it before starting another.",
         ),
       );
@@ -292,6 +303,7 @@ export function registerFoundryScriptDebugRuntime(
       acquisition.lease?.release();
     }
     sessions.clear();
+    drainingSessions.clear();
     loggedLaunches.clear();
     reportedFailures.clear();
     for (const registration of registrations) registration.dispose();
