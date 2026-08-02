@@ -76,8 +76,17 @@ jobs:
   corpus:
     name: corpus
     runs-on: ubuntu-latest
+    env:
+      FOUNDRY_ENGINE_PATH: ${{ github.workspace }}/foundry-engine
     steps:
       - uses: actions/checkout@v4
+      - name: Check out Foundry engine corpus
+        uses: actions/checkout@v4
+        with:
+          repository: cafecito-games/Foundry
+          # Foundry v0.1.0-alpha.19, matching foundry-grammar.json.
+          ref: 7a86a1464be0699c81a8a5b5c849447b4a7707bf
+          path: foundry-engine
       - uses: actions/setup-node@v4
         with:
           node-version: "20"

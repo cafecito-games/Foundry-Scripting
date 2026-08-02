@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -66,6 +66,24 @@ describe("corpus command configuration", () => {
     expect(error.stdout).toContain("Scanned 0 .fs files.");
     expect(error.stderr).toContain(
       "Corpus check requires at least one .fs file",
+    );
+  });
+});
+
+describe("corpus CI configuration", () => {
+  it("checks out the engine release commit and passes its workspace path", async () => {
+    const workflow = await readFile(
+      new URL("../.github/workflows/ci.yml", import.meta.url),
+      "utf8",
+    );
+
+    expect(workflow).toContain("repository: cafecito-games/Foundry");
+    expect(workflow).toContain(
+      "ref: 7a86a1464be0699c81a8a5b5c849447b4a7707bf",
+    );
+    expect(workflow).toContain("path: foundry-engine");
+    expect(workflow).toContain(
+      "FOUNDRY_ENGINE_PATH: ${{ github.workspace }}/foundry-engine",
     );
   });
 });
