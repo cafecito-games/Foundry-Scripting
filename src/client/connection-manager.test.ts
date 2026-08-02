@@ -191,6 +191,28 @@ describe("connection modes", () => {
     expect(host.stop).toHaveBeenCalledOnce();
   });
 
+  it("launches one combined host when LSP and DAP become ready concurrently", async () => {
+    const pendingHost = deferred<OwnedToolingHost>();
+    const host = createHost(49200);
+    launchHost.mockReturnValue(pendingHost.promise);
+    const client = createSuccessfulClient();
+    const manager = managerWith([client]);
+
+    const lspReadiness = manager.start({
+      settings: { mode: "spawn", port: 6005, enginePath: "foundry" },
+      project: "/workspace/game",
+    });
+    const dapReadiness = coordinator.acquireDapLease();
+    pendingHost.resolve(host);
+
+    await lspReadiness;
+    const lease = await dapReadiness;
+    expect(launchHost).toHaveBeenCalledOnce();
+    expect(client.start).toHaveBeenCalledOnce();
+    expect(endpoints).toEqual([{ host: "127.0.0.1", port: 49200 }]);
+    expect(lease.endpoint).toEqual({ host: "127.0.0.1", port: 49201 });
+  });
+
   it("exposes an isolated owned-host snapshot for future DAP reuse", async () => {
     const client = createSuccessfulClient();
     const host = createHost(49152);
@@ -519,6 +541,7 @@ describe("connection modes", () => {
       settings: { mode: "spawn", port: 6005, enginePath: "foundry" },
       project: "/workspace/game",
     });
+    const lease = await coordinator.acquireDapLease();
 
     firstClient.fireUnexpectedStop();
     await vi.advanceTimersByTimeAsync(500);
@@ -526,6 +549,8 @@ describe("connection modes", () => {
     expect(firstHost.stop).not.toHaveBeenCalled();
     expect(launchHost).toHaveBeenCalledOnce();
     expect(endpoints.at(-1)).toEqual({ host: "127.0.0.1", port: 49160 });
+    expect(lease.endpoint).toEqual({ host: "127.0.0.1", port: 49161 });
+    expect(lease.released).toBe(false);
     await manager.stop();
     expect(secondHost.stop).not.toHaveBeenCalled();
   });

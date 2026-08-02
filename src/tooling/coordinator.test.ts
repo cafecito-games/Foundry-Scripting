@@ -284,6 +284,17 @@ describe("ToolingHostCoordinator serialized readiness", () => {
     expect(launch).not.toHaveBeenCalled();
   });
 
+  it("rejects auto readiness when no external probe is supplied", async () => {
+    const launch = vi.fn();
+    const coordinator = new ToolingHostCoordinator({ launcher: { launch } });
+
+    await expect(
+      coordinator.start({ ...spawnRequest, mode: "auto" }),
+    ).rejects.toThrow("requires an external endpoint probe");
+    expect(coordinator.state).toMatchObject({ kind: "failed" });
+    expect(launch).not.toHaveBeenCalled();
+  });
+
   it("falls back from auto to one owned host when external LSP is unavailable", async () => {
     const host = createOwnedHost(52000, 52001);
     const launch = vi.fn().mockResolvedValue(host);

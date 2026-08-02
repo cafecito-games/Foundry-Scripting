@@ -307,9 +307,13 @@ export class ToolingHostCoordinator {
         return cloneSnapshot(snapshot);
       }
       if (request.mode === "auto") {
+        if (tryExternal === undefined) {
+          throw new Error(
+            "Foundry tooling host auto mode requires an external endpoint probe.",
+          );
+        }
         const external = snapshotFromExternal(request);
-        const externalReady =
-          tryExternal === undefined || (await tryExternal(external.lsp));
+        const externalReady = await tryExternal(external.lsp);
         if (signal.aborted) throw abortError();
         if (externalReady) {
           const snapshot = snapshotFromExternal(request);
