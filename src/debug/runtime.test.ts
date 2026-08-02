@@ -674,6 +674,80 @@ describe("FoundryScript debug runtime registration", () => {
     expect(coordinator.state).toMatchObject({ kind: "failed" });
   });
 
+  it("blocks replacement sessions while an owned-host failure is still draining VS Code", async () => {
+    const runtime = await loadRuntimeModule();
+    expect(runtime).toBeDefined();
+    const stopping = deferred<boolean>();
+    runtimeMock.stopDebugging.mockReturnValue(stopping.promise);
+    const createExitingHost = (dapPort: number) => {
+      const base = createOwnedHost(dapPort);
+      const listeners = new Set<(code: number | null) => void>();
+      return {
+        ...base,
+        onExit: (listener: (code: number | null) => void) => {
+          listeners.add(listener);
+          return { dispose: () => listeners.delete(listener) };
+        },
+        exit: (code: number | null) => {
+          for (const listener of listeners) listener(code);
+        },
+      };
+    };
+    const firstHost = createExitingHost(51202);
+    const secondHost = createExitingHost(51302);
+    const launch = vi
+      .fn()
+      .mockResolvedValueOnce(firstHost)
+      .mockResolvedValueOnce(secondHost);
+    const coordinator = new ToolingHostCoordinator({ launcher: { launch } });
+    const request = {
+      mode: "spawn" as const,
+      enginePath: "/opt/foundry",
+      project: "/workspace/game",
+      lspPort: 0,
+      dapPort: 0,
+    };
+    await coordinator.start(request);
+    const context = { subscriptions: [] } as unknown as vscode.ExtensionContext;
+    const appendLine = vi.fn();
+    runtime!.registerFoundryScriptDebugRuntime(context, {
+      resolveProject,
+      getCoordinator: () => coordinator,
+      getMode: () => "spawn",
+      output: { appendLine } as unknown as vscode.OutputChannel,
+    });
+    const factory = runtimeMock.registerDebugAdapterDescriptorFactory.mock
+      .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
+    const firstSession = createSession("draining-first");
+    await factory.createDebugAdapterDescriptor(firstSession, undefined);
+
+    firstHost.exit(51);
+    await vi.waitFor(() =>
+      expect(runtimeMock.stopDebugging).toHaveBeenCalledWith(firstSession),
+    );
+    await coordinator.start(request);
+
+    await expect(
+      factory.createDebugAdapterDescriptor(
+        createSession("draining-replacement"),
+        undefined,
+      ),
+    ).rejects.toThrow("already active");
+
+    stopping.resolve(true);
+    await vi.waitFor(() =>
+      expect(appendLine).toHaveBeenCalledWith(
+        expect.stringMatching(/draining-first.*session ended/i),
+      ),
+    );
+    await expect(
+      factory.createDebugAdapterDescriptor(
+        createSession("after-draining"),
+        undefined,
+      ),
+    ).resolves.toMatchObject({ port: 51302 });
+  });
+
   it("reports one transport failure when adapter exit arrives before its error", async () => {
     const runtime = await loadRuntimeModule();
     expect(runtime).toBeDefined();
@@ -685,6 +759,7 @@ describe("FoundryScript debug runtime registration", () => {
       getCoordinator: () => ({
         acquireDapLease: vi.fn().mockResolvedValue({
           endpoint: { host: "127.0.0.1", port: 50127 },
+          ownership: "external",
           released: false,
           release,
           dispose: release,
@@ -712,6 +787,7 @@ describe("FoundryScript debug runtime registration", () => {
       ),
     ).toHaveLength(1);
     expect(runtimeMock.showErrorMessage).toHaveBeenCalledOnce();
+    expect(runtimeMock.stopDebugging).not.toHaveBeenCalled();
   });
 
   it("releases the lease when the adapter transport exits naturally", async () => {

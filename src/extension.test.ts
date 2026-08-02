@@ -804,6 +804,40 @@ describe("extension entry point", () => {
     );
   });
 
+  it("keeps the active DAP session leased across isolated LSP loss and reconnect", async () => {
+    extensionMock.configuration.set("lsp.mode", "spawn");
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game" },
+    });
+    await activate(createContext());
+    const factory = extensionMock.registerDebugAdapterDescriptorFactory.mock
+      .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
+    const session = createDebugSession("lsp-loss-with-dap", {
+      type: "foundryscript",
+      request: "launch",
+      name: "Debug Main",
+      scene: "main",
+      project: "/workspace/game",
+      playArgs: [],
+      noDebug: false,
+    });
+    await factory.createDebugAdapterDescriptor(session, undefined);
+    const onConnectionState = extensionMock.createConnectionManager.mock
+      .calls[0][2] as (state: { kind: "retrying" | "connected" }) => void;
+
+    onConnectionState({ kind: "retrying" });
+    onConnectionState({ kind: "connected" });
+
+    expect(extensionMock.dapLeaseReleases[0]).not.toHaveBeenCalled();
+    expect(extensionMock.stopDebugging).not.toHaveBeenCalled();
+    await expect(
+      factory.createDebugAdapterDescriptor(
+        createDebugSession("lsp-loss-second", session.configuration),
+        undefined,
+      ),
+    ).rejects.toThrow("already active");
+  });
+
   it("maps an explicit Run Without Debugging launch and uses the external attach DAP port", async () => {
     extensionMock.configuration.set("lsp.mode", "attach");
     extensionMock.configuration.set("dap.port", 7702);
