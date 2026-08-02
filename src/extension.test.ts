@@ -117,6 +117,11 @@ const extensionMock = vi.hoisted(() => {
     show: vi.fn(),
     dispose: vi.fn(),
   },
+  debugOutputChannel: {
+    appendLine: vi.fn(),
+    show: vi.fn(),
+    dispose: vi.fn(),
+  },
   testingOutputChannel: {
     append: vi.fn(),
     appendLine: vi.fn(),
@@ -160,7 +165,13 @@ const extensionMock = vi.hoisted(() => {
   registerTaskProvider: vi.fn(),
   registerFoundryTaskProvider: vi.fn(),
   debugProviderDisposable: { dispose: vi.fn() },
+  debugDescriptorDisposable: { dispose: vi.fn() },
+  debugTrackerDisposable: { dispose: vi.fn() },
+  debugTerminationDisposable: { dispose: vi.fn() },
   registerDebugConfigurationProvider: vi.fn(),
+  registerDebugAdapterDescriptorFactory: vi.fn(),
+  registerDebugAdapterTrackerFactory: vi.fn(),
+  onDidTerminateDebugSession: vi.fn(),
   resolveProject: vi.fn(),
   configurationChangeHandler: undefined as
     | ((event: { affectsConfiguration(section: string): boolean }) => void)
@@ -265,6 +276,8 @@ vi.mock("vscode", () => ({
     createOutputChannel: vi.fn((name: string) =>
       name === "FoundryScript Testing"
         ? extensionMock.testingOutputChannel
+        : name === "FoundryScript Debug"
+          ? extensionMock.debugOutputChannel
         : extensionMock.outputChannel,
     ),
     createStatusBarItem: vi.fn((_alignment: unknown, priority: number) =>
@@ -285,6 +298,17 @@ vi.mock("vscode", () => ({
   debug: {
     registerDebugConfigurationProvider:
       extensionMock.registerDebugConfigurationProvider,
+    registerDebugAdapterDescriptorFactory:
+      extensionMock.registerDebugAdapterDescriptorFactory,
+    registerDebugAdapterTrackerFactory:
+      extensionMock.registerDebugAdapterTrackerFactory,
+    onDidTerminateDebugSession: extensionMock.onDidTerminateDebugSession,
+  },
+  DebugAdapterServer: class {
+    constructor(
+      readonly port: number,
+      readonly host?: string,
+    ) {}
   },
   StatusBarAlignment: { Left: 1 },
   TestRunProfileKind: { Run: 1, Debug: 2 },
@@ -390,6 +414,9 @@ describe("extension entry point", () => {
     extensionMock.outputChannel.appendLine.mockClear();
     extensionMock.outputChannel.show.mockClear();
     extensionMock.outputChannel.dispose.mockClear();
+    extensionMock.debugOutputChannel.appendLine.mockClear();
+    extensionMock.debugOutputChannel.show.mockClear();
+    extensionMock.debugOutputChannel.dispose.mockClear();
     extensionMock.testingOutputChannel.append.mockClear();
     extensionMock.testingOutputChannel.appendLine.mockClear();
     extensionMock.testingOutputChannel.show.mockClear();
@@ -420,9 +447,24 @@ describe("extension entry point", () => {
     );
     extensionMock.registerFoundryTaskProvider.mockReset();
     extensionMock.debugProviderDisposable.dispose.mockReset();
+    extensionMock.debugDescriptorDisposable.dispose.mockReset();
+    extensionMock.debugTrackerDisposable.dispose.mockReset();
+    extensionMock.debugTerminationDisposable.dispose.mockReset();
     extensionMock.registerDebugConfigurationProvider.mockReset();
     extensionMock.registerDebugConfigurationProvider.mockReturnValue(
       extensionMock.debugProviderDisposable,
+    );
+    extensionMock.registerDebugAdapterDescriptorFactory.mockReset();
+    extensionMock.registerDebugAdapterDescriptorFactory.mockReturnValue(
+      extensionMock.debugDescriptorDisposable,
+    );
+    extensionMock.registerDebugAdapterTrackerFactory.mockReset();
+    extensionMock.registerDebugAdapterTrackerFactory.mockReturnValue(
+      extensionMock.debugTrackerDisposable,
+    );
+    extensionMock.onDidTerminateDebugSession.mockReset();
+    extensionMock.onDidTerminateDebugSession.mockReturnValue(
+      extensionMock.debugTerminationDisposable,
     );
     extensionMock.resolveProject.mockReset();
     extensionMock.resolveProject.mockImplementation(() =>
@@ -592,7 +634,7 @@ describe("extension entry point", () => {
     expect(extensionMock.resolveProject).not.toHaveBeenCalled();
   });
 
-  it("registers exactly one FoundryScript debug provider for the activation lifetime", async () => {
+  it("registers the complete FoundryScript debug runtime and dedicated output for the activation lifetime", async () => {
     extensionMock.configuration.set("lsp.mode", "off");
     const context = createContext();
 
@@ -604,9 +646,14 @@ describe("extension entry point", () => {
     expect(
       extensionMock.registerDebugConfigurationProvider,
     ).toHaveBeenCalledWith("foundryscript", expect.any(Object));
-    expect(context.subscriptions).toContain(
-      extensionMock.debugProviderDisposable,
-    );
+    expect(
+      extensionMock.registerDebugAdapterDescriptorFactory,
+    ).toHaveBeenCalledWith("foundryscript", expect.any(Object));
+    expect(
+      extensionMock.registerDebugAdapterTrackerFactory,
+    ).toHaveBeenCalledWith("foundryscript", expect.any(Object));
+    expect(extensionMock.onDidTerminateDebugSession).toHaveBeenCalledOnce();
+    expect(context.subscriptions).toContain(extensionMock.debugOutputChannel);
   });
 
   it("offers project settings and does not connect when selection is ambiguous", async () => {
