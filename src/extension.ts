@@ -11,6 +11,7 @@ import { HostStartupFailure } from "./client/host-launcher.js";
 import { writeLog } from "./client/logging.js";
 import { createConnectionManager } from "./client/runtime.js";
 import { createDiagnosticsUnit } from "./diagnostics/index.js";
+import { registerFoundryScriptDebugConfigurationProvider } from "./debug/runtime.js";
 import type { ProjectResolutionFailure } from "./project/resolver.js";
 import {
   createWorkspaceProjectResolver,
@@ -458,6 +459,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(diagnostics);
   const resolveProject = createWorkspaceProjectResolver();
   registerFoundryTaskProvider(context, diagnostics, resolveProject);
+  registerFoundryScriptDebugConfigurationProvider(context, resolveProject);
   const outputChannel = vscode.window.createOutputChannel("FoundryScript LSP");
   context.subscriptions.push(outputChannel);
   const settings = readConnectionSettings();
