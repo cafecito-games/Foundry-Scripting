@@ -503,6 +503,46 @@ describe("FoundryScript debug runtime registration", () => {
     );
   });
 
+  it("reports one transport failure when adapter exit arrives before its error", async () => {
+    const runtime = await loadRuntimeModule();
+    expect(runtime).toBeDefined();
+    const release = vi.fn();
+    const appendLine = vi.fn();
+    const context = { subscriptions: [] } as unknown as vscode.ExtensionContext;
+    runtime!.registerFoundryScriptDebugRuntime(context, {
+      resolveProject,
+      getCoordinator: () => ({
+        acquireDapLease: vi.fn().mockResolvedValue({
+          endpoint: { host: "127.0.0.1", port: 50127 },
+          released: false,
+          release,
+          dispose: release,
+        }),
+      }) as never,
+      getMode: () => "spawn",
+      output: { appendLine } as unknown as vscode.OutputChannel,
+    });
+    const session = createSession("exit-before-error");
+    const factory = runtimeMock.registerDebugAdapterDescriptorFactory.mock
+      .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
+    const trackerFactory = runtimeMock.registerDebugAdapterTrackerFactory.mock
+      .calls[0][1] as vscode.DebugAdapterTrackerFactory;
+    const tracker = await trackerFactory.createDebugAdapterTracker(session);
+
+    await factory.createDebugAdapterDescriptor(session, undefined);
+    tracker?.onExit?.(undefined, "SIGPIPE");
+    tracker?.onError?.(new Error("socket reset after exit"));
+    tracker?.onError?.(new Error("socket reset after exit"));
+
+    expect(release).toHaveBeenCalledOnce();
+    expect(
+      appendLine.mock.calls.filter(([line]) =>
+        String(line).includes("socket reset after exit"),
+      ),
+    ).toHaveLength(1);
+    expect(runtimeMock.showErrorMessage).toHaveBeenCalledOnce();
+  });
+
   it("releases the lease when the adapter transport exits naturally", async () => {
     const runtime = await loadRuntimeModule();
     expect(runtime).toBeDefined();

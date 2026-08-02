@@ -28,6 +28,7 @@ export function registerFoundryScriptDebugRuntime(
 ): void {
   const sessions = new Map<string, DebugSessionAcquisition>();
   const loggedLaunches = new Set<string>();
+  const reportedFailures = new Set<string>();
   const logLaunch = (session: vscode.DebugSession): void => {
     if (loggedLaunches.has(session.id)) return;
     loggedLaunches.add(session.id);
@@ -53,7 +54,8 @@ export function registerFoundryScriptDebugRuntime(
     );
   };
   const failSession = (session: vscode.DebugSession, error: Error): void => {
-    if (!sessions.has(session.id)) return;
+    if (reportedFailures.has(session.id)) return;
+    reportedFailures.add(session.id);
     const message =
       `FoundryScript debug adapter failure in ${options.getMode()} mode ` +
       `for project ${String(session.configuration.project)}: ${error.message}. ` +
@@ -89,6 +91,7 @@ export function registerFoundryScriptDebugRuntime(
       void vscode.window.showErrorMessage(message);
       throw new Error(message);
     }
+    reportedFailures.delete(session.id);
     const controller = new AbortController();
     const acquisition: DebugSessionAcquisition = { controller };
     sessions.set(session.id, acquisition);
@@ -172,6 +175,7 @@ export function registerFoundryScriptDebugRuntime(
       }
       sessions.clear();
       loggedLaunches.clear();
+      reportedFailures.clear();
       for (const registration of registrations) registration.dispose();
     },
   });
