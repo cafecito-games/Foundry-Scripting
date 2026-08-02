@@ -29,6 +29,26 @@ export function registerFoundryScriptDebugRuntime(
   const sessions = new Map<string, DebugSessionAcquisition>();
   const loggedLaunches = new Set<string>();
   const reportedFailures = new Set<string>();
+  const contextualizeStartupFailure = (
+    session: vscode.DebugSession,
+    error: unknown,
+  ): Error => {
+    const detail = error instanceof Error ? error.message : String(error);
+    return new Error(
+      `FoundryScript debug startup failed in ${options.getMode()} mode ` +
+        `for project ${String(session.configuration.project)}: ${detail} ` +
+        "Check FoundryScript Debug output, verify foundryScript.lsp.mode, " +
+        "stop the active debug session if one is running, and retry.",
+      { cause: error },
+    );
+  };
+  const reportStartupFailure = (
+    session: vscode.DebugSession,
+    error: Error,
+  ): void => {
+    options.output.appendLine(`[${session.id}] ${error.message}`);
+    void vscode.window.showErrorMessage(error.message);
+  };
   const logLaunch = (session: vscode.DebugSession): void => {
     if (loggedLaunches.has(session.id)) return;
     loggedLaunches.add(session.id);
@@ -82,14 +102,14 @@ export function registerFoundryScriptDebugRuntime(
     // Code terminates a would-be session before invoking this factory, there is no
     // acquisition to cancel and therefore no lease to release.
     if (sessions.has(session.id)) {
-      const message =
-        `FoundryScript session ${session.id} already has a debug adapter. ` +
-        "Stop the active session before starting it again.";
-      options.output.appendLine(
-        `[${session.id}] FoundryScript debug startup failed: ${message}`,
+      const error = contextualizeStartupFailure(
+        session,
+        new Error(
+          `FoundryScript session ${session.id} already has a debug adapter.`,
+        ),
       );
-      void vscode.window.showErrorMessage(message);
-      throw new Error(message);
+      reportStartupFailure(session, error);
+      throw error;
     }
     reportedFailures.delete(session.id);
     const controller = new AbortController();
@@ -99,11 +119,10 @@ export function registerFoundryScriptDebugRuntime(
       const coordinator = options.getCoordinator();
       if (coordinator === undefined) {
         const mode = options.getMode();
-        const project = String(session.configuration.project);
         throw new Error(
           mode === "off"
-            ? `FoundryScript debugging is unavailable in off mode for project ${project}. Set foundryScript.lsp.mode to spawn, attach, or auto and retry.`
-            : `The Foundry tooling host is not ready in ${mode} mode for project ${project}. Check FoundryScript LSP output and the foundryScript.lsp.mode setting.`,
+            ? "FoundryScript debugging is unavailable."
+            : "The Foundry tooling host is not ready.",
         );
       }
       const lease = await coordinator.acquireDapLease(controller.signal);
@@ -128,11 +147,9 @@ export function registerFoundryScriptDebugRuntime(
         acquisition.lease?.release();
       }
       if (!(error instanceof Error && error.name === "AbortError")) {
-        const message = error instanceof Error ? error.message : String(error);
-        options.output.appendLine(
-          `[${session.id}] FoundryScript debug startup failed: ${message}`,
-        );
-        void vscode.window.showErrorMessage(message);
+        const failure = contextualizeStartupFailure(session, error);
+        reportStartupFailure(session, failure);
+        throw failure;
       }
       throw error;
     }

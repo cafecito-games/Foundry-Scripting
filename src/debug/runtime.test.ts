@@ -702,6 +702,85 @@ describe("FoundryScript debug runtime registration", () => {
     await coordinator.dispose();
   });
 
+  it("reports duplicate-session startup failure with mode, project, and recovery context", async () => {
+    const runtime = await loadRuntimeModule();
+    expect(runtime).toBeDefined();
+    const acquireDapLease = vi.fn().mockResolvedValue({
+      endpoint: { host: "127.0.0.1", port: 7002 },
+      released: false,
+      release: vi.fn(),
+      dispose: vi.fn(),
+    });
+    const appendLine = vi.fn();
+    const context = { subscriptions: [] } as unknown as vscode.ExtensionContext;
+    runtime!.registerFoundryScriptDebugRuntime(context, {
+      resolveProject,
+      getCoordinator: () => ({ acquireDapLease }) as never,
+      getMode: () => "attach",
+      output: { appendLine } as unknown as vscode.OutputChannel,
+    });
+    const factory = runtimeMock.registerDebugAdapterDescriptorFactory.mock
+      .calls.at(-1)?.[1] as vscode.DebugAdapterDescriptorFactory;
+
+    const session = createSession("duplicate-session");
+    await factory.createDebugAdapterDescriptor(session, undefined);
+    await expect(
+      factory.createDebugAdapterDescriptor(session, undefined),
+    ).rejects.toThrow(
+      /startup failed in attach mode.*\/workspace\/game.*already has a debug adapter.*Stop the active debug session.*retry/i,
+    );
+    expect(
+      appendLine.mock.calls.filter(([line]) =>
+        String(line).includes("debug startup failed"),
+      ),
+    ).toHaveLength(1);
+    expect(runtimeMock.showErrorMessage).toHaveBeenCalledOnce();
+    expect(runtimeMock.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /attach mode.*\/workspace\/game.*Stop the active debug session.*retry/i,
+      ),
+    );
+  });
+
+  it("wraps raw coordinator startup errors once with mode, project, and recovery context", async () => {
+    const runtime = await loadRuntimeModule();
+    expect(runtime).toBeDefined();
+    const appendLine = vi.fn();
+    const context = { subscriptions: [] } as unknown as vscode.ExtensionContext;
+    runtime!.registerFoundryScriptDebugRuntime(context, {
+      resolveProject,
+      getCoordinator: () => ({
+        acquireDapLease: vi
+          .fn()
+          .mockRejectedValue(new Error("coordinator handshake failed")),
+      }) as never,
+      getMode: () => "spawn",
+      output: { appendLine } as unknown as vscode.OutputChannel,
+    });
+    const factory = runtimeMock.registerDebugAdapterDescriptorFactory.mock
+      .calls.at(-1)?.[1] as vscode.DebugAdapterDescriptorFactory;
+
+    await expect(
+      factory.createDebugAdapterDescriptor(
+        createSession("raw-coordinator-error"),
+        undefined,
+      ),
+    ).rejects.toThrow(
+      /startup failed in spawn mode.*\/workspace\/game.*coordinator handshake failed.*foundryScript\.lsp\.mode.*retry/i,
+    );
+    expect(
+      appendLine.mock.calls.filter(([line]) =>
+        String(line).includes("coordinator handshake failed"),
+      ),
+    ).toHaveLength(1);
+    expect(runtimeMock.showErrorMessage).toHaveBeenCalledOnce();
+    expect(runtimeMock.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /spawn mode.*\/workspace\/game.*foundryScript\.lsp\.mode.*retry/i,
+      ),
+    );
+  });
+
   it("rejects duplicate descriptor creation for one session id without orphaning its lease", async () => {
     const runtime = await loadRuntimeModule();
     expect(runtime).toBeDefined();

@@ -738,6 +738,68 @@ describe("extension entry point", () => {
     expect(extensionMock.coordinatorDispose).not.toHaveBeenCalled();
   });
 
+  it("stops and restarts a fresh debug session through the preserved extension tooling host", async () => {
+    extensionMock.configuration.set("lsp.mode", "spawn");
+    extensionMock.dapPort = 51002;
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game" },
+    });
+    await activate(createContext());
+    const factory = extensionMock.registerDebugAdapterDescriptorFactory.mock
+      .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
+    const trackerFactory = extensionMock.registerDebugAdapterTrackerFactory.mock
+      .calls[0][1] as vscode.DebugAdapterTrackerFactory;
+    const terminate = extensionMock.onDidTerminateDebugSession.mock
+      .calls[0][0] as (session: vscode.DebugSession) => void;
+    const configuration = {
+      type: "foundryscript",
+      request: "launch",
+      name: "Debug Main",
+      scene: "main",
+      project: "/workspace/game",
+      playArgs: [],
+      noDebug: false,
+    };
+    const firstSession = createDebugSession("extension-stop", configuration);
+    const firstTracker = await trackerFactory.createDebugAdapterTracker(
+      firstSession,
+    );
+
+    await factory.createDebugAdapterDescriptor(firstSession, undefined);
+    firstTracker?.onWillStartSession?.call(firstTracker);
+    firstTracker?.onWillStopSession?.call(firstTracker);
+    terminate(firstSession);
+
+    const restartedSession = createDebugSession(
+      "extension-restart",
+      configuration,
+    );
+    const restartedTracker = await trackerFactory.createDebugAdapterTracker(
+      restartedSession,
+    );
+    await factory.createDebugAdapterDescriptor(restartedSession, undefined);
+    restartedTracker?.onWillStartSession?.call(restartedTracker);
+
+    expect(extensionMock.dapLeaseReleases).toHaveLength(2);
+    expect(extensionMock.dapLeaseReleases[0]).toHaveBeenCalledOnce();
+    expect(extensionMock.dapLeaseReleases[1]).not.toHaveBeenCalled();
+    expect(extensionMock.createToolingHostCoordinator).toHaveBeenCalledOnce();
+    expect(extensionMock.coordinatorDispose).not.toHaveBeenCalled();
+    expect(
+      extensionMock.debugOutputChannel.appendLine.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.includes("Launching")),
+    ).toEqual([
+      expect.stringContaining("[extension-stop] Launching main"),
+      expect.stringContaining("[extension-restart] Launching main"),
+    ]);
+    expect(extensionMock.debugOutputChannel.appendLine).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /\[extension-stop\].*session ended.*released the DAP lease/i,
+      ),
+    );
+  });
+
   it("maps an explicit Run Without Debugging launch and uses the external attach DAP port", async () => {
     extensionMock.configuration.set("lsp.mode", "attach");
     extensionMock.configuration.set("dap.port", 7702);

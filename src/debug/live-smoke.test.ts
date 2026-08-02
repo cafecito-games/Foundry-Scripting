@@ -29,6 +29,11 @@ const MAIN_SCENE = `[gd_scene load_steps=2 format=3]
 script = ExtResource("1_quit")
 `;
 
+const HOLD_SCENE = `[gd_scene format=3]
+
+[node name="Hold" type="Node"]
+`;
+
 const QUIT_SCRIPT = `extends Node
 
 func _ready() -> void:
@@ -141,6 +146,17 @@ class DapClient {
     }, timeoutMs, `DAP event ${name}`);
   }
 
+  async eventOccurrence(
+    name: string,
+    occurrence: number,
+    timeoutMs = 120_000,
+  ): Promise<DapEvent> {
+    return waitUntil(() => {
+      this.throwTransportError();
+      return this.events.filter((event) => event.event === name)[occurrence - 1];
+    }, timeoutMs, `DAP event ${name} occurrence ${String(occurrence)}`);
+  }
+
   clearEvents(): void {
     this.events.length = 0;
   }
@@ -197,6 +213,7 @@ async function stageProject(): Promise<string> {
   await Promise.all([
     writeFile(join(project, "project.foundry"), PROJECT_FILE),
     writeFile(join(project, "main.tscn"), MAIN_SCENE),
+    writeFile(join(project, "hold.tscn"), HOLD_SCENE),
     writeFile(join(project, "quit.fs"), QUIT_SCRIPT),
   ]);
   return project;
@@ -307,6 +324,93 @@ describe("FoundryScript live scene debugging", () => {
 
         await runScene(client, project, "main");
         await runScene(client, project, "res://main.tscn");
+      } catch (error) {
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}\nFoundry output:\n${output}`,
+          { cause: error },
+        );
+      } finally {
+        socket?.destroy();
+        await stopHost(host);
+        await rm(project, { recursive: true, force: true });
+      }
+    },
+    240_000,
+  );
+
+  liveIt(
+    "restarts a fresh debuggee and stops it while preserving the tooling host",
+    async () => {
+      const project = await stageProject();
+      const host = spawn(
+        enginePath!,
+        [
+          "tooling",
+          "serve",
+          "--project",
+          project,
+          "--lsp-port",
+          "0",
+          "--dap-port",
+          "0",
+        ],
+        { stdio: ["ignore", "pipe", "pipe"] },
+      );
+      const hostPid = host.pid;
+      let output = "";
+      host.stdout?.on("data", (chunk: Buffer) => {
+        output += chunk.toString();
+      });
+      host.stderr?.on("data", (chunk: Buffer) => {
+        output += chunk.toString();
+      });
+      let socket: Socket | undefined;
+      try {
+        const readiness = await waitForReadiness(() => output, host);
+        socket = await connect(readiness.dapPort);
+        const client = new DapClient(socket);
+        const initialize = client.request("initialize", {
+          adapterID: "foundry",
+          linesStartAt1: true,
+          columnsStartAt1: true,
+          supportsVariableType: true,
+        });
+        expect((await client.response(initialize, 30_000)).success).toBe(true);
+        await client.event("initialized", 30_000);
+        const launchArguments = {
+          project,
+          noDebug: false,
+          scene: "res://hold.tscn",
+          playArgs: ["--foundryscript-smoke", "restart-stop"],
+        };
+        const launch = client.request("launch", launchArguments);
+        const configurationDone = client.request("configurationDone", {});
+        expect((await client.response(launch)).success).toBe(true);
+        expect((await client.response(configurationDone, 30_000)).success).toBe(
+          true,
+        );
+        await client.eventOccurrence("process", 1);
+
+        const restart = client.request("restart", { arguments: launchArguments });
+        expect((await client.response(restart)).success).toBe(true);
+        await client.eventOccurrence("process", 2);
+        expect(client.lifecycle()).toEqual(["process", "process"]);
+        expect(host.pid).toBe(hostPid);
+        expect(host.exitCode).toBeNull();
+
+        const disconnect = client.request("disconnect", {
+          restart: false,
+          terminateDebuggee: true,
+        });
+        expect((await client.response(disconnect, 30_000)).success).toBe(true);
+        await client.event("terminated", 30_000);
+        expect(client.lifecycle()).toEqual([
+          "process",
+          "process",
+          "terminated",
+        ]);
+        expect(host.pid).toBe(hostPid);
+        expect(host.exitCode).toBeNull();
       } catch (error) {
         throw new Error(
           `${error instanceof Error ? error.message : String(error)}\nFoundry output:\n${output}`,
