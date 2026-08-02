@@ -119,6 +119,22 @@ async function inspectStop(
     3,
   );
 
+  // The engine populates scope values asynchronously after `scopes`. An
+  // evaluation is also serviced by the stopped debuggee, so its response is a
+  // protocol-visible barrier proving the earlier scope-value request completed.
+  // This avoids timing sleeps and still requires every response to succeed.
+  for (const context of ["watch", "hover", "repl"]) {
+    const evaluation = await succeeds(client, "evaluate", {
+      expression: "local_value + member_value",
+      frameId,
+      context,
+    });
+    expect(body(evaluation)).toMatchObject({
+      result: "42",
+      variablesReference: 0,
+    });
+  }
+
   const localsResponse = await succeeds(client, "variables", {
     variablesReference: localsReference,
   });
@@ -147,18 +163,6 @@ async function inspectStop(
     variablesReference: globalsReference,
   });
   records(body(globalsResponse).variables, "globals");
-
-  for (const context of ["watch", "hover", "repl"]) {
-    const evaluation = await succeeds(client, "evaluate", {
-      expression: "local_value + member_value",
-      frameId,
-      context,
-    });
-    expect(body(evaluation)).toMatchObject({
-      result: "42",
-      variablesReference: 0,
-    });
-  }
 
   return {
     threadId: Number(threadId),
