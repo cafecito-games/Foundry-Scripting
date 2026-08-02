@@ -117,6 +117,11 @@ const extensionMock = vi.hoisted(() => {
     show: vi.fn(),
     dispose: vi.fn(),
   },
+  debugOutputChannel: {
+    appendLine: vi.fn(),
+    show: vi.fn(),
+    dispose: vi.fn(),
+  },
   testingOutputChannel: {
     append: vi.fn(),
     appendLine: vi.fn(),
@@ -146,7 +151,12 @@ const extensionMock = vi.hoisted(() => {
   reconnectNow: vi.fn(),
   createConnectionManager: vi.fn(),
   coordinatorDispose: vi.fn(),
-  toolingHostCoordinator: { dispose: vi.fn() },
+  dapPort: 6006,
+  dapLeaseReleases: [] as Array<ReturnType<typeof vi.fn>>,
+  toolingHostCoordinator: {
+    dispose: vi.fn(),
+    acquireDapLease: vi.fn(),
+  },
   createToolingHostCoordinator: vi.fn(),
   diagnosticsUnit: {
     accept: vi.fn(),
@@ -160,7 +170,13 @@ const extensionMock = vi.hoisted(() => {
   registerTaskProvider: vi.fn(),
   registerFoundryTaskProvider: vi.fn(),
   debugProviderDisposable: { dispose: vi.fn() },
+  debugDescriptorDisposable: { dispose: vi.fn() },
+  debugTrackerDisposable: { dispose: vi.fn() },
+  debugTerminationDisposable: { dispose: vi.fn() },
   registerDebugConfigurationProvider: vi.fn(),
+  registerDebugAdapterDescriptorFactory: vi.fn(),
+  registerDebugAdapterTrackerFactory: vi.fn(),
+  onDidTerminateDebugSession: vi.fn(),
   resolveProject: vi.fn(),
   configurationChangeHandler: undefined as
     | ((event: { affectsConfiguration(section: string): boolean }) => void)
@@ -265,6 +281,8 @@ vi.mock("vscode", () => ({
     createOutputChannel: vi.fn((name: string) =>
       name === "FoundryScript Testing"
         ? extensionMock.testingOutputChannel
+        : name === "FoundryScript Debug"
+          ? extensionMock.debugOutputChannel
         : extensionMock.outputChannel,
     ),
     createStatusBarItem: vi.fn((_alignment: unknown, priority: number) =>
@@ -285,6 +303,17 @@ vi.mock("vscode", () => ({
   debug: {
     registerDebugConfigurationProvider:
       extensionMock.registerDebugConfigurationProvider,
+    registerDebugAdapterDescriptorFactory:
+      extensionMock.registerDebugAdapterDescriptorFactory,
+    registerDebugAdapterTrackerFactory:
+      extensionMock.registerDebugAdapterTrackerFactory,
+    onDidTerminateDebugSession: extensionMock.onDidTerminateDebugSession,
+  },
+  DebugAdapterServer: class {
+    constructor(
+      readonly port: number,
+      readonly host?: string,
+    ) {}
   },
   StatusBarAlignment: { Left: 1 },
   TestRunProfileKind: { Run: 1, Debug: 2 },
@@ -382,6 +411,18 @@ function createContext(): vscode.ExtensionContext {
   return { subscriptions: [] } as unknown as vscode.ExtensionContext;
 }
 
+function createDebugSession(
+  id: string,
+  configuration: vscode.DebugConfiguration,
+): vscode.DebugSession {
+  return {
+    id,
+    name: configuration.name,
+    type: configuration.type,
+    configuration,
+  } as unknown as vscode.DebugSession;
+}
+
 describe("extension entry point", () => {
   beforeEach(async () => {
     await deactivate();
@@ -390,6 +431,9 @@ describe("extension entry point", () => {
     extensionMock.outputChannel.appendLine.mockClear();
     extensionMock.outputChannel.show.mockClear();
     extensionMock.outputChannel.dispose.mockClear();
+    extensionMock.debugOutputChannel.appendLine.mockClear();
+    extensionMock.debugOutputChannel.show.mockClear();
+    extensionMock.debugOutputChannel.dispose.mockClear();
     extensionMock.testingOutputChannel.append.mockClear();
     extensionMock.testingOutputChannel.appendLine.mockClear();
     extensionMock.testingOutputChannel.show.mockClear();
@@ -420,9 +464,24 @@ describe("extension entry point", () => {
     );
     extensionMock.registerFoundryTaskProvider.mockReset();
     extensionMock.debugProviderDisposable.dispose.mockReset();
+    extensionMock.debugDescriptorDisposable.dispose.mockReset();
+    extensionMock.debugTrackerDisposable.dispose.mockReset();
+    extensionMock.debugTerminationDisposable.dispose.mockReset();
     extensionMock.registerDebugConfigurationProvider.mockReset();
     extensionMock.registerDebugConfigurationProvider.mockReturnValue(
       extensionMock.debugProviderDisposable,
+    );
+    extensionMock.registerDebugAdapterDescriptorFactory.mockReset();
+    extensionMock.registerDebugAdapterDescriptorFactory.mockReturnValue(
+      extensionMock.debugDescriptorDisposable,
+    );
+    extensionMock.registerDebugAdapterTrackerFactory.mockReset();
+    extensionMock.registerDebugAdapterTrackerFactory.mockReturnValue(
+      extensionMock.debugTrackerDisposable,
+    );
+    extensionMock.onDidTerminateDebugSession.mockReset();
+    extensionMock.onDidTerminateDebugSession.mockReturnValue(
+      extensionMock.debugTerminationDisposable,
     );
     extensionMock.resolveProject.mockReset();
     extensionMock.resolveProject.mockImplementation(() =>
@@ -501,6 +560,24 @@ describe("extension entry point", () => {
     extensionMock.coordinatorDispose = vi.fn().mockResolvedValue(undefined);
     extensionMock.toolingHostCoordinator.dispose =
       extensionMock.coordinatorDispose;
+    extensionMock.dapPort = 6006;
+    extensionMock.dapLeaseReleases.length = 0;
+    extensionMock.toolingHostCoordinator.acquireDapLease.mockReset();
+    extensionMock.toolingHostCoordinator.acquireDapLease.mockImplementation((signal?: AbortSignal) => {
+      if (signal?.aborted === true) {
+        const error = new Error("cancelled");
+        error.name = "AbortError";
+        return Promise.reject(error);
+      }
+      const release = vi.fn();
+      extensionMock.dapLeaseReleases.push(release);
+      return Promise.resolve({
+        endpoint: { host: "127.0.0.1", port: extensionMock.dapPort },
+        released: false,
+        release,
+        dispose: release,
+      });
+    });
     extensionMock.createToolingHostCoordinator.mockReset();
     extensionMock.createToolingHostCoordinator.mockReturnValue(
       extensionMock.toolingHostCoordinator,
@@ -592,7 +669,7 @@ describe("extension entry point", () => {
     expect(extensionMock.resolveProject).not.toHaveBeenCalled();
   });
 
-  it("registers exactly one FoundryScript debug provider for the activation lifetime", async () => {
+  it("registers the complete FoundryScript debug runtime and dedicated output for the activation lifetime", async () => {
     extensionMock.configuration.set("lsp.mode", "off");
     const context = createContext();
 
@@ -604,9 +681,219 @@ describe("extension entry point", () => {
     expect(
       extensionMock.registerDebugConfigurationProvider,
     ).toHaveBeenCalledWith("foundryscript", expect.any(Object));
-    expect(context.subscriptions).toContain(
-      extensionMock.debugProviderDisposable,
+    expect(
+      extensionMock.registerDebugAdapterDescriptorFactory,
+    ).toHaveBeenCalledWith("foundryscript", expect.any(Object));
+    expect(
+      extensionMock.registerDebugAdapterTrackerFactory,
+    ).toHaveBeenCalledWith("foundryscript", expect.any(Object));
+    expect(extensionMock.onDidTerminateDebugSession).toHaveBeenCalledOnce();
+    expect(context.subscriptions).toContain(extensionMock.debugOutputChannel);
+  });
+
+  it("drives an F5 default main launch through the spawn coordinator and retains its lease until stop", async () => {
+    extensionMock.configuration.set("lsp.mode", "spawn");
+    extensionMock.dapPort = 51002;
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game" },
+    });
+    await activate(createContext());
+    const provider = extensionMock.registerDebugConfigurationProvider.mock
+      .calls[0][1] as vscode.DebugConfigurationProvider;
+    const factory = extensionMock.registerDebugAdapterDescriptorFactory.mock
+      .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
+    const trackerFactory = extensionMock.registerDebugAdapterTrackerFactory.mock
+      .calls[0][1] as vscode.DebugAdapterTrackerFactory;
+
+    const defaultConfiguration = await provider.resolveDebugConfiguration?.(
+      undefined,
+      {} as vscode.DebugConfiguration,
     );
+    expect(defaultConfiguration).toMatchObject({
+      type: "foundryscript",
+      request: "launch",
+      scene: "main",
+    });
+    const resolved = await provider.resolveDebugConfigurationWithSubstitutedVariables?.(
+      undefined,
+      defaultConfiguration!,
+    );
+    expect(resolved).toMatchObject({
+      project: "/workspace/game",
+      scene: "main",
+      playArgs: [],
+    });
+    const session = createDebugSession("extension-f5-main", resolved!);
+    const tracker = await trackerFactory.createDebugAdapterTracker(session);
+
+    await expect(
+      factory.createDebugAdapterDescriptor(session, undefined),
+    ).resolves.toMatchObject({ host: "127.0.0.1", port: 51002 });
+    tracker?.onWillStartSession?.call(tracker);
+    tracker?.onWillStartSession?.call(tracker);
+    expect(extensionMock.dapLeaseReleases[0]).not.toHaveBeenCalled();
+
+    tracker?.onWillStopSession?.call(tracker);
+    expect(extensionMock.dapLeaseReleases[0]).toHaveBeenCalledOnce();
+    expect(extensionMock.coordinatorDispose).not.toHaveBeenCalled();
+  });
+
+  it("stops and restarts a fresh debug session through the preserved extension tooling host", async () => {
+    extensionMock.configuration.set("lsp.mode", "spawn");
+    extensionMock.dapPort = 51002;
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game" },
+    });
+    await activate(createContext());
+    const factory = extensionMock.registerDebugAdapterDescriptorFactory.mock
+      .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
+    const trackerFactory = extensionMock.registerDebugAdapterTrackerFactory.mock
+      .calls[0][1] as vscode.DebugAdapterTrackerFactory;
+    const terminate = extensionMock.onDidTerminateDebugSession.mock
+      .calls[0][0] as (session: vscode.DebugSession) => void;
+    const configuration = {
+      type: "foundryscript",
+      request: "launch",
+      name: "Debug Main",
+      scene: "main",
+      project: "/workspace/game",
+      playArgs: [],
+      noDebug: false,
+    };
+    const firstSession = createDebugSession("extension-stop", configuration);
+    const firstTracker = await trackerFactory.createDebugAdapterTracker(
+      firstSession,
+    );
+
+    await factory.createDebugAdapterDescriptor(firstSession, undefined);
+    firstTracker?.onWillStartSession?.call(firstTracker);
+    firstTracker?.onWillStopSession?.call(firstTracker);
+    terminate(firstSession);
+
+    const restartedSession = createDebugSession(
+      "extension-restart",
+      configuration,
+    );
+    const restartedTracker = await trackerFactory.createDebugAdapterTracker(
+      restartedSession,
+    );
+    await factory.createDebugAdapterDescriptor(restartedSession, undefined);
+    restartedTracker?.onWillStartSession?.call(restartedTracker);
+
+    expect(extensionMock.dapLeaseReleases).toHaveLength(2);
+    expect(extensionMock.dapLeaseReleases[0]).toHaveBeenCalledOnce();
+    expect(extensionMock.dapLeaseReleases[1]).not.toHaveBeenCalled();
+    expect(extensionMock.createToolingHostCoordinator).toHaveBeenCalledOnce();
+    expect(extensionMock.coordinatorDispose).not.toHaveBeenCalled();
+    expect(
+      extensionMock.debugOutputChannel.appendLine.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.includes("Launching")),
+    ).toEqual([
+      expect.stringContaining("[extension-stop] Launching main"),
+      expect.stringContaining("[extension-restart] Launching main"),
+    ]);
+    expect(extensionMock.debugOutputChannel.appendLine).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /\[extension-stop\].*session ended.*released the DAP lease/i,
+      ),
+    );
+  });
+
+  it("maps an explicit Run Without Debugging launch and uses the external attach DAP port", async () => {
+    extensionMock.configuration.set("lsp.mode", "attach");
+    extensionMock.configuration.set("dap.port", 7702);
+    extensionMock.dapPort = 7702;
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game" },
+    });
+    await activate(createContext());
+    const provider = extensionMock.registerDebugConfigurationProvider.mock
+      .calls[0][1] as vscode.DebugConfigurationProvider;
+    const factory = extensionMock.registerDebugAdapterDescriptorFactory.mock
+      .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
+
+    const resolved = await provider.resolveDebugConfigurationWithSubstitutedVariables?.(
+      undefined,
+      {
+        type: "foundryscript",
+        request: "launch",
+        name: "Run Forest",
+        scene: "res://levels/forest.tscn",
+        args: ["--seed", "42"],
+        noDebug: true,
+      },
+    );
+    expect(resolved).toEqual({
+      type: "foundryscript",
+      request: "launch",
+      name: "Run Forest",
+      scene: "res://levels/forest.tscn",
+      project: "/workspace/game",
+      playArgs: ["--seed", "42"],
+      noDebug: true,
+    });
+    const session = createDebugSession("extension-explicit", resolved!);
+
+    await expect(
+      factory.createDebugAdapterDescriptor(session, undefined),
+    ).resolves.toMatchObject({ host: "127.0.0.1", port: 7702 });
+    expect(extensionMock.toolingHostCoordinator.acquireDapLease).toHaveBeenCalledWith(
+      expect.any(AbortSignal),
+    );
+
+    const terminate = extensionMock.onDidTerminateDebugSession.mock
+      .calls[0][0] as (session: vscode.DebugSession) => void;
+    terminate(session);
+    expect(extensionMock.dapLeaseReleases[0]).toHaveBeenCalledOnce();
+  });
+
+  it("uses the auto coordinator's selected endpoint without reimplementing branch selection", async () => {
+    extensionMock.configuration.set("lsp.mode", "auto");
+    extensionMock.dapPort = 62002;
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game" },
+    });
+    await activate(createContext());
+    const factory = extensionMock.registerDebugAdapterDescriptorFactory.mock
+      .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
+    const session = createDebugSession("extension-auto", {
+      type: "foundryscript",
+      request: "launch",
+      name: "Debug Main",
+      scene: "main",
+      project: "/workspace/game",
+      playArgs: [],
+      noDebug: false,
+    });
+
+    await expect(
+      factory.createDebugAdapterDescriptor(session, undefined),
+    ).resolves.toMatchObject({ host: "127.0.0.1", port: 62002 });
+  });
+
+  it("rejects F5 in disabled mode with dedicated actionable diagnostics", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    await activate(createContext());
+    const factory = extensionMock.registerDebugAdapterDescriptorFactory.mock
+      .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
+
+    await expect(
+      factory.createDebugAdapterDescriptor(
+        createDebugSession("extension-off", {
+          type: "foundryscript",
+          request: "launch",
+          name: "Debug Main",
+          scene: "main",
+          project: "/workspace/game",
+        }),
+        undefined,
+      ),
+    ).rejects.toThrow("foundryScript.lsp.mode");
+    expect(extensionMock.debugOutputChannel.appendLine).toHaveBeenCalledWith(
+      expect.stringMatching(/off.*foundryScript\.lsp\.mode/i),
+    );
+    expect(extensionMock.showErrorMessage).toHaveBeenCalledOnce();
   });
 
   it("offers project settings and does not connect when selection is ambiguous", async () => {

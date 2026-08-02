@@ -14,7 +14,7 @@ import {
   createToolingHostCoordinator,
 } from "./client/runtime.js";
 import { createDiagnosticsUnit } from "./diagnostics/index.js";
-import { registerFoundryScriptDebugConfigurationProvider } from "./debug/runtime.js";
+import { registerFoundryScriptDebugRuntime } from "./debug/runtime.js";
 import type { ProjectResolutionFailure } from "./project/resolver.js";
 import {
   createWorkspaceProjectResolver,
@@ -465,10 +465,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(diagnostics);
   const resolveProject = createWorkspaceProjectResolver();
   registerFoundryTaskProvider(context, diagnostics, resolveProject);
-  registerFoundryScriptDebugConfigurationProvider(context, resolveProject);
+  const settings = readConnectionSettings();
+  const debugOutput = vscode.window.createOutputChannel("FoundryScript Debug");
+  context.subscriptions.push(debugOutput);
+  registerFoundryScriptDebugRuntime(context, {
+    resolveProject,
+    getCoordinator: () => activeToolingHostCoordinator,
+    getMode: () => readConnectionSettings().mode,
+    output: debugOutput,
+  });
   const outputChannel = vscode.window.createOutputChannel("FoundryScript LSP");
   context.subscriptions.push(outputChannel);
-  const settings = readConnectionSettings();
   const statusItem = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left,
     100,
