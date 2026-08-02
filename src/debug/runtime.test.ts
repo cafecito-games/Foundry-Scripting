@@ -89,12 +89,19 @@ function createSession(id: string): vscode.DebugSession {
 function deferred<T>(): {
   readonly promise: Promise<T>;
   readonly resolve: (value: T) => void;
+  readonly reject: (reason?: unknown) => void;
 } {
   let resolvePromise: ((value: T) => void) | undefined;
-  const promise = new Promise<T>((resolve) => {
+  let rejectPromise: ((reason?: unknown) => void) | undefined;
+  const promise = new Promise<T>((resolve, reject) => {
     resolvePromise = resolve;
+    rejectPromise = reject;
   });
-  return { promise, resolve: (value) => resolvePromise?.(value) };
+  return {
+    promise,
+    resolve: (value) => resolvePromise?.(value),
+    reject: (reason) => rejectPromise?.(reason),
+  };
 }
 
 function createOwnedHost(dapPort: number): OwnedToolingHost {
@@ -138,7 +145,7 @@ describe("FoundryScript debug runtime registration", () => {
       runtimeMock.terminationDisposable,
     );
     runtimeMock.stopDebugging.mockReset();
-    runtimeMock.stopDebugging.mockResolvedValue(true);
+    runtimeMock.stopDebugging.mockResolvedValue(undefined);
     runtimeMock.showErrorMessage.mockReset();
     runtimeMock.configurationDisposable.dispose.mockReset();
     runtimeMock.descriptorDisposable.dispose.mockReset();
@@ -677,7 +684,7 @@ describe("FoundryScript debug runtime registration", () => {
   it("blocks replacement sessions while an owned-host failure is still draining VS Code", async () => {
     const runtime = await loadRuntimeModule();
     expect(runtime).toBeDefined();
-    const stopping = deferred<boolean>();
+    const stopping = deferred<void>();
     runtimeMock.stopDebugging.mockReturnValue(stopping.promise);
     const createExitingHost = (dapPort: number) => {
       const base = createOwnedHost(dapPort);
@@ -741,7 +748,7 @@ describe("FoundryScript debug runtime registration", () => {
       ),
     ).rejects.toThrow("already active");
 
-    stopping.resolve(true);
+    stopping.resolve(undefined);
     await vi.waitFor(() =>
       expect(appendLine).toHaveBeenCalledWith(
         expect.stringMatching(/draining-first.*failure drain completed/i),
@@ -753,6 +760,101 @@ describe("FoundryScript debug runtime registration", () => {
         undefined,
       ),
     ).resolves.toMatchObject({ port: 51302 });
+  });
+
+  it.each([
+    { order: "stop rejection before termination", terminateFirst: false },
+    { order: "termination before stop rejection", terminateFirst: true },
+  ])("keeps a failed session gated through $order", async ({ terminateFirst }) => {
+    const runtime = await loadRuntimeModule();
+    expect(runtime).toBeDefined();
+    const stopping = deferred<void>();
+    const release = vi.fn();
+    const acquireDapLease = vi
+      .fn()
+      .mockResolvedValueOnce({
+        endpoint: { host: "127.0.0.1", port: 51202 },
+        ownership: "owned",
+        released: false,
+        release,
+        dispose: release,
+      })
+      .mockResolvedValueOnce({
+        endpoint: { host: "127.0.0.1", port: 51302 },
+        ownership: "owned",
+        released: false,
+        release: vi.fn(),
+        dispose: vi.fn(),
+      });
+    let onStateChange:
+      | ((state: { kind: "failed"; error: Error }) => void)
+      | undefined;
+    const context = { subscriptions: [] } as unknown as vscode.ExtensionContext;
+    const appendLine = vi.fn();
+    runtimeMock.stopDebugging.mockReturnValue(stopping.promise);
+    runtime!.registerFoundryScriptDebugRuntime(context, {
+      resolveProject,
+      getCoordinator: () => ({
+        acquireDapLease,
+        onStateChange: vi.fn(
+          (listener: (state: { kind: "failed"; error: Error }) => void) => {
+            onStateChange = listener;
+            return { dispose: vi.fn() };
+          },
+        ),
+      }) as never,
+      getMode: () => "spawn",
+      output: { appendLine } as unknown as vscode.OutputChannel,
+    });
+    const factory = runtimeMock.registerDebugAdapterDescriptorFactory.mock
+      .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
+    const terminate = runtimeMock.onDidTerminateDebugSession.mock
+      .calls[0][0] as (session: vscode.DebugSession) => void;
+    const firstSession = createSession("rejected-stop-first");
+    await factory.createDebugAdapterDescriptor(firstSession, undefined);
+
+    onStateChange?.({
+      kind: "failed",
+      error: new Error("owned tooling host exited"),
+    });
+    await vi.waitFor(() =>
+      expect(runtimeMock.stopDebugging).toHaveBeenCalledWith(firstSession),
+    );
+    if (terminateFirst) {
+      terminate(firstSession);
+      await expect(
+        factory.createDebugAdapterDescriptor(
+          createSession("replacement-before-stop-settlement"),
+          undefined,
+        ),
+      ).rejects.toThrow("already active");
+      expect(acquireDapLease).toHaveBeenCalledOnce();
+    }
+
+    stopping.reject(new Error("VS Code refused the stop request"));
+    await vi.waitFor(() =>
+      expect(appendLine).toHaveBeenCalledWith(
+        expect.stringMatching(/Unable to stop.*VS Code refused the stop request/i),
+      ),
+    );
+
+    if (!terminateFirst) {
+      await expect(
+        factory.createDebugAdapterDescriptor(
+          createSession("replacement-before-termination"),
+          undefined,
+        ),
+      ).rejects.toThrow("already active");
+      expect(acquireDapLease).toHaveBeenCalledOnce();
+      terminate(firstSession);
+    }
+    await expect(
+      factory.createDebugAdapterDescriptor(
+        createSession("replacement-after-termination"),
+        undefined,
+      ),
+    ).resolves.toMatchObject({ port: 51302 });
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it("reports one transport failure when adapter exit arrives before its error", async () => {

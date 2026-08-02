@@ -35,6 +35,12 @@ interface DebugSessionAcquisition {
   coordinatorSubscription?: DisposableHandle;
 }
 
+interface FailedSessionDrain {
+  readonly session: vscode.DebugSession;
+  stopRequest: "pending" | "fulfilled" | "rejected";
+  terminationObserved: boolean;
+}
+
 export interface FoundryScriptDebugRuntime {
   dispose(): void;
   shutdown(): Promise<void>;
@@ -45,7 +51,7 @@ export function registerFoundryScriptDebugRuntime(
   options: FoundryScriptDebugRuntimeOptions,
 ): FoundryScriptDebugRuntime {
   const sessions = new Map<string, DebugSessionAcquisition>();
-  const drainingSessions = new Set<string>();
+  const drainingSessions = new Map<string, FailedSessionDrain>();
   const loggedLaunches = new Set<string>();
   const reportedFailures = new Set<string>();
   const contextualizeStartupFailure = (
@@ -113,6 +119,21 @@ export function registerFoundryScriptDebugRuntime(
     if (!reportSessionFailure(session, error)) return;
     endSession(session, "debug adapter failure");
   };
+  const completeFailedSessionDrain = (drain: FailedSessionDrain): void => {
+    if (
+      drainingSessions.get(drain.session.id) !== drain ||
+      drain.stopRequest === "pending" ||
+      (drain.stopRequest === "rejected" && !drain.terminationObserved)
+    ) {
+      return;
+    }
+    drainingSessions.delete(drain.session.id);
+    endSession(drain.session, "owned tooling host failure");
+    options.output.appendLine(
+      `[${drain.session.id}] Owned tooling-host failure drain completed; ` +
+        "replacement debug sessions may start.",
+    );
+  };
   const stopAfterHostFailure = (
     session: vscode.DebugSession,
     acquisition: DebugSessionAcquisition,
@@ -130,23 +151,29 @@ export function registerFoundryScriptDebugRuntime(
         ? state.error
         : new Error(String(state.error));
     if (!reportSessionFailure(session, error)) return;
-    drainingSessions.add(session.id);
+    const drain: FailedSessionDrain = {
+      session,
+      stopRequest: "pending",
+      terminationObserved: false,
+    };
+    drainingSessions.set(session.id, drain);
     acquisition.controller.abort();
-    void Promise.resolve(vscode.debug.stopDebugging(session))
-      .catch((stopError: unknown) => {
-        options.output.appendLine(
-          `[${session.id}] Unable to stop the failed FoundryScript debug session: ` +
-            `${stopError instanceof Error ? stopError.message : String(stopError)}`,
-        );
-      })
-      .finally(() => {
-        drainingSessions.delete(session.id);
-        endSession(session, "owned tooling host failure");
-        options.output.appendLine(
-          `[${session.id}] Owned tooling-host failure drain completed; ` +
-            "replacement debug sessions may start.",
-        );
-      });
+    void Promise.resolve()
+      .then(() => vscode.debug.stopDebugging(session))
+      .then(
+        () => {
+          drain.stopRequest = "fulfilled";
+          completeFailedSessionDrain(drain);
+        },
+        (stopError: unknown) => {
+          drain.stopRequest = "rejected";
+          options.output.appendLine(
+            `[${session.id}] Unable to stop the failed FoundryScript debug session: ` +
+              `${stopError instanceof Error ? stopError.message : String(stopError)}`,
+          );
+          completeFailedSessionDrain(drain);
+        },
+      );
   };
   const provider = new FoundryScriptDebugConfigurationProvider({
     resolveProject: options.resolveProject,
@@ -177,7 +204,7 @@ export function registerFoundryScriptDebugRuntime(
     }
     const activeSession = sessions.values().next().value;
     const activeSessionId =
-      activeSession?.session.id ?? drainingSessions.values().next().value;
+      activeSession?.session.id ?? drainingSessions.keys().next().value;
     if (activeSessionId !== undefined) {
       const error = contextualizeStartupFailure(
         session,
@@ -289,9 +316,12 @@ export function registerFoundryScriptDebugRuntime(
         }),
       },
     ),
-    vscode.debug.onDidTerminateDebugSession((session) =>
-      endSession(session, "VS Code termination"),
-    ),
+    vscode.debug.onDidTerminateDebugSession((session) => {
+      const drain = drainingSessions.get(session.id);
+      if (drain !== undefined) drain.terminationObserved = true;
+      endSession(session, "VS Code termination");
+      if (drain !== undefined) completeFailedSessionDrain(drain);
+    }),
   ];
   let disposed = false;
   const dispose = (): void => {
