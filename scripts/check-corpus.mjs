@@ -11,6 +11,13 @@ const textmate = require("vscode-textmate");
 
 const enginePath = process.env.FOUNDRY_ENGINE_PATH;
 if (!enginePath) {
+  if (process.env.CI) {
+    console.error(
+      "CI corpus check requires FOUNDRY_ENGINE_PATH to point to a Foundry checkout.",
+    );
+    process.exit(1);
+  }
+
   console.log(
     "FOUNDRY_ENGINE_PATH is not set - skipping the corpus check.\n" +
       "Set it to a Foundry engine checkout to run this locally:\n" +
@@ -116,6 +123,13 @@ for await (const file of findScripts(enginePath)) {
 }
 
 console.log(`Scanned ${scanned} .fs files.`);
+
+if (scanned === 0) {
+  console.error(
+    "Corpus check requires at least one .fs file; verify FOUNDRY_ENGINE_PATH.",
+  );
+  process.exit(1);
+}
 
 if (failures.length > 0) {
   console.error(`\n${failures.length} unexpected invalid scope(s):\n`);

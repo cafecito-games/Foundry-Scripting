@@ -171,8 +171,13 @@ FOUNDRY_ENGINE_PATH=/path/to/Foundry npm run test:corpus
 ```
 
 This tokenizes roughly 1,326 valid `.fs` files from the engine checkout and fails on any
-`invalid.illegal` scope. Without `FOUNDRY_ENGINE_PATH` set, it skips cleanly with an
-explanatory message and exits 0 — this is what CI does on every run.
+unexpected `invalid.illegal` scope. Local runs without `FOUNDRY_ENGINE_PATH` skip
+cleanly with an explanatory message.
+
+CI does not skip this check. Its `corpus` job checks out an immutable Foundry commit for
+the same release pinned in `foundry-grammar.json`, sets `FOUNDRY_ENGINE_PATH`, and fails
+if the checkout yields zero `.fs` files. When updating the grammar release, update the
+corpus checkout SHA in `.github/workflows/ci.yml` to the commit behind that release.
 
 Press F5 in VS Code to launch an Extension Development Host.
 
