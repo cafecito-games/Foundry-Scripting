@@ -177,6 +177,7 @@ const extensionMock = vi.hoisted(() => {
   registerDebugAdapterDescriptorFactory: vi.fn(),
   registerDebugAdapterTrackerFactory: vi.fn(),
   onDidTerminateDebugSession: vi.fn(),
+  stopDebugging: vi.fn(),
   resolveProject: vi.fn(),
   configurationChangeHandler: undefined as
     | ((event: { affectsConfiguration(section: string): boolean }) => void)
@@ -308,6 +309,7 @@ vi.mock("vscode", () => ({
     registerDebugAdapterTrackerFactory:
       extensionMock.registerDebugAdapterTrackerFactory,
     onDidTerminateDebugSession: extensionMock.onDidTerminateDebugSession,
+    stopDebugging: extensionMock.stopDebugging,
   },
   DebugAdapterServer: class {
     constructor(
@@ -483,6 +485,8 @@ describe("extension entry point", () => {
     extensionMock.onDidTerminateDebugSession.mockReturnValue(
       extensionMock.debugTerminationDisposable,
     );
+    extensionMock.stopDebugging.mockReset();
+    extensionMock.stopDebugging.mockResolvedValue(true);
     extensionMock.resolveProject.mockReset();
     extensionMock.resolveProject.mockImplementation(() =>
       Promise.resolve(
@@ -989,6 +993,37 @@ describe("extension entry point", () => {
     await deactivate();
 
     expect(extensionMock.stop).toHaveBeenCalledOnce();
+  });
+
+  it("deactivation stops DAP before LSP and disposes the owned host last", async () => {
+    extensionMock.configuration.set("lsp.mode", "spawn");
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game" },
+    });
+    await activate(createContext());
+    const factory = extensionMock.registerDebugAdapterDescriptorFactory.mock
+      .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
+    const session = createDebugSession("deactivation-order", {
+      type: "foundryscript",
+      request: "launch",
+      name: "Debug Main",
+      scene: "main",
+      project: "/workspace/game",
+      playArgs: [],
+      noDebug: false,
+    });
+    await factory.createDebugAdapterDescriptor(session, undefined);
+
+    await deactivate();
+
+    expect(extensionMock.stopDebugging).toHaveBeenCalledWith(session);
+    expect(extensionMock.stopDebugging.mock.invocationCallOrder[0]).toBeLessThan(
+      extensionMock.stop.mock.invocationCallOrder[0],
+    );
+    expect(extensionMock.stop.mock.invocationCallOrder[0]).toBeLessThan(
+      extensionMock.coordinatorDispose.mock.invocationCallOrder[0],
+    );
+    expect(extensionMock.dapLeaseReleases[0]).toHaveBeenCalledOnce();
   });
 
   it("configures testing independently while disabled", async () => {

@@ -116,6 +116,24 @@ describe("ToolingHostCoordinator modes and state", () => {
     expect(launch).not.toHaveBeenCalled();
   });
 
+  it("labels DAP leases with the selected host ownership", async () => {
+    const external = new ToolingHostCoordinator({ launcher });
+    await external.start({ ...spawnRequest, mode: "attach" });
+    const externalLease = await external.acquireDapLease();
+
+    expect(externalLease.ownership).toBe("external");
+    externalLease.release();
+
+    const host = createOwnedHost();
+    launch.mockResolvedValue(host);
+    const owned = new ToolingHostCoordinator({ launcher });
+    await owned.start(spawnRequest);
+
+    await expect(owned.acquireDapLease()).resolves.toMatchObject({
+      ownership: "owned",
+    });
+  });
+
   it("retains the complete readiness record for an owned host", async () => {
     const host = createOwnedHost();
     launch.mockResolvedValue(host);
@@ -374,6 +392,29 @@ describe("ToolingHostCoordinator serialized readiness", () => {
 });
 
 describe("ToolingHostCoordinator DAP lease and process exit", () => {
+  it("notifies lifecycle observers when an owned host invalidates active endpoints", async () => {
+    const host = createOwnedHost(52900, 52901);
+    const coordinator = new ToolingHostCoordinator({
+      launcher: { launch: vi.fn().mockResolvedValue(host) },
+    });
+    const observed: ToolingHostCoordinatorState[] = [];
+    const subscription = coordinator.onStateChange((state) => observed.push(state));
+    await coordinator.start(spawnRequest);
+    const lease = await coordinator.acquireDapLease();
+
+    host.exit(19);
+
+    const failure = observed.at(-1);
+    expect(failure?.kind).toBe("failed");
+    if (failure?.kind !== "failed") {
+      throw new Error("owned host exit did not publish failure");
+    }
+    expect(failure.error).toBeInstanceOf(Error);
+    expect((failure.error as Error).message).toContain("code 19");
+    expect(lease.released).toBe(true);
+    subscription.dispose();
+  });
+
   it("rejects a second DAP lease without changing the first", async () => {
     const coordinator = new ToolingHostCoordinator({
       launcher: { launch: vi.fn() },
@@ -471,5 +512,19 @@ describe("ToolingHostCoordinator DAP lease and process exit", () => {
       dap: { port: 54001 },
     });
     expect(launch).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a lease when host exit wins after readiness but before lease grant", async () => {
+    const host = createOwnedHost(55000, 55001);
+    const coordinator = new ToolingHostCoordinator({
+      launcher: { launch: vi.fn().mockResolvedValue(host) },
+    });
+    await coordinator.start(spawnRequest);
+
+    const lease = coordinator.acquireDapLease();
+    host.exit(41);
+
+    await expect(lease).rejects.toThrow("became stale");
+    expect(coordinator.state).toMatchObject({ kind: "failed" });
   });
 });

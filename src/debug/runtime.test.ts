@@ -11,6 +11,7 @@ const runtimeMock = vi.hoisted(() => ({
   registerDebugAdapterDescriptorFactory: vi.fn(),
   registerDebugAdapterTrackerFactory: vi.fn(),
   onDidTerminateDebugSession: vi.fn(),
+  stopDebugging: vi.fn(),
   showErrorMessage: vi.fn(),
   configurationDisposable: { dispose: vi.fn() },
   descriptorDisposable: { dispose: vi.fn() },
@@ -38,9 +39,27 @@ vi.mock("vscode", () => ({
     registerDebugAdapterTrackerFactory:
       runtimeMock.registerDebugAdapterTrackerFactory,
     onDidTerminateDebugSession: runtimeMock.onDidTerminateDebugSession,
+    stopDebugging: runtimeMock.stopDebugging,
   },
   window: {
     showErrorMessage: runtimeMock.showErrorMessage,
+  },
+}));
+
+vi.mock("./lifecycle.js", () => ({
+  probeLoopbackDebugAdapter: vi.fn().mockResolvedValue(undefined),
+  contextualizeDebugStartupFailure: (
+    mode: string,
+    project: unknown,
+    error: unknown,
+  ) => {
+    const detail = error instanceof Error ? error.message : String(error);
+    return new Error(
+      `FoundryScript debug startup failed in ${mode} mode for project ${String(project)}: ` +
+        `${detail} Check FoundryScript Debug output, verify foundryScript.lsp.mode, ` +
+        "stop the active debug session if one is running, and retry.",
+      { cause: error },
+    );
   },
 }));
 
@@ -118,6 +137,8 @@ describe("FoundryScript debug runtime registration", () => {
     runtimeMock.onDidTerminateDebugSession.mockReturnValue(
       runtimeMock.terminationDisposable,
     );
+    runtimeMock.stopDebugging.mockReset();
+    runtimeMock.stopDebugging.mockResolvedValue(true);
     runtimeMock.showErrorMessage.mockReset();
     runtimeMock.configurationDisposable.dispose.mockReset();
     runtimeMock.descriptorDisposable.dispose.mockReset();
@@ -266,6 +287,103 @@ describe("FoundryScript debug runtime registration", () => {
       expect.stringContaining("descriptor unavailable"),
     );
     expect(runtimeMock.showErrorMessage).toHaveBeenCalledOnce();
+  });
+
+  it("preflights external DAP endpoints and reports the precise setting once on refusal", async () => {
+    const runtime = await loadRuntimeModule();
+    expect(runtime).toBeDefined();
+    const release = vi.fn();
+    const appendLine = vi.fn();
+    const probeEndpoint = vi.fn().mockRejectedValue(
+      Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:7002"), {
+        code: "ECONNREFUSED",
+      }),
+    );
+    const context = { subscriptions: [] } as unknown as vscode.ExtensionContext;
+    runtime!.registerFoundryScriptDebugRuntime(context, {
+      resolveProject,
+      getCoordinator: () => ({
+        acquireDapLease: vi.fn().mockResolvedValue({
+          endpoint: { host: "127.0.0.1", port: 7002 },
+          ownership: "external",
+          released: false,
+          release,
+          dispose: release,
+        }),
+        onStateChange: vi.fn(() => ({ dispose: vi.fn() })),
+        state: { kind: "ready-external" },
+      }) as never,
+      getMode: () => "attach",
+      output: { appendLine } as unknown as vscode.OutputChannel,
+      probeEndpoint,
+    });
+    const factory = runtimeMock.registerDebugAdapterDescriptorFactory.mock
+      .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
+    const session = createSession("external-refusal");
+
+    await expect(
+      factory.createDebugAdapterDescriptor(session, undefined),
+    ).rejects.toThrow(
+      /attach mode.*\/workspace\/game.*127\.0\.0\.1:7002.*foundryScript\.dap\.port/i,
+    );
+    expect(probeEndpoint).toHaveBeenCalledWith(
+      { host: "127.0.0.1", port: 7002 },
+      expect.any(AbortSignal),
+    );
+    expect(release).toHaveBeenCalledOnce();
+    expect(runtimeMock.showErrorMessage).toHaveBeenCalledOnce();
+    expect(appendLine).toHaveBeenCalledWith(
+      expect.stringMatching(/127\.0\.0\.1:7002.*foundryScript\.dap\.port/i),
+    );
+  });
+
+  it("cancels after external connection preflight begins without notifying or retaining the lease", async () => {
+    const runtime = await loadRuntimeModule();
+    expect(runtime).toBeDefined();
+    const release = vi.fn();
+    let probeSignal: AbortSignal | undefined;
+    const probeEndpoint = vi.fn((_endpoint, signal: AbortSignal) => {
+      probeSignal = signal;
+      return new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          const error = new Error("cancelled after connection");
+          error.name = "AbortError";
+          reject(error);
+        });
+      });
+    });
+    const context = { subscriptions: [] } as unknown as vscode.ExtensionContext;
+    runtime!.registerFoundryScriptDebugRuntime(context, {
+      resolveProject,
+      getCoordinator: () => ({
+        acquireDapLease: vi.fn().mockResolvedValue({
+          endpoint: { host: "127.0.0.1", port: 7002 },
+          ownership: "external",
+          released: false,
+          release,
+          dispose: release,
+        }),
+        onStateChange: vi.fn(() => ({ dispose: vi.fn() })),
+        state: { kind: "ready-external" },
+      }) as never,
+      getMode: () => "attach",
+      output: { appendLine: vi.fn() } as unknown as vscode.OutputChannel,
+      probeEndpoint,
+    });
+    const factory = runtimeMock.registerDebugAdapterDescriptorFactory.mock
+      .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
+    const terminate = runtimeMock.onDidTerminateDebugSession.mock
+      .calls[0][0] as (session: vscode.DebugSession) => void;
+    const session = createSession("cancel-after-connect");
+
+    const descriptor = factory.createDebugAdapterDescriptor(session, undefined);
+    await vi.waitFor(() => expect(probeEndpoint).toHaveBeenCalledOnce());
+    terminate(session);
+
+    expect(probeSignal?.aborted).toBe(true);
+    await expect(descriptor).rejects.toMatchObject({ name: "AbortError" });
+    expect(release).toHaveBeenCalledOnce();
+    expect(runtimeMock.showErrorMessage).not.toHaveBeenCalled();
   });
 
   it("aborts a lease acquisition that is pending when VS Code terminates the session", async () => {
@@ -499,8 +617,61 @@ describe("FoundryScript debug runtime registration", () => {
     ).toHaveLength(1);
     expect(runtimeMock.showErrorMessage).toHaveBeenCalledOnce();
     expect(runtimeMock.showErrorMessage).toHaveBeenCalledWith(
-      expect.stringContaining("socket reset"),
+      expect.stringMatching(/socket reset.*127\.0\.0\.1:50127/i),
     );
+  });
+
+  it("stops the active VS Code session when its owned tooling host exits", async () => {
+    const runtime = await loadRuntimeModule();
+    expect(runtime).toBeDefined();
+    const baseHost = createOwnedHost(51102);
+    const exitListeners = new Set<(code: number | null) => void>();
+    const host: OwnedToolingHost & { exit(code: number | null): void } = {
+      ...baseHost,
+      onExit: (listener) => {
+        exitListeners.add(listener);
+        return { dispose: () => exitListeners.delete(listener) };
+      },
+      exit: (code) => {
+        for (const listener of exitListeners) listener(code);
+      },
+    };
+    const coordinator = new ToolingHostCoordinator({
+      launcher: { launch: vi.fn().mockResolvedValue(host) },
+    });
+    await coordinator.start({
+      mode: "spawn",
+      enginePath: "/opt/foundry",
+      project: "/workspace/game",
+      lspPort: 0,
+      dapPort: 0,
+    });
+    const appendLine = vi.fn();
+    const context = { subscriptions: [] } as unknown as vscode.ExtensionContext;
+    runtime!.registerFoundryScriptDebugRuntime(context, {
+      resolveProject,
+      getCoordinator: () => coordinator,
+      getMode: () => "spawn",
+      output: { appendLine } as unknown as vscode.OutputChannel,
+    });
+    const factory = runtimeMock.registerDebugAdapterDescriptorFactory.mock
+      .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
+    const session = createSession("owned-host-exit");
+    await factory.createDebugAdapterDescriptor(session, undefined);
+
+    host.exit(31);
+    await vi.waitFor(() =>
+      expect(runtimeMock.stopDebugging).toHaveBeenCalledWith(session),
+    );
+
+    expect(runtimeMock.showErrorMessage).toHaveBeenCalledOnce();
+    expect(runtimeMock.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringMatching(/spawn mode.*\/workspace\/game.*code 31.*127\.0\.0\.1:51102/i),
+    );
+    expect(appendLine).toHaveBeenCalledWith(
+      expect.stringMatching(/owned-host-exit.*code 31/i),
+    );
+    expect(coordinator.state).toMatchObject({ kind: "failed" });
   });
 
   it("reports one transport failure when adapter exit arrives before its error", async () => {
