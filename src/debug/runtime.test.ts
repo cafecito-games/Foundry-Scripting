@@ -662,6 +662,48 @@ describe("FoundryScript debug runtime registration", () => {
     await coordinator.dispose();
   });
 
+  it("rejects duplicate descriptor creation for one session id without orphaning its lease", async () => {
+    const runtime = await loadRuntimeModule();
+    expect(runtime).toBeDefined();
+    const coordinator = new ToolingHostCoordinator({
+      launcher: { launch: vi.fn() },
+    });
+    await coordinator.start({
+      mode: "attach",
+      enginePath: "/opt/foundry",
+      project: "/workspace/game",
+      lspPort: 7001,
+      dapPort: 7002,
+    });
+    const context = { subscriptions: [] } as unknown as vscode.ExtensionContext;
+    runtime!.registerFoundryScriptDebugRuntime(context, {
+      resolveProject,
+      getCoordinator: () => coordinator,
+      getMode: () => "attach",
+      output: { appendLine: vi.fn() } as unknown as vscode.OutputChannel,
+    });
+    const factory = runtimeMock.registerDebugAdapterDescriptorFactory.mock
+      .calls.at(-1)?.[1] as vscode.DebugAdapterDescriptorFactory;
+    const terminate = runtimeMock.onDidTerminateDebugSession.mock
+      .calls.at(-1)?.[0] as (session: vscode.DebugSession) => void;
+    const session = createSession("duplicate-id");
+
+    await factory.createDebugAdapterDescriptor(session, undefined);
+    await expect(
+      factory.createDebugAdapterDescriptor(session, undefined),
+    ).rejects.toThrow("already has a debug adapter");
+    terminate(session);
+    await expect(
+      factory.createDebugAdapterDescriptor(
+        createSession("after-duplicate"),
+        undefined,
+      ),
+    ).resolves.toMatchObject({ port: 7002 });
+
+    context.subscriptions[0].dispose();
+    await coordinator.dispose();
+  });
+
   it("releases a stopped session without stopping its shared owned tooling host", async () => {
     const runtime = await loadRuntimeModule();
     expect(runtime).toBeDefined();

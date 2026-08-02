@@ -79,6 +79,16 @@ export function registerFoundryScriptDebugRuntime(
     // tracker stop, and runtime disposal can still cancel a pending lease. If VS
     // Code terminates a would-be session before invoking this factory, there is no
     // acquisition to cancel and therefore no lease to release.
+    if (sessions.has(session.id)) {
+      const message =
+        `FoundryScript session ${session.id} already has a debug adapter. ` +
+        "Stop the active session before starting it again.";
+      options.output.appendLine(
+        `[${session.id}] FoundryScript debug startup failed: ${message}`,
+      );
+      void vscode.window.showErrorMessage(message);
+      throw new Error(message);
+    }
     const controller = new AbortController();
     const acquisition: DebugSessionAcquisition = { controller };
     sessions.set(session.id, acquisition);
