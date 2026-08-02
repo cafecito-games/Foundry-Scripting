@@ -38,6 +38,85 @@
         "path": "./syntaxes/foundryscript.tmLanguage.json"
       }
     ],
+    "breakpoints": [
+      {
+        "language": "foundryscript"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "foundryscript",
+        "label": "FoundryScript",
+        "languages": [
+          "foundryscript"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "scene"
+            ],
+            "properties": {
+              "scene": {
+                "description": "Foundry scene to launch. Use main for the project's configured main scene or a canonical res:// path to a .tscn scene.",
+                "oneOf": [
+                  {
+                    "const": "main",
+                    "description": "Launch the project's configured main scene."
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^res:\\/\\/(?:(?!\\.{1,2}(?:\\/|$))[^\\\\/]+\\/)*(?!\\.{1,2}(?:\\/|$))[^\\\\/]+\\.tscn$",
+                    "patternErrorMessage": "Scene must be main or a canonical res:// path ending in .tscn.",
+                    "description": "Launch an explicit scene using a canonical res:// path ending in .tscn."
+                  }
+                ]
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": [],
+                "description": "Additional string arguments passed to the launched Foundry scene."
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "foundryscript",
+            "request": "launch",
+            "name": "Debug Foundry Project",
+            "scene": "main",
+            "args": []
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "FoundryScript: Debug Main Scene",
+            "description": "Debug the Foundry project's configured main scene.",
+            "body": {
+              "type": "foundryscript",
+              "request": "launch",
+              "name": "Debug Foundry Project",
+              "scene": "main",
+              "args": []
+            }
+          },
+          {
+            "label": "FoundryScript: Debug Explicit Scene",
+            "description": "Debug an explicit Foundry scene selected by res:// path.",
+            "body": {
+              "type": "foundryscript",
+              "request": "launch",
+              "name": "Debug Foundry Scene",
+              "scene": "res://levels/forest.tscn",
+              "args": []
+            }
+          }
+        ]
+      }
+    ],
     "semanticTokenModifiers": [
       {
         "id": "final",
@@ -92,6 +171,13 @@
           "minimum": 1,
           "maximum": 65535,
           "description": "TCP port used to attach to an existing Foundry language server."
+        },
+        "foundryScript.dap.port": {
+          "type": "integer",
+          "default": 6006,
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "TCP port used to connect to the Foundry debug adapter in an externally owned tooling host."
         },
         "foundryScript.enginePath": {
           "type": "string",

@@ -156,6 +156,8 @@ const extensionMock = vi.hoisted(() => {
   taskProviderDisposable: { dispose: vi.fn() },
   registerTaskProvider: vi.fn(),
   registerFoundryTaskProvider: vi.fn(),
+  debugProviderDisposable: { dispose: vi.fn() },
+  registerDebugConfigurationProvider: vi.fn(),
   resolveProject: vi.fn(),
   configurationChangeHandler: undefined as
     | ((event: { affectsConfiguration(section: string): boolean }) => void)
@@ -276,6 +278,10 @@ vi.mock("vscode", () => ({
   },
   tasks: {
     registerTaskProvider: extensionMock.registerTaskProvider,
+  },
+  debug: {
+    registerDebugConfigurationProvider:
+      extensionMock.registerDebugConfigurationProvider,
   },
   StatusBarAlignment: { Left: 1 },
   TestRunProfileKind: { Run: 1, Debug: 2 },
@@ -409,6 +415,11 @@ describe("extension entry point", () => {
       },
     );
     extensionMock.registerFoundryTaskProvider.mockReset();
+    extensionMock.debugProviderDisposable.dispose.mockReset();
+    extensionMock.registerDebugConfigurationProvider.mockReset();
+    extensionMock.registerDebugConfigurationProvider.mockReturnValue(
+      extensionMock.debugProviderDisposable,
+    );
     extensionMock.resolveProject.mockReset();
     extensionMock.resolveProject.mockImplementation(() =>
       Promise.resolve(
@@ -564,6 +575,23 @@ describe("extension entry point", () => {
     );
     expect(context.subscriptions).toContain(extensionMock.diagnosticsUnit);
     expect(extensionMock.resolveProject).not.toHaveBeenCalled();
+  });
+
+  it("registers exactly one FoundryScript debug provider for the activation lifetime", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    const context = createContext();
+
+    await activate(context);
+
+    expect(
+      extensionMock.registerDebugConfigurationProvider,
+    ).toHaveBeenCalledOnce();
+    expect(
+      extensionMock.registerDebugConfigurationProvider,
+    ).toHaveBeenCalledWith("foundryscript", expect.any(Object));
+    expect(context.subscriptions).toContain(
+      extensionMock.debugProviderDisposable,
+    );
   });
 
   it("offers project settings and does not connect when selection is ambiguous", async () => {
