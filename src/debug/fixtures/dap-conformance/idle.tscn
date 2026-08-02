@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://idle.fs" id="1_idle"]
+
+[node name="Idle" type="Node"]
+script = ExtResource("1_idle")

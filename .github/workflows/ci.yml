@@ -94,6 +94,48 @@ jobs:
       - run: npm ci
       - run: npm run test:corpus
 
+  dap-conformance:
+    name: dap-conformance
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout FoundryScript extension
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - name: Checkout pinned Foundry engine
+        uses: actions/checkout@v4
+        with:
+          repository: cafecito-games/Foundry
+          ref: a2d9f6df06fb545c8106f24c7445466d6355085b
+          path: .foundry-engine
+          submodules: recursive
+      - name: Install Foundry build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwayland-bin
+          python -m pip install scons==4.10.1
+      - name: Restore Foundry build cache
+        uses: actions/cache@v4
+        with:
+          path: .foundry-engine/.scons_cache
+          key: dap-conformance-foundry-a2d9f6df0-${{ runner.os }}-${{ runner.arch }}
+      - name: Build pinned Foundry editor
+        working-directory: .foundry-engine
+        run: >-
+          scons platform=linuxbsd target=editor dev_mode=yes dev_build=yes
+          module_text_server_fb_enabled=yes
+          cache_path="$GITHUB_WORKSPACE/.foundry-engine/.scons_cache"
+          redirect_build_objects=no
+      - name: Run required real-engine DAP conformance
+        env:
+          FOUNDRY_ENGINE_PATH: ${{ github.workspace }}/.foundry-engine/bin/foundry.linuxbsd.editor.dev.x86_64
+        run: npm run test:dap-conformance
+
   package:
     name: package
     runs-on: ubuntu-latest
