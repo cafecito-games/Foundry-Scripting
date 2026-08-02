@@ -213,6 +213,37 @@ describe("host launch abstraction", () => {
     },
   );
 
+  it("exposes owned-process exit without coupling it to an LSP client", async () => {
+    const child = new FakeChildProcess();
+    const launcher = new FoundryHostLauncher({
+      spawnProcess: () => {
+        queueMicrotask(() => {
+          child.stdout.write(
+            `FOUNDRY_TOOLING ${JSON.stringify(validReadiness)}\n`,
+          );
+        });
+        return child.asChildProcess();
+      },
+      inactivityTimeoutMs: 100,
+      absoluteTimeoutMs: 200,
+      pollIntervalMs: 5,
+    });
+    const host = await launcher.launch({
+      enginePath: "/opt/foundry",
+      project: "/workspace/game",
+    });
+    const onExit = vi.fn();
+    const subscription = host.onExit(onExit);
+
+    child.exitCode = 17;
+    child.emit("exit", 17, null);
+    expect(onExit).toHaveBeenCalledWith(17);
+
+    subscription.dispose();
+    child.emit("exit", 18, null);
+    expect(onExit).toHaveBeenCalledOnce();
+  });
+
   it("does not accept an open TCP listener without a readiness record", async () => {
     const server = net.createServer();
     servers.push(server);

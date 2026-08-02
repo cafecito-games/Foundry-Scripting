@@ -8,7 +8,7 @@ import {
   type OwnedToolingHost,
   type ToolingHostLauncher,
   type ToolingHostReadiness,
-} from "./connection-manager.js";
+} from "../tooling/coordinator.js";
 import { type LogOutput, writeLog } from "./logging.js";
 
 export interface HostCommand {
@@ -380,11 +380,13 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
       stderr: "",
       lastActivityAt: startedAt,
     };
+    const exitListeners = new Set<(code: number | null) => void>();
     child.once("error", (error: NodeJS.ErrnoException) => {
       state.spawnError = error;
     });
     child.once("exit", (code) => {
       state.exit = { code };
+      for (const listener of exitListeners) listener(code);
     });
     const outputObserver = observeOutput(
       child,
@@ -416,6 +418,22 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
       let stopped = false;
       return {
         readiness,
+        onExit: (listener) => {
+          let disposed = false;
+          if (state.exit !== undefined) {
+            queueMicrotask(() => {
+              if (!disposed) listener(state.exit?.code ?? null);
+            });
+          } else {
+            exitListeners.add(listener);
+          }
+          return {
+            dispose: () => {
+              disposed = true;
+              exitListeners.delete(listener);
+            },
+          };
+        },
         stop: async () => {
           if (stopped) return;
           stopped = true;

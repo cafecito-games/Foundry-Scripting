@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 interface CapturedManagerOptions {
   createClient: (endpoint: { host: string; port: number }, signal: AbortSignal) => unknown;
+  coordinator?: unknown;
   onStateChange?: (state: { kind: string }) => void;
   output?: unknown;
 }
@@ -19,6 +20,8 @@ const runtimeMock = vi.hoisted(() => ({
   clientOptions: [] as CapturedClientOptions[],
   showWarningMessage: vi.fn(),
   executeCommand: vi.fn(),
+  coordinatorOptions: [] as Array<{ launcher?: unknown; onStateChange?: unknown }>,
+  launcherInstances: [] as unknown[],
 }));
 
 vi.mock("vscode", () => ({
@@ -36,7 +39,19 @@ vi.mock("./connection-manager.js", () => ({
 }));
 
 vi.mock("./host-launcher.js", () => ({
-  FoundryHostLauncher: class {},
+  FoundryHostLauncher: class {
+    constructor() {
+      runtimeMock.launcherInstances.push(this);
+    }
+  },
+}));
+
+vi.mock("../tooling/coordinator.js", () => ({
+  ToolingHostCoordinator: class {
+    constructor(options: { launcher?: unknown; onStateChange?: unknown }) {
+      runtimeMock.coordinatorOptions.push(options);
+    }
+  },
 }));
 
 vi.mock("./language-client.js", () => ({
@@ -47,7 +62,10 @@ vi.mock("./language-client.js", () => ({
   },
 }));
 
-import { createConnectionManager } from "./runtime.js";
+import {
+  createConnectionManager,
+  createToolingHostCoordinator,
+} from "./runtime.js";
 import type {
   DiagnosticsUnit,
   SourcedDiagnostics,
@@ -67,17 +85,45 @@ describe("connection runtime", () => {
     runtimeMock.clientOptions.length = 0;
     runtimeMock.showWarningMessage.mockReset();
     runtimeMock.executeCommand.mockReset();
+    runtimeMock.coordinatorOptions.length = 0;
+    runtimeMock.launcherInstances.length = 0;
+  });
+
+  it("creates one coordinator around one combined-host launcher", () => {
+    const outputChannel = { appendLine: vi.fn() };
+
+    const coordinator = createToolingHostCoordinator(outputChannel as never);
+
+    expect(runtimeMock.launcherInstances).toHaveLength(1);
+    expect(runtimeMock.coordinatorOptions).toHaveLength(1);
+    expect(runtimeMock.coordinatorOptions[0]?.launcher).toBe(
+      runtimeMock.launcherInstances[0],
+    );
+    expect(runtimeMock.coordinatorOptions[0]?.onStateChange).toBeTypeOf(
+      "function",
+    );
+    expect(coordinator).toBeDefined();
+
+    const onStateChange = runtimeMock.coordinatorOptions[0]?.onStateChange as
+      | ((state: { kind: string }) => void)
+      | undefined;
+    onStateChange?.({ kind: "starting" });
+    expect(outputChannel.appendLine).toHaveBeenCalledWith(
+      expect.stringContaining('"event":"tooling.host.state"'),
+    );
   });
 
   it("wires cancellation and workspace mismatch handling into each client", async () => {
     runtimeMock.showWarningMessage.mockResolvedValue("Open Server Project");
     const outputChannel = { appendLine: vi.fn() } as never;
     const onStateChange = vi.fn();
+    const coordinator = createToolingHostCoordinator(outputChannel);
     createConnectionManager(
       outputChannel,
       "/workspace/editor-project",
       onStateChange,
       noopDiagnostics(),
+      coordinator,
     );
     const signal = new AbortController().signal;
 
@@ -90,6 +136,7 @@ describe("connection runtime", () => {
     runtimeMock.managerOptions[0]?.onStateChange?.(state);
     expect(onStateChange).toHaveBeenCalledWith(state);
     expect(runtimeMock.managerOptions[0]?.output).toBe(outputChannel);
+    expect(runtimeMock.managerOptions[0]?.coordinator).toBe(coordinator);
     expect(options?.signal).toBe(signal);
 
     await options?.workspaceMismatchHandler?.handleServerWorkspace(
@@ -120,6 +167,7 @@ describe("connection runtime", () => {
       "/workspace/game",
       vi.fn(),
       diagnostics,
+      createToolingHostCoordinator({ appendLine: vi.fn() } as never),
     );
 
     runtimeMock.managerOptions[0]?.onStateChange?.({ kind: "connected" });

@@ -4,12 +4,18 @@ import {
   reconnectDelayMs,
 } from "./retry-policy.js";
 import { type LogOutput, writeLog } from "./logging.js";
+import type {
+  ToolingHostCoordinator,
+  ToolingHostMode,
+  ToolingHostRequest,
+} from "../tooling/coordinator.js";
 
-export type LspMode = "spawn" | "attach" | "auto" | "off";
+export type LspMode = ToolingHostMode;
 
 export interface ConnectionSettings {
   mode: LspMode;
   port: number;
+  dapPort?: number;
   enginePath: string;
 }
 
@@ -39,30 +45,6 @@ export interface RetryScheduler {
   schedule(delayMs: number, callback: () => void): DisposableHandle;
 }
 
-export interface ToolingHostReadiness {
-  project: string;
-  pid: number;
-  localOnly: boolean;
-  services: string[];
-  lspPort: number;
-  dapPort?: number;
-}
-
-export interface OwnedToolingHost {
-  readiness: ToolingHostReadiness;
-  stop: () => Promise<void>;
-}
-
-export interface HostLaunchRequest {
-  enginePath: string;
-  project: string;
-  signal?: AbortSignal;
-}
-
-export interface ToolingHostLauncher {
-  launch(request: HostLaunchRequest): Promise<OwnedToolingHost>;
-}
-
 export type ConnectionFailureKind = "tcp_refused";
 
 export class ConnectionFailure extends Error {
@@ -83,7 +65,7 @@ export class ConnectionFailure extends Error {
 
 export interface ConnectionManagerOptions {
   createClient(endpoint: TcpEndpoint, signal: AbortSignal): LanguageClientHandle;
-  launcher: ToolingHostLauncher;
+  coordinator: ToolingHostCoordinator;
   scheduler?: RetryScheduler;
   onStateChange?: (state: ConnectionState) => void;
   output?: LogOutput;
@@ -138,7 +120,6 @@ const defaultScheduler: RetryScheduler = {
 export class ConnectionManager {
   private activeClient: LanguageClientHandle | undefined;
   private activeClientStopSubscription: DisposableHandle | undefined;
-  private activeHost: OwnedToolingHost | undefined;
   private pendingStart: PendingStart | undefined;
   private startOptions: StartConnectionOptions | undefined;
   private generation = 0;
@@ -150,18 +131,10 @@ export class ConnectionManager {
     this.scheduler = options.scheduler ?? defaultScheduler;
   }
 
-  get ownedToolingHost(): ToolingHostReadiness | undefined {
-    const readiness = this.activeHost?.readiness;
-    return readiness === undefined
-      ? undefined
-      : { ...readiness, services: [...readiness.services] };
-  }
-
   async start({ settings, project }: StartConnectionOptions): Promise<void> {
     if (
       this.pendingStart !== undefined ||
-      this.activeClient !== undefined ||
-      this.activeHost !== undefined
+      this.activeClient !== undefined
     ) {
       throw new Error("A Foundry language server connection is already active.");
     }
@@ -196,26 +169,48 @@ export class ConnectionManager {
     project: string,
     signal: AbortSignal,
   ): Promise<void> {
+    const request: ToolingHostRequest = {
+      mode: settings.mode,
+      enginePath: settings.enginePath,
+      project,
+      lspPort: settings.port,
+      dapPort: settings.dapPort ?? 6006,
+    };
     if (settings.mode === "off") {
+      await this.options.coordinator.start(request, { signal });
       return;
     }
-    if (settings.mode === "attach") {
-      await this.attach(settings.port, project, signal);
-      return;
-    }
-    if (settings.mode === "spawn") {
-      await this.spawn(settings.enginePath, project, signal);
+    if (settings.mode !== "auto") {
+      if (settings.mode === "spawn") this.publish({ kind: "spawning" });
+      const snapshot = await this.options.coordinator.start(request, { signal });
+      if (snapshot === undefined) return;
+      await this.attach(snapshot.lsp.port, project, signal);
       return;
     }
 
-    try {
-      await this.attach(settings.port, project, signal);
-    } catch (error) {
-      throwIfAborted(signal);
-      if (!(error instanceof ConnectionFailure) || error.kind !== "tcp_refused") {
-        throw error;
-      }
-      await this.spawn(settings.enginePath, project, signal);
+    let attachedExternal = false;
+    const snapshot = await this.options.coordinator.start(request, {
+      signal,
+      tryExternal: async (endpoint) => {
+        try {
+          await this.attach(endpoint.port, project, signal);
+          attachedExternal = true;
+          return true;
+        } catch (error) {
+          throwIfAborted(signal);
+          if (
+            !(error instanceof ConnectionFailure) ||
+            error.kind !== "tcp_refused"
+          ) {
+            throw error;
+          }
+          this.publish({ kind: "spawning" });
+          return false;
+        }
+      },
+    });
+    if (!attachedExternal && snapshot !== undefined) {
+      await this.attach(snapshot.lsp.port, project, signal);
     }
   }
 
@@ -232,20 +227,11 @@ export class ConnectionManager {
     await this.pendingCleanup.catch(() => undefined);
 
     const client = this.activeClient;
-    const host = this.activeHost;
     this.activeClientStopSubscription?.dispose();
     this.activeClientStopSubscription = undefined;
     this.activeClient = undefined;
-    this.activeHost = undefined;
-
-    try {
-      if (client !== undefined) {
-        await client.stop();
-      }
-    } finally {
-      if (host !== undefined) {
-        await host.stop();
-      }
+    if (client !== undefined) {
+      await client.stop();
     }
   }
 
@@ -307,28 +293,6 @@ export class ConnectionManager {
       if (hasConnectionRefusedCode(error)) {
         throw new ConnectionFailure("tcp_refused", project, port, error);
       }
-      throw error;
-    }
-  }
-
-  private async spawn(
-    enginePath: string,
-    project: string,
-    signal: AbortSignal,
-  ): Promise<void> {
-    throwIfAborted(signal);
-    this.publish({ kind: "spawning" });
-    const host = await this.options.launcher.launch({
-      enginePath,
-      project,
-      signal,
-    });
-    try {
-      throwIfAborted(signal);
-      await this.attach(host.readiness.lspPort, project, signal);
-      this.activeHost = host;
-    } catch (error) {
-      await host.stop();
       throw error;
     }
   }
@@ -430,16 +394,10 @@ export class ConnectionManager {
 
   private async releaseActiveResources(): Promise<void> {
     const client = this.activeClient;
-    const host = this.activeHost;
     this.activeClientStopSubscription?.dispose();
     this.activeClientStopSubscription = undefined;
     this.activeClient = undefined;
-    this.activeHost = undefined;
-    try {
-      await client?.stop();
-    } finally {
-      await host?.stop();
-    }
+    await client?.stop();
   }
 
   private publish(state: ConnectionState): void {
