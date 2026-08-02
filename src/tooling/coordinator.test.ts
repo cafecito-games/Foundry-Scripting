@@ -191,6 +191,29 @@ describe("ToolingHostCoordinator modes and state", () => {
       "idle",
     ]);
   });
+
+  it("makes overlapping disposal callers await the same owned-host shutdown", async () => {
+    const stopped = deferred<void>();
+    const host = createOwnedHost();
+    host.stop.mockReturnValue(stopped.promise);
+    launch.mockResolvedValue(host);
+    const coordinator = new ToolingHostCoordinator({ launcher });
+    await coordinator.start(spawnRequest);
+
+    const first = coordinator.dispose();
+    const second = coordinator.dispose();
+    let secondFinished = false;
+    void second.then(() => {
+      secondFinished = true;
+    });
+    await Promise.resolve();
+
+    expect(secondFinished).toBe(false);
+    expect(host.stop).toHaveBeenCalledOnce();
+    stopped.resolve(undefined);
+    await Promise.all([first, second]);
+    expect(coordinator.state).toEqual({ kind: "idle" });
+  });
 });
 
 describe("ToolingHostCoordinator serialized readiness", () => {
@@ -368,6 +391,28 @@ describe("ToolingHostCoordinator DAP lease and process exit", () => {
       endpoint: { port: 6006 },
       released: false,
     });
+  });
+
+  it("atomically grants exactly one of two concurrent DAP lease requests", async () => {
+    const coordinator = new ToolingHostCoordinator({
+      launcher: { launch: vi.fn() },
+    });
+    await coordinator.start({ ...spawnRequest, mode: "attach" });
+
+    const results = await Promise.allSettled([
+      coordinator.acquireDapLease(),
+      coordinator.acquireDapLease(),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(
+      1,
+    );
+    const rejection = results.find((result) => result.status === "rejected");
+    expect(rejection?.status).toBe("rejected");
+    if (rejection?.status !== "rejected") {
+      throw new Error("concurrent lease test did not observe a rejection");
+    }
+    expect(rejection.reason).toBeInstanceOf(DapSessionLeaseUnavailable);
   });
 
   it("does not create a lease when cancellation wins during startup", async () => {

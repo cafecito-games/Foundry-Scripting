@@ -278,6 +278,35 @@ describe("connection modes", () => {
     expect(launchHost).toHaveBeenCalledOnce();
   });
 
+  it("auto falls back to an owned host when a cached external endpoint disappears", async () => {
+    vi.useFakeTimers();
+    const externalClient = createSuccessfulClient();
+    const refusedRetry = createClient(connectionRefused());
+    const spawnedClient = createSuccessfulClient();
+    const host = createHost(49300);
+    launchHost.mockResolvedValue(host);
+    const manager = managerWith([
+      externalClient,
+      refusedRetry,
+      spawnedClient,
+    ]);
+    await manager.start({
+      settings: { mode: "auto", port: 6005, enginePath: "foundry" },
+      project: "/workspace/game",
+    });
+
+    externalClient.fireUnexpectedStop();
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(endpoints).toEqual([
+      { host: "127.0.0.1", port: 6005 },
+      { host: "127.0.0.1", port: 6005 },
+      { host: "127.0.0.1", port: 49300 },
+    ]);
+    expect(launchHost).toHaveBeenCalledOnce();
+    expect(states.at(-1)).toEqual({ kind: "connected" });
+  });
+
   it("auto does not hide non-refusal client failures", async () => {
     const protocolError = new Error("initialize response was invalid");
     const client = createClient(protocolError);

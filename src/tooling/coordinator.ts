@@ -175,6 +175,7 @@ export class ToolingHostCoordinator {
     | { readonly token: symbol; readonly markReleased: () => void }
     | undefined;
   private disposed = false;
+  private disposal: Promise<void> | undefined;
 
   constructor(private readonly options: ToolingHostCoordinatorOptions) {}
 
@@ -218,7 +219,13 @@ export class ToolingHostCoordinator {
       ) {
         throw new Error("A different tooling host is already ready.");
       }
-      return cloneSnapshot(this.currentState.snapshot);
+      if (
+        this.currentState.kind !== "ready-external" ||
+        request.mode !== "auto" ||
+        this.activeDapLease !== undefined
+      ) {
+        return cloneSnapshot(this.currentState.snapshot);
+      }
     }
 
     const controller = new AbortController();
@@ -269,7 +276,14 @@ export class ToolingHostCoordinator {
     return lease;
   }
 
-  async dispose(): Promise<void> {
+  dispose(): Promise<void> {
+    if (this.disposal !== undefined) return this.disposal;
+    const disposal = this.disposeOnce();
+    this.disposal = disposal;
+    return disposal;
+  }
+
+  private async disposeOnce(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
     const pending = this.pending;
