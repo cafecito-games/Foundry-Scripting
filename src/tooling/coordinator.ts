@@ -224,6 +224,9 @@ export class ToolingHostCoordinator {
         request.mode !== "auto" ||
         this.activeDapLease !== undefined
       ) {
+        // An active external DAP lease means a consumer still owns this host.
+        // LSP refusal alone cannot prove that external process or DAP session
+        // exited, so retain its endpoints instead of launching a competitor.
         return cloneSnapshot(this.currentState.snapshot);
       }
     }

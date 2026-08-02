@@ -307,6 +307,36 @@ describe("connection modes", () => {
     expect(states.at(-1)).toEqual({ kind: "connected" });
   });
 
+  it("auto retries the external endpoint without spawning while its DAP lease remains active", async () => {
+    vi.useFakeTimers();
+    const externalClient = createSuccessfulClient();
+    const refusedRetry = createClient(connectionRefused());
+    const manager = managerWith([externalClient, refusedRetry]);
+    await manager.start({
+      settings: { mode: "auto", port: 6005, enginePath: "foundry" },
+      project: "/workspace/game",
+    });
+    const lease = await coordinator.acquireDapLease();
+
+    externalClient.fireUnexpectedStop();
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(endpoints).toEqual([
+      { host: "127.0.0.1", port: 6005 },
+      { host: "127.0.0.1", port: 6005 },
+    ]);
+    expect(launchHost).not.toHaveBeenCalled();
+    expect(lease.endpoint).toEqual({ host: "127.0.0.1", port: 6006 });
+    expect(lease.released).toBe(false);
+    expect(coordinator.state).toMatchObject({ kind: "ready-external" });
+    expect(states.at(-1)).toEqual({
+      kind: "retrying",
+      attempt: 2,
+      maxAttempts: 5,
+      delayMs: 1000,
+    });
+  });
+
   it("auto does not hide non-refusal client failures", async () => {
     const protocolError = new Error("initialize response was invalid");
     const client = createClient(protocolError);
