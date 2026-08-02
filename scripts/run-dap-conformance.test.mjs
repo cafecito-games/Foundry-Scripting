@@ -56,7 +56,7 @@ describe("required DAP conformance runner", () => {
       FOUNDRY_ENGINE_PATH: fakeEngine,
     });
 
-    expect(error.stderr).toContain("requires Foundry commit 9e902f381");
+    expect(error.stderr).toContain("requires Foundry commit a2d9f6df0");
     expect(error.stderr).toContain("deadbeef0");
   });
 
@@ -77,7 +77,7 @@ describe("required DAP conformance runner", () => {
 
     expect(workflow).toContain("repository: cafecito-games/Foundry");
     expect(workflow).toContain(
-      "ref: 9e902f3815a62c95eec4f405b025e28b84b46b90",
+      "ref: a2d9f6df06fb545c8106f24c7445466d6355085b",
     );
     expect(workflow).toContain("npm run test:dap-conformance");
     expect(workflow).toContain("FOUNDRY_ENGINE_PATH:");
