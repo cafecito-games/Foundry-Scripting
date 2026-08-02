@@ -266,7 +266,7 @@ describe("Foundry real-engine DAP conformance", () => {
 
         const firstMark = client.mark();
         const first = await launchToBreakpoint(client, launchArguments, firstMark);
-        const firstState = await inspectStop(
+        await inspectStop(
           client,
           first.stopped,
           scriptPath,
@@ -286,14 +286,22 @@ describe("Foundry real-engine DAP conformance", () => {
         expect(client.indexOf(restartedProcess)).toBeLessThan(
           client.indexOf(restartedStop),
         );
+        const restartLifecycle = client
+          .receivedMessages()
+          .filter(({ index }) => index >= restartMark)
+          .flatMap(({ message }) =>
+            message.type === "event" &&
+            ["process", "exited", "terminated"].includes(message.event)
+              ? [message.event]
+              : [],
+          );
+        expect(restartLifecycle).toEqual(["process"]);
         const restartedState = await inspectStop(
           client,
           restartedStop,
           scriptPath,
           breakpointId,
         );
-        expect(restartedState).not.toBe(firstState);
-
         let stepMark = client.mark();
         const nextResponse = await succeeds(client, "next", {
           threadId: restartedState.threadId,
@@ -301,6 +309,12 @@ describe("Foundry real-engine DAP conformance", () => {
         const afterNext = await client.event("stopped", stepMark);
         expect(client.indexOf(nextResponse)).toBeLessThan(client.indexOf(afterNext));
         expect(afterNext.body?.reason).toBe("step");
+        const afterNextStack = await succeeds(client, "stackTrace", {
+          threadId: restartedState.threadId,
+        });
+        expect(
+          records(body(afterNextStack).stackFrames, "step-over stack")[0],
+        ).toMatchObject({ name: "_ready", line: 8 });
 
         stepMark = client.mark();
         const stepInResponse = await succeeds(client, "stepIn", {
