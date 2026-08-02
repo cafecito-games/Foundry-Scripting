@@ -88,6 +88,7 @@ export interface ToolingHostStartOptions {
 
 export interface DapSessionLease {
   readonly endpoint: ToolingEndpoint;
+  readonly ownership: ToolingHostSnapshot["ownership"];
   readonly released: boolean;
   release(): void;
   dispose(): void;
@@ -176,6 +177,9 @@ export class ToolingHostCoordinator {
     | undefined;
   private disposed = false;
   private disposal: Promise<void> | undefined;
+  private readonly stateListeners = new Set<
+    (state: ToolingHostCoordinatorState) => void
+  >();
 
   constructor(private readonly options: ToolingHostCoordinatorOptions) {}
 
@@ -189,6 +193,13 @@ export class ToolingHostCoordinator {
         ToolingHostCoordinatorState;
     }
     return { ...state };
+  }
+
+  onStateChange(
+    listener: (state: ToolingHostCoordinatorState) => void,
+  ): DisposableHandle {
+    this.stateListeners.add(listener);
+    return { dispose: () => this.stateListeners.delete(listener) };
   }
 
   async start(
@@ -252,6 +263,16 @@ export class ToolingHostCoordinator {
   async acquireDapLease(signal?: AbortSignal): Promise<DapSessionLease> {
     const snapshot = await this.waitForReady(signal);
     if (signal?.aborted === true) throw abortError();
+    const currentState = this.currentState;
+    if (
+      (currentState.kind !== "ready-owned" &&
+        currentState.kind !== "ready-external") ||
+      currentState.snapshot.ownership !== snapshot.ownership ||
+      currentState.snapshot.project !== snapshot.project ||
+      currentState.snapshot.dap.port !== snapshot.dap.port
+    ) {
+      throw new Error("The Foundry tooling host endpoint became stale before DAP startup.");
+    }
     if (this.activeDapLease !== undefined) {
       throw new DapSessionLeaseUnavailable();
     }
@@ -269,6 +290,7 @@ export class ToolingHostCoordinator {
     };
     const lease: DapSessionLease = {
       endpoint: { ...snapshot.dap },
+      ownership: snapshot.ownership,
       get released() {
         return released;
       },
@@ -308,6 +330,7 @@ export class ToolingHostCoordinator {
       if (this.currentState.kind !== "idle") {
         this.publish({ kind: "idle" });
       }
+      this.stateListeners.clear();
     }
   }
 
@@ -418,7 +441,9 @@ export class ToolingHostCoordinator {
 
   private publish(state: ToolingHostCoordinatorState): void {
     this.currentState = state;
-    this.options.onStateChange?.(this.state);
+    const snapshot = this.state;
+    this.options.onStateChange?.(snapshot);
+    for (const listener of this.stateListeners) listener(snapshot);
   }
 }
 

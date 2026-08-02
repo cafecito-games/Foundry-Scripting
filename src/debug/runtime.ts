@@ -2,50 +2,73 @@ import * as vscode from "vscode";
 import type { ResolveWorkspaceProject } from "../project/workspace.js";
 import type {
   DapSessionLease,
+  DisposableHandle,
+  ToolingEndpoint,
   ToolingHostCoordinator,
+  ToolingHostCoordinatorState,
   ToolingHostMode,
 } from "../tooling/coordinator.js";
 import {
   FOUNDRYSCRIPT_DEBUG_TYPE,
   FoundryScriptDebugConfigurationProvider,
 } from "./configuration.js";
+import {
+  contextualizeDebugStartupFailure,
+  probeLoopbackDebugAdapter,
+} from "./lifecycle.js";
 
 export interface FoundryScriptDebugRuntimeOptions {
   readonly resolveProject: ResolveWorkspaceProject;
   readonly getCoordinator: () => ToolingHostCoordinator | undefined;
   readonly getMode: () => ToolingHostMode;
   readonly output: vscode.OutputChannel;
+  readonly probeEndpoint?: (
+    endpoint: ToolingEndpoint,
+    signal: AbortSignal,
+  ) => Promise<void>;
 }
 
 interface DebugSessionAcquisition {
   readonly controller: AbortController;
+  readonly session: vscode.DebugSession;
   lease?: DapSessionLease;
+  coordinatorSubscription?: DisposableHandle;
+}
+
+interface FailedSessionDrain {
+  readonly session: vscode.DebugSession;
+  stopRequest: "pending" | "fulfilled" | "rejected";
+  terminationObserved: boolean;
+}
+
+export interface FoundryScriptDebugRuntime {
+  dispose(): void;
+  shutdown(): Promise<void>;
 }
 
 export function registerFoundryScriptDebugRuntime(
   context: vscode.ExtensionContext,
   options: FoundryScriptDebugRuntimeOptions,
-): void {
+): FoundryScriptDebugRuntime {
   const sessions = new Map<string, DebugSessionAcquisition>();
+  const drainingSessions = new Map<string, FailedSessionDrain>();
   const loggedLaunches = new Set<string>();
   const reportedFailures = new Set<string>();
   const contextualizeStartupFailure = (
     session: vscode.DebugSession,
     error: unknown,
-  ): Error => {
-    const detail = error instanceof Error ? error.message : String(error);
-    return new Error(
-      `FoundryScript debug startup failed in ${options.getMode()} mode ` +
-        `for project ${String(session.configuration.project)}: ${detail} ` +
-        "Check FoundryScript Debug output, verify foundryScript.lsp.mode, " +
-        "stop the active debug session if one is running, and retry.",
-      { cause: error },
+  ): Error =>
+    contextualizeDebugStartupFailure(
+      options.getMode(),
+      session.configuration.project,
+      error,
     );
-  };
   const reportStartupFailure = (
     session: vscode.DebugSession,
     error: Error,
   ): void => {
+    if (reportedFailures.has(session.id)) return;
+    reportedFailures.add(session.id);
     options.output.appendLine(`[${session.id}] ${error.message}`);
     void vscode.window.showErrorMessage(error.message);
   };
@@ -68,21 +91,89 @@ export function registerFoundryScriptDebugRuntime(
     if (acquisition === undefined) return;
     sessions.delete(session.id);
     acquisition.controller.abort();
+    acquisition.coordinatorSubscription?.dispose();
     acquisition.lease?.release();
     options.output.appendLine(
       `[${session.id}] FoundryScript debug session ended (${reason}); released the DAP lease.`,
     );
   };
-  const failSession = (session: vscode.DebugSession, error: Error): void => {
-    if (reportedFailures.has(session.id)) return;
+  const reportSessionFailure = (
+    session: vscode.DebugSession,
+    error: Error,
+  ): boolean => {
+    if (reportedFailures.has(session.id)) return false;
     reportedFailures.add(session.id);
+    const acquisition = sessions.get(session.id);
     const message =
       `FoundryScript debug adapter failure in ${options.getMode()} mode ` +
-      `for project ${String(session.configuration.project)}: ${error.message}. ` +
+      `for project ${String(session.configuration.project)}: ${error.message}` +
+      (acquisition?.lease === undefined
+        ? ". "
+        : ` at endpoint ${acquisition.lease.endpoint.host}:${String(acquisition.lease.endpoint.port)}. `) +
       "Check FoundryScript Debug output and the foundryScript.lsp.mode setting.";
     options.output.appendLine(`[${session.id}] ${message}`);
     void vscode.window.showErrorMessage(message);
+    return true;
+  };
+  const failSession = (session: vscode.DebugSession, error: Error): void => {
+    if (!reportSessionFailure(session, error)) return;
     endSession(session, "debug adapter failure");
+  };
+  const completeFailedSessionDrain = (drain: FailedSessionDrain): void => {
+    if (
+      drainingSessions.get(drain.session.id) !== drain ||
+      drain.stopRequest === "pending" ||
+      (drain.stopRequest === "rejected" && !drain.terminationObserved)
+    ) {
+      return;
+    }
+    drainingSessions.delete(drain.session.id);
+    endSession(drain.session, "owned tooling host failure");
+    options.output.appendLine(
+      `[${drain.session.id}] Owned tooling-host failure drain completed; ` +
+        "replacement debug sessions may start.",
+    );
+  };
+  const stopAfterHostFailure = (
+    session: vscode.DebugSession,
+    acquisition: DebugSessionAcquisition,
+    state: ToolingHostCoordinatorState,
+  ): void => {
+    if (
+      state.kind !== "failed" ||
+      sessions.get(session.id) !== acquisition ||
+      acquisition.lease?.ownership !== "owned"
+    ) {
+      return;
+    }
+    const error =
+      state.error instanceof Error
+        ? state.error
+        : new Error(String(state.error));
+    if (!reportSessionFailure(session, error)) return;
+    const drain: FailedSessionDrain = {
+      session,
+      stopRequest: "pending",
+      terminationObserved: false,
+    };
+    drainingSessions.set(session.id, drain);
+    acquisition.controller.abort();
+    void Promise.resolve()
+      .then(() => vscode.debug.stopDebugging(session))
+      .then(
+        () => {
+          drain.stopRequest = "fulfilled";
+          completeFailedSessionDrain(drain);
+        },
+        (stopError: unknown) => {
+          drain.stopRequest = "rejected";
+          options.output.appendLine(
+            `[${session.id}] Unable to stop the failed FoundryScript debug session: ` +
+              `${stopError instanceof Error ? stopError.message : String(stopError)}`,
+          );
+          completeFailedSessionDrain(drain);
+        },
+      );
   };
   const provider = new FoundryScriptDebugConfigurationProvider({
     resolveProject: options.resolveProject,
@@ -111,9 +202,23 @@ export function registerFoundryScriptDebugRuntime(
       reportStartupFailure(session, error);
       throw error;
     }
+    const activeSession = sessions.values().next().value;
+    const activeSessionId =
+      activeSession?.session.id ?? drainingSessions.keys().next().value;
+    if (activeSessionId !== undefined) {
+      const error = contextualizeStartupFailure(
+        session,
+        new Error(
+          `A FoundryScript debug session (${activeSessionId}) is already active. ` +
+            "Stop it before starting another.",
+        ),
+      );
+      reportStartupFailure(session, error);
+      throw error;
+    }
     reportedFailures.delete(session.id);
     const controller = new AbortController();
-    const acquisition: DebugSessionAcquisition = { controller };
+    const acquisition: DebugSessionAcquisition = { controller, session };
     sessions.set(session.id, acquisition);
     try {
       const coordinator = options.getCoordinator();
@@ -133,6 +238,36 @@ export function registerFoundryScriptDebugRuntime(
         throw error;
       }
       acquisition.lease = lease;
+      if (typeof coordinator.onStateChange === "function") {
+        acquisition.coordinatorSubscription = coordinator.onStateChange(
+          (state) => stopAfterHostFailure(session, acquisition, state),
+        );
+      }
+      if (lease.released) {
+        throw new Error(
+          "The Foundry tooling host endpoint became stale before debug adapter connection.",
+        );
+      }
+      if (lease.ownership === "external") {
+        options.output.appendLine(
+          `[${session.id}] Checking external FoundryScript DAP endpoint ` +
+            `${lease.endpoint.host}:${String(lease.endpoint.port)} before launch.`,
+        );
+        try {
+          await (options.probeEndpoint ?? probeLoopbackDebugAdapter)(
+            lease.endpoint,
+            controller.signal,
+          );
+        } catch (error) {
+          if (error instanceof Error && error.name === "AbortError") throw error;
+          throw new Error(
+            `External FoundryScript DAP endpoint ${lease.endpoint.host}:${String(lease.endpoint.port)} ` +
+              `is unavailable. Verify the external tooling host and foundryScript.dap.port, then retry. ` +
+              `${error instanceof Error ? error.message : String(error)}`,
+            { cause: error },
+          );
+        }
+      }
       options.output.appendLine(
         `[${session.id}] Connecting to FoundryScript DAP at 127.0.0.1:${String(lease.endpoint.port)}.`,
       );
@@ -144,6 +279,7 @@ export function registerFoundryScriptDebugRuntime(
       if (sessions.get(session.id) === acquisition) {
         sessions.delete(session.id);
         controller.abort();
+        acquisition.coordinatorSubscription?.dispose();
         acquisition.lease?.release();
       }
       if (!(error instanceof Error && error.name === "AbortError")) {
@@ -180,20 +316,51 @@ export function registerFoundryScriptDebugRuntime(
         }),
       },
     ),
-    vscode.debug.onDidTerminateDebugSession((session) =>
-      endSession(session, "VS Code termination"),
-    ),
+    vscode.debug.onDidTerminateDebugSession((session) => {
+      const drain = drainingSessions.get(session.id);
+      if (drain !== undefined) drain.terminationObserved = true;
+      endSession(session, "VS Code termination");
+      if (drain !== undefined) completeFailedSessionDrain(drain);
+    }),
   ];
-  context.subscriptions.push({
-    dispose: () => {
-      for (const acquisition of sessions.values()) {
+  let disposed = false;
+  const dispose = (): void => {
+    if (disposed) return;
+    disposed = true;
+    for (const acquisition of sessions.values()) {
+      acquisition.controller.abort();
+      acquisition.coordinatorSubscription?.dispose();
+      acquisition.lease?.release();
+    }
+    sessions.clear();
+    drainingSessions.clear();
+    loggedLaunches.clear();
+    reportedFailures.clear();
+    for (const registration of registrations) registration.dispose();
+  };
+  const runtime: FoundryScriptDebugRuntime = {
+    dispose,
+    shutdown: async () => {
+      if (disposed) return;
+      const activeSessions = [...sessions.entries()];
+      for (const [, acquisition] of activeSessions) {
         acquisition.controller.abort();
-        acquisition.lease?.release();
       }
-      sessions.clear();
-      loggedLaunches.clear();
-      reportedFailures.clear();
-      for (const registration of registrations) registration.dispose();
+      await Promise.all(
+        activeSessions.map(async ([id, acquisition]) => {
+          try {
+            await vscode.debug.stopDebugging(acquisition.session);
+          } catch (error) {
+            options.output.appendLine(
+              `[${id}] Unable to stop FoundryScript debugging during deactivation: ` +
+                `${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }),
+      );
+      dispose();
     },
-  });
+  };
+  context.subscriptions.push(runtime);
+  return runtime;
 }

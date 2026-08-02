@@ -14,7 +14,10 @@ import {
   createToolingHostCoordinator,
 } from "./client/runtime.js";
 import { createDiagnosticsUnit } from "./diagnostics/index.js";
-import { registerFoundryScriptDebugRuntime } from "./debug/runtime.js";
+import {
+  registerFoundryScriptDebugRuntime,
+  type FoundryScriptDebugRuntime,
+} from "./debug/runtime.js";
 import type { ProjectResolutionFailure } from "./project/resolver.js";
 import {
   createWorkspaceProjectResolver,
@@ -46,6 +49,7 @@ import type { ToolingHostCoordinator } from "./tooling/coordinator.js";
 
 let activeConnectionManager: ConnectionManager | undefined;
 let activeToolingHostCoordinator: ToolingHostCoordinator | undefined;
+let activeDebugRuntime: FoundryScriptDebugRuntime | undefined;
 interface ActiveTestingLifecycle {
   readonly stop: () => Promise<void>;
 }
@@ -468,7 +472,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const settings = readConnectionSettings();
   const debugOutput = vscode.window.createOutputChannel("FoundryScript Debug");
   context.subscriptions.push(debugOutput);
-  registerFoundryScriptDebugRuntime(context, {
+  activeDebugRuntime = registerFoundryScriptDebugRuntime(context, {
     resolveProject,
     getCoordinator: () => activeToolingHostCoordinator,
     getMode: () => readConnectionSettings().mode,
@@ -561,13 +565,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export async function deactivate(): Promise<void> {
+  const debugRuntime = activeDebugRuntime;
   const manager = activeConnectionManager;
   const coordinator = activeToolingHostCoordinator;
   const testingLifecycle = activeTestingLifecycle;
+  activeDebugRuntime = undefined;
   activeConnectionManager = undefined;
   activeToolingHostCoordinator = undefined;
   activeTestingLifecycle = undefined;
   try {
+    await debugRuntime?.shutdown();
     await Promise.all([manager?.stop(), testingLifecycle?.stop()]);
   } finally {
     await coordinator?.dispose();
