@@ -462,13 +462,26 @@ function registerTestingRuntime(
       configurationGeneration += 1;
       refresh.dispose();
       disposeWatchers();
-      stopPromise = Promise.all([runtime.stop(), process.stop()])
-        .then(() => undefined)
-        .catch((error: unknown) => {
-          output.appendLine(
-            `Testing shutdown failed: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        });
+      stopPromise = Promise.allSettled([
+        Promise.resolve().then(() => runtime.stop()),
+        Promise.resolve().then(() => process.stop()),
+      ]).then((results) => {
+        const failures: unknown[] = [];
+        for (const result of results) {
+          if (result.status === "rejected") failures.push(result.reason);
+        }
+        if (failures.length === 0) return;
+        const detail = failures
+          .map((error: unknown) =>
+            error instanceof Error ? error.message : String(error),
+          )
+          .join("; ");
+        try {
+          output.appendLine(`Testing shutdown failed: ${detail}`);
+        } catch {
+          // VS Code may dispose the channel while deactivation is still running.
+        }
+      });
       return stopPromise;
     },
   };
@@ -531,6 +544,17 @@ async function showProjectResolutionFailure(
 }
 
 function writeTestingState(output: vscode.OutputChannel, state: TestingState): void {
+  try {
+    writeTestingStateToOpenChannel(output, state);
+  } catch {
+    // VS Code may dispose the channel while deactivation is still running.
+  }
+}
+
+function writeTestingStateToOpenChannel(
+  output: vscode.OutputChannel,
+  state: TestingState,
+): void {
   switch (state.kind) {
     case "disabled":
       output.appendLine("Testing adapter negotiation disabled.");
@@ -691,6 +715,7 @@ function startNativeRuntime(context: vscode.ExtensionContext): void {
       ),
     publishState: (state) => {
       statusController.update(state);
+      diagnostics.setLanguageServerConnected(state.kind === "connected");
       if (state.kind === "off") {
         writeLog(outputChannel, "info", "lsp.connection.off");
       }

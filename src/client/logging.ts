@@ -10,12 +10,16 @@ export function writeLog(
   event: string,
   fields: Record<string, unknown> = {},
 ): void {
-  output.appendLine(
-    JSON.stringify({
-      timestamp: new Date().toISOString(),
-      level,
-      event,
-      ...fields,
-    }),
-  );
+  try {
+    output.appendLine(
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        level,
+        event,
+        ...fields,
+      }),
+    );
+  } catch {
+    // VS Code may close output channels before asynchronous extension cleanup.
+  }
 }

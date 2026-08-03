@@ -24,6 +24,8 @@ describe("validatePackageFiles", () => {
     "scripts/check-package-files.mjs",
     "src/extension.ts",
     "tests/grammar/keywords.fs",
+    "tests/extension-host/fake-foundry/foundry.mjs",
+    "tests/extension-host/virtual-provider/extension.cjs",
     "node_modules/example/index.js",
     "dist/extension.js.map",
     "tsconfig.production-strict.json",

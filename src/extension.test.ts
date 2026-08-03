@@ -1146,6 +1146,28 @@ describe("extension entry point", () => {
     expect(extensionMock.stop).toHaveBeenCalledTimes(6);
   });
 
+  it("returns diagnostic ownership to CLI when reconciliation turns LSP off", async () => {
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game", scheme: "file" },
+    });
+    await activate(createContext());
+    await vi.waitFor(() =>
+      expect(extensionMock.createConnectionManager).toHaveBeenCalledOnce(),
+    );
+    extensionMock.diagnosticsUnit.setLanguageServerConnected.mockClear();
+
+    extensionMock.configuration.set("lsp.mode", "off");
+    extensionMock.configurationChangeHandler?.({
+      affectsConfiguration: (section) =>
+        section === "foundryScript.lsp.mode",
+    });
+    await vi.waitFor(() =>
+      expect(
+        extensionMock.diagnosticsUnit.setLanguageServerConnected,
+      ).toHaveBeenLastCalledWith(false),
+    );
+  });
+
   it("routes reconnect and debug acquisition through the lifecycle's replacement resources", async () => {
     const firstReconnect = vi.fn().mockResolvedValue(undefined);
     const secondReconnect = vi.fn().mockResolvedValue(undefined);
@@ -2470,6 +2492,56 @@ describe("extension entry point", () => {
     expect(extensionMock.testingStop.mock.invocationCallOrder[0]).toBeLessThan(
       extensionMock.coordinatorDispose.mock.invocationCallOrder[0] ?? 0,
     );
+  });
+
+  it("continues native cleanup when VS Code has already closed output channels", async () => {
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game", scheme: "file" },
+    });
+    await activate(createContext());
+    extensionMock.testingOutputChannel.appendLine.mockImplementationOnce(() => {
+      throw new Error("Channel has been closed");
+    });
+    extensionMock.testingStop.mockImplementation(() => {
+      extensionMock.testingRuntimeOptions?.onState({ kind: "disabled" });
+      return Promise.resolve();
+    });
+
+    await expect(deactivate()).resolves.toBeUndefined();
+
+    expect(extensionMock.testingProcessStop).toHaveBeenCalledOnce();
+    expect(extensionMock.stop).toHaveBeenCalledOnce();
+    expect(extensionMock.coordinatorDispose).toHaveBeenCalledOnce();
+  });
+
+  it("waits for testing process cleanup after runtime shutdown rejects", async () => {
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game", scheme: "file" },
+    });
+    let resolveProcessStop!: () => void;
+    extensionMock.testingStop.mockRejectedValue(
+      new Error("runtime shutdown failed"),
+    );
+    extensionMock.testingProcessStop.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveProcessStop = resolve;
+      }),
+    );
+    await activate(createContext());
+
+    let settled = false;
+    const deactivation = deactivate().then(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => {
+      expect(extensionMock.testingProcessStop).toHaveBeenCalledOnce();
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    resolveProcessStop();
+    await deactivation;
+    expect(settled).toBe(true);
   });
 
   it("catches and logs background testing shutdown failures", async () => {
