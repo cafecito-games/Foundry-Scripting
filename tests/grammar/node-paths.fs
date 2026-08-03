@@ -18,6 +18,14 @@ var quoted = $"Some Node/Child"
 #            ^ meta.node-path.foundryscript punctuation.definition.node.foundryscript
 #             ^^^^^^^^^^^^^^^^^ meta.node-path.foundryscript string.quoted.node.foundryscript
 
+var triple_double = $"""Root/Child"""
+#                   ^ meta.node-path.foundryscript punctuation.definition.node.foundryscript
+#                    ^^^^^^^^^^^^^^^^ meta.node-path.foundryscript string.quoted.node.foundryscript
+
+var triple_single = $'''Root/Child'''
+#                   ^ meta.node-path.foundryscript punctuation.definition.node.foundryscript
+#                    ^^^^^^^^^^^^^^^^ meta.node-path.foundryscript string.quoted.node.foundryscript
+
 var e = $Player/for
 #               ^^^ - keyword.control.loop.for.foundryscript
 

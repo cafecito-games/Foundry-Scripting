@@ -84,8 +84,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: cafecito-games/Foundry
-          # Foundry v0.1.0-alpha.19, matching foundry-grammar.json.
-          ref: 7a86a1464be0699c81a8a5b5c849447b4a7707bf
+          # Foundry v0.1.0-alpha.24, matching foundry-grammar.json.
+          ref: e91ab07e63ce0a783778dc885bb11d9c65603256
           path: foundry-engine
       - uses: actions/setup-node@v4
         with:

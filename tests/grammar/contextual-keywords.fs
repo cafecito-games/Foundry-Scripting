@@ -11,6 +11,12 @@ annotation my_marker() targets CLASS, METHOD
 # <- storage.type.annotation.foundryscript
 #                       ^^^^^^ keyword.other.targets.foundryscript
 
+annotation configurable(
+    targets: int = 1
+#   ^^^^^^^ - keyword.other.targets.foundryscript
+) targets CLASS
+# ^^^^^^^ keyword.other.targets.foundryscript
+
 var extend = 1
 #   ^^^^^^ - storage.modifier.extend.foundryscript
 
