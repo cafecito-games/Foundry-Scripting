@@ -83,6 +83,30 @@ describe("connection lifecycle", () => {
     expect(harness.states).toEqual([]);
   });
 
+  it("publishes disconnected after invalid settings replace a connected generation", async () => {
+    const harness = createHarness();
+    await harness.lifecycle.requestReconciliation();
+    harness.states.push({ kind: "connected" });
+    harness.settings = {
+      ...defaultSettings,
+      mode: "malformed",
+    } as unknown as ConnectionSettings;
+
+    await harness.lifecycle.requestReconciliation();
+
+    expect(harness.managers[0]?.stop).toHaveBeenCalledOnce();
+    expect(harness.coordinators[0]?.dispose).toHaveBeenCalledOnce();
+    expect(harness.managers).toHaveLength(1);
+    expect(harness.coordinators).toHaveLength(1);
+    expect(harness.resolveProject).toHaveBeenCalledOnce();
+    expect(harness.reportSettingsFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ setting: "foundryScript.lsp.mode" }),
+    );
+    expect(harness.lifecycle.currentManager).toBeUndefined();
+    expect(harness.lifecycle.currentCoordinator).toBeUndefined();
+    expect(harness.states.at(-1)).toEqual({ kind: "disconnected" });
+  });
+
   it("supports off to enabled and enabled to off without replacement overlap", async () => {
     const harness = createHarness({
       settings: { ...defaultSettings, mode: "off" },

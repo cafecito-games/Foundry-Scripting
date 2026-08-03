@@ -112,6 +112,8 @@ export class ConnectionLifecycle<
   }
 
   private async reconcile(generation: number): Promise<void> {
+    const replacedResources =
+      this.ownedManager !== undefined || this.ownedCoordinator !== undefined;
     await this.releaseOwnedResources();
     if (!this.isCurrent(generation)) {
       return;
@@ -122,6 +124,9 @@ export class ConnectionLifecycle<
       settings = validateConnectionSettings(this.options.readSettings());
     } catch (error) {
       if (error instanceof ConnectionConfigurationFailure) {
+        if (replacedResources) {
+          this.options.publishState({ kind: "disconnected" });
+        }
         this.notify(
           "lsp.lifecycle.settings_notification_failed",
           () => this.options.reportSettingsFailure(error),
