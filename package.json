@@ -16,7 +16,10 @@
     "Programming Languages"
   ],
   "main": "./dist/extension.js",
-  "activationEvents": [],
+  "activationEvents": [
+    "onDebugInitialConfigurations",
+    "onDebugResolve:foundryscript"
+  ],
   "contributes": {
     "languages": [
       {

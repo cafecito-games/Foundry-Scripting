@@ -12,6 +12,9 @@ the gradually-typed scripting language of the Foundry engine.
   FoundryScript's indentation-sensitive block structure.
 - Language intelligence over the Foundry engine's language-server protocol, including
   completion, hover, go-to-definition, and diagnostics.
+- Scene debugging through VS Code's Run and Debug view, including line breakpoints,
+  stack frames, variables, Watch expressions, Debug Console evaluation, stepping,
+  pause, continue, restart, and stop.
 
 By default the extension starts Foundry's canonical combined tooling host for the open
 workspace:
@@ -22,16 +25,17 @@ foundry tooling serve --project <dir> --lsp-port 0 --dap-port 0
 
 Foundry binds two ephemeral loopback ports and reports them in its `FOUNDRY_TOOLING`
 readiness record. The extension connects language features to the reported LSP port and
-retains the DAP port for future debugger integration; it does not currently enable or
-advertise debugging. The `foundry` executable must be on `PATH` or configured with
-`foundryScript.enginePath`.
+scene debugging to the reported DAP port. The `foundry` executable must be on `PATH`
+or configured with `foundryScript.enginePath`.
 
 Set `foundryScript.lsp.mode` to `attach` to connect to an already-running editor/tool
 host, `auto` to attach first and spawn only when the configured port refuses the
 connection, or `off` to keep syntax highlighting without starting or connecting to
 Foundry. Attach and auto's initial attach use `foundryScript.lsp.port` (default `6005`);
-spawned hosts do not use that configured port. Hosts spawned by the extension are
-stopped with it; externally started hosts are never terminated by the extension.
+debugging in an externally owned host uses `foundryScript.dap.port` (default `6006`).
+Spawned hosts use the ephemeral ports from their readiness record instead of either
+configured port. Hosts spawned by the extension are stopped with it; externally started
+hosts are never terminated by the extension.
 
 ### Selecting the Foundry project
 
@@ -62,6 +66,107 @@ status-bar item and retries five times with capped exponential backoff. Click th
 to reconnect immediately or open the LSP log. After retries are exhausted it rests in
 Disconnected until you reconnect manually. Off mode stays visible but never starts or
 connects to Foundry; click it to open connection settings or the log.
+
+## Engine compatibility
+
+Scene debugging requires the Foundry tooling fixes present in engine commit
+`a2d9f6df06fb545c8106f24c7445466d6355085b`. No published engine release contains
+that commit yet. The latest prerelease, `v0.1.0-alpha.20`, predates the required fixes
+and is not compatible with this debugger. This section will name the first compatible
+release after it is published; until then, use a development editor build from the
+verified commit only for extension development and validation.
+
+Point the extension at the compatible editor binary:
+
+```json
+{
+  "foundryScript.enginePath": "/absolute/path/to/foundry"
+}
+```
+
+The release-validation matrix was run with VS Code 1.131.0 on macOS 26.5.2 against
+the development build `0.1.dev.custom_build.a2d9f6df0`. The immutable engine commit is
+also pinned by CI's required `dap-conformance` job.
+
+## Scene debugging
+
+Open a Foundry project, switch to **Run and Debug**, and press **F5**. When no debug
+configuration is present, the extension supplies a default launch of the project's main
+scene. To keep or customize it, create `.vscode/launch.json`:
+
+```json
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "foundryscript",
+      "request": "launch",
+      "name": "Debug Main Scene",
+      "scene": "main",
+      "args": ["--profile", "developer"]
+    },
+    {
+      "type": "foundryscript",
+      "request": "launch",
+      "name": "Debug Explicit Scene",
+      "scene": "res://levels/forest.tscn",
+      "args": []
+    }
+  ]
+}
+```
+
+`scene` must be `main` or a canonical `res://` path ending in `.tscn`. `args`
+must contain only strings. FoundryScript supports DAP launch requests; a DAP
+`request: "attach"` configuration is not supported. The connection setting named
+`attach` means “use an externally owned combined tooling host,” not a DAP attach
+request.
+
+Use **Run Without Debugging** (`Ctrl+F5`) to launch the same scene and arguments with
+breakpoints disabled. Restricted Mode behavior is provided by VS Code's normal workspace
+trust prompt before debugging or extension-host development can execute project code.
+
+### Connection modes and lifecycle
+
+| `foundryScript.lsp.mode` | Debugger behavior |
+| --- | --- |
+| `spawn` | Starts one combined tooling host and uses its reported ephemeral DAP port. |
+| `attach` | Uses the external host at `foundryScript.lsp.port` and `foundryScript.dap.port`. |
+| `auto` | Tries the configured external host first, then starts an owned host if the LSP port refuses the connection. |
+| `off` | Keeps offline language support but rejects debug startup with an actionable error. |
+
+All tooling connections are loopback-only. One FoundryScript debug session may be active
+per VS Code window. Stop and in-session restart affect the debuggee, not the combined
+tooling host, so language features stay connected. Extension deactivation stops active
+debugging and an extension-owned host. The extension never terminates an external host.
+
+### Supported debugger features
+
+- Source line breakpoints in `.fs` files.
+- Pause, continue, step over, step into, step out, restart, and stop.
+- Call stacks and Locals, Members, and Globals scopes.
+- Watch expressions, hover evaluation, and Debug Console evaluation.
+- Main-scene and explicit-scene launches, play arguments, and Run Without Debugging.
+
+The current adapter does not support conditional breakpoints, hit counts, logpoints,
+editing variable values, remote-device debugging, or concurrent sessions. Values that
+the engine cannot expand are shown as scalar representations. Selected-test debugging
+is a later integration phase and is not part of scene debugging.
+
+### Troubleshooting
+
+Open **Output: FoundryScript Debug** for the resolved project, connection mode, DAP
+endpoint, scene, `noDebug` state, and play-argument count. Tooling startup and language
+connection details remain in **Output: FoundryScript LSP**.
+
+Common startup errors name the corrective setting:
+
+- An unavailable external endpoint: start `foundry tooling serve` for the same project
+  and verify `foundryScript.dap.port`.
+- An invalid scene or argument list: use `main` or a canonical `res://.../*.tscn`
+  path and an array of strings.
+- A second session: stop the active FoundryScript session, then retry.
+- Off mode: change `foundryScript.lsp.mode` to `spawn`, `attach`, or `auto`.
 
 ## Installation
 
