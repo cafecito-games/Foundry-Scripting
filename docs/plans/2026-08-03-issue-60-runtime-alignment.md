@@ -102,4 +102,3 @@
 
 3. Independently review specification compliance and code quality; fix every Important/Critical finding test-first and repeat affected checks.
 4. Leave the worktree clean. Do not push or open a PR; return commits and verification evidence to the primary agent.
-
