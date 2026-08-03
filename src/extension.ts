@@ -29,6 +29,10 @@ import {
   TestAdapterFailure,
 } from "./testing/adapter.js";
 import { FoundryTestAdapterDiscoverer } from "./testing/discoverer.js";
+import {
+  FoundryTestDebugExecutor,
+  type FoundryTestDebugMessageEvent,
+} from "./testing/debug-executor.js";
 import { FoundryTestExecutor } from "./testing/executor.js";
 import { FoundryTestExplorer } from "./testing/explorer.js";
 import { FoundryTestAdapterProcess } from "./testing/process.js";
@@ -170,6 +174,44 @@ async function registerTestingRuntime(
       process.run(command, signal, onOutput),
     onCleanupError,
   });
+  const debugMessageListeners = new Set<
+    (event: FoundryTestDebugMessageEvent) => void
+  >();
+  const subscribe = <T>(listeners: Set<T>, listener: T): vscode.Disposable => {
+    listeners.add(listener);
+    return { dispose: () => listeners.delete(listener) };
+  };
+  const debugTracker = vscode.debug.registerDebugAdapterTrackerFactory(
+    "foundryscript",
+    {
+      createDebugAdapterTracker: (session) => {
+        return {
+          onWillReceiveMessage: (message) => {
+            for (const listener of debugMessageListeners) {
+              listener({ direction: "client", session, message });
+            }
+          },
+          onDidSendMessage: (message) => {
+            for (const listener of debugMessageListeners) {
+              listener({ direction: "adapter", session, message });
+            }
+          },
+        };
+      },
+    },
+  );
+  const debugExecutor = new FoundryTestDebugExecutor({
+    startDebugging: (configuration, debugOptions) =>
+      vscode.debug.startDebugging(undefined, configuration, debugOptions),
+    stopDebugging: (session) =>
+      vscode.debug.stopDebugging(session as vscode.DebugSession),
+    onDidStartDebugSession: (listener) =>
+      vscode.debug.onDidStartDebugSession((session) => listener(session)),
+    onDidTerminateDebugSession: (listener) =>
+      vscode.debug.onDidTerminateDebugSession((session) => listener(session)),
+    onDidDebugMessage: (listener) => subscribe(debugMessageListeners, listener),
+    onCleanupError,
+  });
   let shownFailureFingerprint: string | undefined;
   let failureConfigurationKey: string | undefined;
   const runtime = new TestingRuntime({
@@ -272,6 +314,25 @@ async function registerTestingRuntime(
     async (request, token) => runProfile.run(request, token),
     true,
   );
+  const debugProfile = new FoundryTestRunProfile({
+    controller,
+    readyContext: () => runtime.readyContext(),
+    snapshot: () => explorer.snapshot(),
+    execute: (request, signal, observer, run) =>
+      debugExecutor.execute(request, signal, observer, run),
+    createMessage: (message) => new vscode.TestMessage(message),
+    createLocation: (nativePath, line, character) =>
+      new vscode.Location(
+        vscode.Uri.file(nativePath),
+        new vscode.Position(line, character),
+      ),
+  });
+  controller.createRunProfile(
+    "Debug",
+    vscode.TestRunProfileKind.Debug,
+    async (request, token) => debugProfile.run(request, token),
+    true,
+  );
   controller.refreshHandler = async (token) => {
     if (token.isCancellationRequested) {
       return;
@@ -305,6 +366,7 @@ async function registerTestingRuntime(
     output,
     status,
     controller,
+    debugTracker,
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (
         TESTING_CONFIGURATION_SECTIONS.some((section) =>

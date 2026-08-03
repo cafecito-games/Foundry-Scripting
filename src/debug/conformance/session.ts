@@ -115,11 +115,12 @@ export class LiveConformanceHost {
   static async run(
     enginePath: string,
     operation: (host: LiveConformanceHost) => Promise<void>,
+    fixturePath = FIXTURE_PATH,
   ): Promise<void> {
     const projectPath = await mkdtemp(
       join(tmpdir(), "foundryscript-dap-conformance-"),
     );
-    await cp(FIXTURE_PATH, projectPath, { recursive: true });
+    await cp(fixturePath, projectPath, { recursive: true });
     const hostProcess = spawn(
       enginePath,
       [

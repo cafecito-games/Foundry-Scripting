@@ -1,3 +1,4 @@
+import path from "node:path";
 import type * as vscode from "vscode";
 import type { ResolveWorkspaceProject } from "../project/workspace.js";
 
@@ -53,6 +54,11 @@ export class FoundryScriptDebugConfigurationProvider
       );
     }
 
+    if (configuration["foundry/launch"] !== undefined) {
+      const failure = validateProjectTestConfiguration(configuration);
+      return failure === undefined ? configuration : this.reject(failure);
+    }
+
     const scene: unknown = configuration.scene;
     if (!isSupportedScene(scene)) {
       return this.reject(
@@ -91,6 +97,64 @@ export class FoundryScriptDebugConfigurationProvider
     this.options.reportError(message);
     return undefined;
   }
+}
+
+function validateProjectTestConfiguration(
+  configuration: vscode.DebugConfiguration,
+): string | undefined {
+  const project: unknown = configuration.project;
+  if (typeof project !== "string" || !path.isAbsolute(project)) {
+    return "The internal FoundryScript test debug launch requires an absolute project path.";
+  }
+  if (configuration.noDebug !== false) {
+    return "The internal FoundryScript test debug launch requires noDebug=false.";
+  }
+  const launch: unknown = configuration["foundry/launch"];
+  if (!isRecord(launch) || launch.kind !== "project_test") {
+    return 'The internal FoundryScript test debug launch requires kind "project_test".';
+  }
+  if (typeof launch.runner !== "string" || !isCanonicalResourcePath(launch.runner)) {
+    return "The internal FoundryScript test debug launch requires a canonical res:// runner path.";
+  }
+  const adapter = launch.adapter;
+  if (!isRecord(adapter) || adapter.protocolVersion !== 1) {
+    return "The internal FoundryScript test debug launch requires adapter protocol version 1.";
+  }
+  if (typeof adapter.report !== "string" || !path.isAbsolute(adapter.report)) {
+    return "The internal FoundryScript test debug launch requires an absolute TAP report path.";
+  }
+  if (
+    !Array.isArray(adapter.testIds) ||
+    adapter.testIds.length === 0 ||
+    !adapter.testIds.every(isTestId) ||
+    new Set(adapter.testIds).size !== adapter.testIds.length
+  ) {
+    return "The internal FoundryScript test debug launch requires unique non-empty selected test IDs.";
+  }
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isTestId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    !/[\u0000-\u001f\u007f]/u.test(value)
+  );
+}
+
+function isCanonicalResourcePath(value: string): boolean {
+  if (!value.startsWith("res://") || value.includes("\\")) return false;
+  const segments = value.slice("res://".length).split("/");
+  return (
+    segments.length > 0 &&
+    segments.every(
+      (segment) => segment !== "" && segment !== "." && segment !== "..",
+    )
+  );
 }
 
 export function isSupportedScene(value: unknown): value is string {

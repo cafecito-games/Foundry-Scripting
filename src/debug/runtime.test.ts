@@ -582,6 +582,51 @@ describe("FoundryScript debug runtime registration", () => {
     );
   });
 
+  it("logs structured selected-test launches with runner and report context", async () => {
+    const runtime = await loadRuntimeModule();
+    expect(runtime).toBeDefined();
+    const appendLine = vi.fn();
+    const context = { subscriptions: [] } as unknown as vscode.ExtensionContext;
+    runtime!.registerFoundryScriptDebugRuntime(context, {
+      resolveProject,
+      getCoordinator: () => undefined,
+      getMode: () => "off",
+      output: { appendLine } as unknown as vscode.OutputChannel,
+    });
+    const trackerFactory = runtimeMock.registerDebugAdapterTrackerFactory.mock
+      .calls[0][1] as vscode.DebugAdapterTrackerFactory;
+    const session = {
+      id: "selected-test-log",
+      name: "Debug Foundry Tests",
+      type: "foundryscript",
+      configuration: {
+        type: "foundryscript",
+        request: "launch",
+        name: "Debug Foundry Tests",
+        project: "/workspace/game",
+        noDebug: false,
+        "foundry/launch": {
+          kind: "project_test",
+          runner: "res://tests/runner.fs",
+          adapter: {
+            protocolVersion: 1,
+            report: "/tmp/selected.tap",
+            testIds: ["test-a", "test-b"],
+          },
+        },
+      },
+    } as unknown as vscode.DebugSession;
+    const tracker = await trackerFactory.createDebugAdapterTracker(session);
+
+    tracker?.onWillStartSession?.call(tracker);
+
+    expect(appendLine).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /2 selected tests.*res:\/\/tests\/runner\.fs.*\/tmp\/selected\.tap/i,
+      ),
+    );
+  });
+
   it("reports one actionable transport failure and releases once across duplicate terminal callbacks", async () => {
     const runtime = await loadRuntimeModule();
     expect(runtime).toBeDefined();
@@ -857,7 +902,7 @@ describe("FoundryScript debug runtime registration", () => {
     expect(release).toHaveBeenCalledOnce();
   });
 
-  it("reports one transport failure when adapter exit arrives before its error", async () => {
+  it("ignores a late transport error after adapter exit ended the acquisition", async () => {
     const runtime = await loadRuntimeModule();
     expect(runtime).toBeDefined();
     const release = vi.fn();
@@ -894,9 +939,49 @@ describe("FoundryScript debug runtime registration", () => {
       appendLine.mock.calls.filter(([line]) =>
         String(line).includes("socket reset after exit"),
       ),
-    ).toHaveLength(1);
-    expect(runtimeMock.showErrorMessage).toHaveBeenCalledOnce();
+    ).toHaveLength(0);
+    expect(runtimeMock.showErrorMessage).not.toHaveBeenCalled();
     expect(runtimeMock.stopDebugging).not.toHaveBeenCalled();
+  });
+
+  it("ignores connection closed after normal tracker stop released the acquisition", async () => {
+    const runtime = await loadRuntimeModule();
+    expect(runtime).toBeDefined();
+    const release = vi.fn();
+    const appendLine = vi.fn();
+    const context = { subscriptions: [] } as unknown as vscode.ExtensionContext;
+    runtime!.registerFoundryScriptDebugRuntime(context, {
+      resolveProject,
+      getCoordinator: () => ({
+        acquireDapLease: vi.fn().mockResolvedValue({
+          endpoint: { host: "127.0.0.1", port: 50127 },
+          ownership: "owned",
+          released: false,
+          release,
+          dispose: release,
+        }),
+      }) as never,
+      getMode: () => "spawn",
+      output: { appendLine } as unknown as vscode.OutputChannel,
+    });
+    const session = createSession("stop-before-connection-closed");
+    const factory = runtimeMock.registerDebugAdapterDescriptorFactory.mock
+      .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
+    const trackerFactory = runtimeMock.registerDebugAdapterTrackerFactory.mock
+      .calls[0][1] as vscode.DebugAdapterTrackerFactory;
+    const tracker = await trackerFactory.createDebugAdapterTracker(session);
+
+    await factory.createDebugAdapterDescriptor(session, undefined);
+    tracker?.onWillStopSession?.call(tracker);
+    tracker?.onError?.(new Error("connection closed"));
+
+    expect(release).toHaveBeenCalledOnce();
+    expect(
+      appendLine.mock.calls.filter(([line]) =>
+        String(line).includes("connection closed"),
+      ),
+    ).toHaveLength(0);
+    expect(runtimeMock.showErrorMessage).not.toHaveBeenCalled();
   });
 
   it("releases the lease when the adapter transport exits naturally", async () => {
