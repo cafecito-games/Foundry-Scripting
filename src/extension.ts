@@ -11,6 +11,10 @@ import { HostStartupFailure } from "./client/host-launcher.js";
 import { ConnectionLifecycle } from "./client/lifecycle.js";
 import { writeLog } from "./client/logging.js";
 import {
+  ConnectionConfigurationFailure,
+  validateConnectionSettings,
+} from "./client/settings.js";
+import {
   createConnectionManager,
   createToolingHostCoordinator,
 } from "./client/runtime.js";
@@ -83,12 +87,38 @@ const CONNECTION_CONFIGURATION_SECTIONS = [
 
 function readConnectionSettings(): ConnectionSettings {
   const configuration = vscode.workspace.getConfiguration("foundryScript");
-  return {
-    mode: configuration.get("lsp.mode", "spawn"),
-    port: configuration.get("lsp.port", 6005),
-    dapPort: configuration.get("dap.port", 6006),
-    enginePath: configuration.get("enginePath", "foundry"),
-  };
+  return validateConnectionSettings({
+    mode: configuration.get<unknown>("lsp.mode", "spawn"),
+    port: configuration.get<unknown>("lsp.port", 6005),
+    dapPort: configuration.get<unknown>("dap.port", 6006),
+    enginePath: configuration.get<unknown>("enginePath", "foundry"),
+  });
+}
+
+function readSafeConnectionMode(): ConnectionSettings["mode"] {
+  try {
+    return readConnectionSettings().mode;
+  } catch (error) {
+    if (error instanceof ConnectionConfigurationFailure) {
+      return "off";
+    }
+    throw error;
+  }
+}
+
+async function showSettingsFailure(
+  failure: ConnectionConfigurationFailure,
+): Promise<void> {
+  const selection = await vscode.window.showErrorMessage(
+    failure.message,
+    "Open Settings",
+  );
+  if (selection === "Open Settings") {
+    await vscode.commands.executeCommand(
+      "workbench.action.openSettings",
+      failure.setting,
+    );
+  }
 }
 
 async function showStartupError(error: unknown): Promise<void> {
@@ -623,6 +653,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       });
       return showProjectResolutionFailure(failure);
     },
+    reportSettingsFailure: (failure) => {
+      writeLog(outputChannel, "error", "lsp.configuration.invalid", {
+        setting: failure.setting,
+        message: failure.message,
+      });
+      return showSettingsFailure(failure);
+    },
     reportStartupFailure: (error, project) => {
       writeLog(outputChannel, "error", "lsp.connection.failed", {
         project,
@@ -640,7 +677,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   activeDebugRuntime = registerFoundryScriptDebugRuntime(context, {
     resolveProject,
     getCoordinator: () => activeConnectionLifecycle?.currentCoordinator,
-    getMode: () => readConnectionSettings().mode,
+    getMode: readSafeConnectionMode,
     output: debugOutput,
   });
   registerTestingRuntime(context, resolveProject);
@@ -667,7 +704,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
   );
   statusController.update(
-    readConnectionSettings().mode === "off"
+    readSafeConnectionMode() === "off"
       ? { kind: "off" }
       : { kind: "disconnected" },
   );

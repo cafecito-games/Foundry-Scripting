@@ -172,7 +172,7 @@
           "description": "Choose whether the extension starts, attaches to, automatically selects, or disables the Foundry language server."
         },
         "foundryScript.lsp.port": {
-          "type": "number",
+          "type": "integer",
           "default": 6005,
           "minimum": 1,
           "maximum": 65535,

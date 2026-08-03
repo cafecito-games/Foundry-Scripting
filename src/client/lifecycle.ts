@@ -7,6 +7,10 @@ import type {
   ProjectResolution,
   ProjectResolutionFailure,
 } from "../project/resolver.js";
+import {
+  ConnectionConfigurationFailure,
+  validateConnectionSettings,
+} from "./settings.js";
 
 export interface LifecycleConnectionManager {
   start(options: StartConnectionOptions): Promise<void>;
@@ -32,6 +36,9 @@ export interface ConnectionLifecycleOptions<
   readonly publishState: (state: ConnectionState) => void;
   readonly reportProjectFailure: (
     failure: ProjectResolutionFailure,
+  ) => void | Promise<void>;
+  readonly reportSettingsFailure: (
+    failure: ConnectionConfigurationFailure,
   ) => void | Promise<void>;
   readonly reportStartupFailure: (
     error: unknown,
@@ -110,7 +117,19 @@ export class ConnectionLifecycle<
       return;
     }
 
-    const settings = { ...this.options.readSettings() };
+    let settings: ConnectionSettings;
+    try {
+      settings = validateConnectionSettings(this.options.readSettings());
+    } catch (error) {
+      if (error instanceof ConnectionConfigurationFailure) {
+        this.notify(
+          "lsp.lifecycle.settings_notification_failed",
+          () => this.options.reportSettingsFailure(error),
+        );
+        return;
+      }
+      throw error;
+    }
     if (settings.mode === "off") {
       this.options.publishState({ kind: "off" });
       return;

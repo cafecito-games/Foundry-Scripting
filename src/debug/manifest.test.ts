@@ -101,4 +101,19 @@ describe("FoundryScript debugger manifest", () => {
         "TCP port used to connect to the Foundry debug adapter in an externally owned tooling host.",
     });
   });
+
+  it("contributes a bounded integer LSP port setting", () => {
+    expect(
+      packageManifest.contributes.configuration.properties[
+        "foundryScript.lsp.port"
+      ],
+    ).toEqual({
+      type: "integer",
+      default: 6005,
+      minimum: 1,
+      maximum: 65535,
+      description:
+        "TCP port used to attach to an existing Foundry language server.",
+    });
+  });
 });
