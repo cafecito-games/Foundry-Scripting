@@ -26,6 +26,7 @@ describe("validatePackageFiles", () => {
     "tests/grammar/keywords.fs",
     "node_modules/example/index.js",
     "dist/extension.js.map",
+    "tsconfig.production-strict.json",
   ])("rejects %s", (offendingPath) => {
     expect(() => validatePackageFiles([...requiredFiles, offendingPath])).toThrow(
       offendingPath,
