@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { parseTestDiscovery } from "./discovery.js";
 import {
   FoundryTap13Parser,
+  type FoundryTapParserBufferInstrumentation,
   type FoundryTapPoint,
 } from "./report.js";
 import { selectRunnableLeaves } from "./selection.js";
@@ -31,6 +32,54 @@ describe("streaming Foundry TAP13 parser", () => {
     });
     expect(points).toHaveLength(1);
     expect(points[0]?.label).toBe("adds 😀 numbers");
+  });
+
+  it("buffers one 2 MiB line across 256 pushes with linear explicit copy bounds", () => {
+    const label = "x".repeat(2 * 1024 * 1024);
+    const content = report(point({ label }));
+    const bytes = encoder.encode(content);
+    let copiedBytes = 0;
+    let copiedCodeUnits = 0;
+    let maxBufferedBytes = 0;
+    let maxBufferedCodeUnits = 0;
+    const instrumentation: FoundryTapParserBufferInstrumentation = {
+      onCopy: (kind, units) => {
+        if (kind === "bytes") copiedBytes += units;
+        else copiedCodeUnits += units;
+      },
+      onBuffer: (bufferedBytes, bufferedCodeUnits) => {
+        maxBufferedBytes = Math.max(maxBufferedBytes, bufferedBytes);
+        maxBufferedCodeUnits = Math.max(
+          maxBufferedCodeUnits,
+          bufferedCodeUnits,
+        );
+      },
+    };
+    const points: FoundryTapPoint[] = [];
+    const parser = new FoundryTap13Parser(
+      [leaf],
+      (value) => points.push(value),
+      false,
+      instrumentation,
+    );
+
+    for (let step = 0; step < 256; step += 1) {
+      const start = Math.floor((bytes.length * step) / 256);
+      const end = Math.floor((bytes.length * (step + 1)) / 256);
+      parser.push(bytes.subarray(start, end));
+    }
+
+    expect(parser.finish({ kind: "exited", exitCode: 0 })).toMatchObject({
+      valid: true,
+      complete: true,
+    });
+    expect(points[0]?.label).toBe(label);
+    expect(copiedBytes).toBeGreaterThanOrEqual(bytes.length);
+    expect(copiedCodeUnits).toBeGreaterThanOrEqual(label.length);
+    expect(copiedBytes).toBeLessThanOrEqual(2 * bytes.length);
+    expect(copiedCodeUnits).toBeLessThanOrEqual(2 * content.length);
+    expect(maxBufferedBytes).toBeLessThanOrEqual(2 * bytes.length);
+    expect(maxBufferedCodeUnits).toBeLessThanOrEqual(2 * content.length);
   });
 
   it("validates the final decoder flush", () => {
