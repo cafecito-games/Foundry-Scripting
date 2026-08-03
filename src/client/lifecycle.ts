@@ -59,6 +59,7 @@ export class ConnectionLifecycle<
   private ownedCoordinator: TCoordinator | undefined;
   private activeManager: TManager | undefined;
   private activeCoordinator: TCoordinator | undefined;
+  private disconnectedStatePending = false;
   private readonly managerStops = new WeakMap<TManager, Promise<void>>();
   private readonly coordinatorDisposals = new WeakMap<
     TCoordinator,
@@ -112,8 +113,6 @@ export class ConnectionLifecycle<
   }
 
   private async reconcile(generation: number): Promise<void> {
-    const replacedResources =
-      this.ownedManager !== undefined || this.ownedCoordinator !== undefined;
     await this.releaseOwnedResources();
     if (!this.isCurrent(generation)) {
       return;
@@ -124,8 +123,8 @@ export class ConnectionLifecycle<
       settings = validateConnectionSettings(this.options.readSettings());
     } catch (error) {
       if (error instanceof ConnectionConfigurationFailure) {
-        if (replacedResources) {
-          this.options.publishState({ kind: "disconnected" });
+        if (this.disconnectedStatePending) {
+          this.publishAuthoritativeState({ kind: "disconnected" });
         }
         this.notify(
           "lsp.lifecycle.settings_notification_failed",
@@ -136,10 +135,10 @@ export class ConnectionLifecycle<
       throw error;
     }
     if (settings.mode === "off") {
-      this.options.publishState({ kind: "off" });
+      this.publishAuthoritativeState({ kind: "off" });
       return;
     }
-    this.options.publishState({ kind: "disconnected" });
+    this.publishAuthoritativeState({ kind: "disconnected" });
 
     const resolution = await this.options.resolveProject();
     if (!this.isCurrent(generation)) {
@@ -195,6 +194,9 @@ export class ConnectionLifecycle<
   }
 
   private invalidateManager(): void {
+    if (this.ownedManager !== undefined || this.ownedCoordinator !== undefined) {
+      this.disconnectedStatePending = true;
+    }
     this.activeManager = undefined;
     this.activeCoordinator = undefined;
     const manager = this.ownedManager;
@@ -261,6 +263,11 @@ export class ConnectionLifecycle<
 
   private isCurrent(generation: number): boolean {
     return !this.stopped && generation === this.generation;
+  }
+
+  private publishAuthoritativeState(state: ConnectionState): void {
+    this.disconnectedStatePending = false;
+    this.options.publishState(state);
   }
 
   private notify(event: string, task: () => void | Promise<void>): void {

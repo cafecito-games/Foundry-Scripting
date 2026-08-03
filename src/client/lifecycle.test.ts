@@ -107,6 +107,40 @@ describe("connection lifecycle", () => {
     expect(harness.states.at(-1)).toEqual({ kind: "disconnected" });
   });
 
+  it("preserves disconnected publication across superseded queued reconciliation", async () => {
+    const harness = createHarness();
+    await harness.lifecycle.requestReconciliation();
+    harness.states.push({ kind: "connected" });
+    const release = deferred<void>();
+    harness.managers[0]?.stop.mockImplementation(() => release.promise);
+
+    harness.settings = { ...defaultSettings, port: 7001 };
+    const firstReplacement = harness.lifecycle.requestReconciliation();
+    await vi.waitFor(() =>
+      expect(harness.managers[0]?.stop).toHaveBeenCalledOnce(),
+    );
+
+    harness.settings = {
+      ...defaultSettings,
+      mode: "malformed",
+    } as unknown as ConnectionSettings;
+    const invalidReplacement = harness.lifecycle.requestReconciliation();
+    release.resolve(undefined);
+    await Promise.all([firstReplacement, invalidReplacement]);
+
+    expect(harness.managers[0]?.stop).toHaveBeenCalledOnce();
+    expect(harness.coordinators[0]?.dispose).toHaveBeenCalledOnce();
+    expect(harness.managers).toHaveLength(1);
+    expect(harness.coordinators).toHaveLength(1);
+    expect(harness.resolveProject).toHaveBeenCalledOnce();
+    expect(harness.reportSettingsFailure).toHaveBeenCalledOnce();
+    expect(harness.states).toEqual([
+      { kind: "disconnected" },
+      { kind: "connected" },
+      { kind: "disconnected" },
+    ]);
+  });
+
   it("supports off to enabled and enabled to off without replacement overlap", async () => {
     const harness = createHarness({
       settings: { ...defaultSettings, mode: "off" },
