@@ -56,7 +56,7 @@ describe("required DAP conformance runner", () => {
       FOUNDRY_ENGINE_PATH: fakeEngine,
     });
 
-    expect(error.stderr).toContain("requires Foundry commit a2d9f6df0");
+    expect(error.stderr).toContain("requires Foundry commit c11e3a080");
     expect(error.stderr).toContain("deadbeef0");
   });
 
@@ -69,6 +69,19 @@ describe("required DAP conformance runner", () => {
     );
   });
 
+  it("runs scene and selected-test DAP conformance as required suites", async () => {
+    const runner = await readFile(scriptPath, "utf8");
+
+    expect(runner).toContain("src/debug/conformance/live.test.ts");
+    expect(runner).toContain(
+      "src/debug/conformance/test-debugging-live.test.ts",
+    );
+    expect(runner).toContain('FOUNDRY_DAP_CONFORMANCE_REQUIRED: "1"');
+    expect(runner).toContain(
+      'FOUNDRY_TEST_DEBUG_CONFORMANCE_REQUIRED: "1"',
+    );
+  });
+
   it("has a required CI job that builds the pinned engine before running", async () => {
     const workflow = await readFile(
       path.join(path.dirname(path.dirname(scriptPath)), ".github/workflows/ci.yml"),
@@ -77,7 +90,10 @@ describe("required DAP conformance runner", () => {
 
     expect(workflow).toContain("repository: cafecito-games/Foundry");
     expect(workflow).toContain(
-      "ref: a2d9f6df06fb545c8106f24c7445466d6355085b",
+      "ref: c11e3a080959af4ca8fbdd9b1a3d97a889b351b4",
+    );
+    expect(workflow).toContain(
+      "key: dap-conformance-foundry-c11e3a080-${{ runner.os }}-${{ runner.arch }}",
     );
     expect(workflow).toContain("npm run test:dap-conformance");
     expect(workflow).toContain("FOUNDRY_ENGINE_PATH:");

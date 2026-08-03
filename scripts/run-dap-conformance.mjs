@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const pinnedFoundryCommit = "a2d9f6df0";
+export const pinnedFoundryCommit = "c11e3a080";
 
 function fail(message) {
   process.stderr.write(`${message}\n`);
@@ -55,6 +55,7 @@ function main() {
       vitestPath,
       "run",
       "src/debug/conformance/live.test.ts",
+      "src/debug/conformance/test-debugging-live.test.ts",
       "--reporter=verbose",
     ],
     {
@@ -62,6 +63,7 @@ function main() {
       env: {
         ...process.env,
         FOUNDRY_DAP_CONFORMANCE_REQUIRED: "1",
+        FOUNDRY_TEST_DEBUG_CONFORMANCE_REQUIRED: "1",
         FOUNDRY_ENGINE_PATH: enginePath,
       },
       stdio: "inherit",
