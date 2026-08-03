@@ -1,6 +1,7 @@
 .github/**
 .cursor/**
 .vscode/**
+.worktrees/**
 AGENTS.md
 docs/**
 scripts/**
