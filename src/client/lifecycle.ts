@@ -130,14 +130,16 @@ export class ConnectionLifecycle<
     }
 
     const project = resolution.project;
+    let coordinator: TCoordinator | undefined;
+    let manager: TManager | undefined;
     try {
-      const coordinator = this.options.createCoordinator();
+      coordinator = this.options.createCoordinator();
       this.ownedCoordinator = coordinator;
       if (!this.isCurrent(generation)) {
         await this.releaseOwnedResources();
         return;
       }
-      const manager = this.options.createManager(project, coordinator);
+      manager = this.options.createManager(project, coordinator);
       this.ownedManager = manager;
       if (!this.isCurrent(generation)) {
         await this.releaseOwnedResources();
@@ -151,9 +153,15 @@ export class ConnectionLifecycle<
       this.activeManager = manager;
       this.activeCoordinator = coordinator;
     } catch (error) {
-      await this.releaseOwnedResources();
       if (!this.isCurrent(generation) || isAbortError(error)) {
+        await this.releaseOwnedResources();
         return;
+      }
+      if (manager !== undefined && coordinator !== undefined) {
+        this.activeManager = manager;
+        this.activeCoordinator = coordinator;
+      } else {
+        await this.releaseOwnedResources();
       }
       this.notify(
         "lsp.lifecycle.startup_notification_failed",
