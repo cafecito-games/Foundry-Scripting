@@ -1,5 +1,12 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -141,9 +148,19 @@ describe("packaged VS Code integration runner contract", () => {
       stdio: "ignore",
     });
     expect(child.pid).toBeTypeOf("number");
+    const adapterDirectory = await mkdtemp(
+      path.join(os.tmpdir(), "foundryscript-test-adapter-"),
+    );
+    temporaryDirectories.push(adapterDirectory);
+    const artifact = path.join(adapterDirectory, "capabilities.json");
+    await writeFile(artifact, "{}\n");
     await writeFile(
       path.join(root, "events.ndjson"),
-      `${JSON.stringify({ phase: "start", pid: child.pid })}\n`,
+      `${JSON.stringify({
+        phase: "start",
+        pid: child.pid,
+        argv: ["adapter", "capabilities", "--output", artifact],
+      })}\n`,
     );
 
     const closed = new Promise((resolve) => {
@@ -155,6 +172,9 @@ describe("packaged VS Code integration runner contract", () => {
     });
     await runner.terminateRecordedProcesses(root);
     expect(await closed).toBe(true);
+    await expect(access(adapterDirectory)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("fails postchecks on arbitrary Extension Host errors", async () => {

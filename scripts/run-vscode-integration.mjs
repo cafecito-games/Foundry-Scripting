@@ -450,6 +450,25 @@ export async function terminateRecordedProcesses(control) {
       if (error?.code !== "ESRCH") throw error;
     }
   }
+  const adapterDirectories = starts
+    .map((event) => {
+      const outputIndex = event.argv?.indexOf("--output") ?? -1;
+      if (outputIndex < 0) return undefined;
+      const output = event.argv[outputIndex + 1];
+      if (typeof output !== "string") return undefined;
+      const directory = path.dirname(output);
+      const basename = path.basename(directory);
+      return basename.startsWith("foundryscript-test-adapter-") ||
+        basename.startsWith("foundryscript-test-discovery-")
+        ? directory
+        : undefined;
+    })
+    .filter((directory) => typeof directory === "string");
+  await Promise.all(
+    [...new Set(adapterDirectories)].map((directory) =>
+      rm(directory, { recursive: true, force: true }),
+    ),
+  );
 }
 
 export async function runIntegrationSuite({

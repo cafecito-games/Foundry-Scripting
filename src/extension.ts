@@ -462,20 +462,26 @@ function registerTestingRuntime(
       configurationGeneration += 1;
       refresh.dispose();
       disposeWatchers();
-      stopPromise = Promise.all([
+      stopPromise = Promise.allSettled([
         Promise.resolve().then(() => runtime.stop()),
         Promise.resolve().then(() => process.stop()),
-      ])
-        .then(() => undefined)
-        .catch((error: unknown) => {
-          try {
-            output.appendLine(
-              `Testing shutdown failed: ${error instanceof Error ? error.message : String(error)}`,
-            );
-          } catch {
-            // VS Code may dispose the channel while deactivation is still running.
-          }
-        });
+      ]).then((results) => {
+        const failures: unknown[] = [];
+        for (const result of results) {
+          if (result.status === "rejected") failures.push(result.reason);
+        }
+        if (failures.length === 0) return;
+        const detail = failures
+          .map((error: unknown) =>
+            error instanceof Error ? error.message : String(error),
+          )
+          .join("; ");
+        try {
+          output.appendLine(`Testing shutdown failed: ${detail}`);
+        } catch {
+          // VS Code may dispose the channel while deactivation is still running.
+        }
+      });
       return stopPromise;
     },
   };

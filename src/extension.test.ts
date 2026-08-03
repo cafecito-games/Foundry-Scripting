@@ -2514,6 +2514,36 @@ describe("extension entry point", () => {
     expect(extensionMock.coordinatorDispose).toHaveBeenCalledOnce();
   });
 
+  it("waits for testing process cleanup after runtime shutdown rejects", async () => {
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game", scheme: "file" },
+    });
+    let resolveProcessStop!: () => void;
+    extensionMock.testingStop.mockRejectedValue(
+      new Error("runtime shutdown failed"),
+    );
+    extensionMock.testingProcessStop.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveProcessStop = resolve;
+      }),
+    );
+    await activate(createContext());
+
+    let settled = false;
+    const deactivation = deactivate().then(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => {
+      expect(extensionMock.testingProcessStop).toHaveBeenCalledOnce();
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    resolveProcessStop();
+    await deactivation;
+    expect(settled).toBe(true);
+  });
+
   it("catches and logs background testing shutdown failures", async () => {
     extensionMock.configuration.set("lsp.mode", "off");
     extensionMock.testingStop.mockRejectedValue(
