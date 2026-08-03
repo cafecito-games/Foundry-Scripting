@@ -668,6 +668,32 @@ describe("extension entry point", () => {
     expect(context.subscriptions).toContain(extensionMock.statusItem);
   });
 
+  it("reports manually edited invalid LSP settings without launching the connection", async () => {
+    extensionMock.configuration.set("lsp.mode", "malformed");
+    extensionMock.showErrorMessage.mockResolvedValue("Open Settings");
+
+    await activate(createContext());
+
+    await vi.waitFor(() =>
+      expect(extensionMock.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining("foundryScript.lsp.mode"),
+        "Open Settings",
+      ),
+    );
+    expect(extensionMock.resolveProject).not.toHaveBeenCalled();
+    expect(extensionMock.createToolingHostCoordinator).not.toHaveBeenCalled();
+    expect(extensionMock.createConnectionManager).not.toHaveBeenCalled();
+    expect(extensionMock.start).not.toHaveBeenCalled();
+    expect(extensionMock.outputChannel.appendLine.mock.calls.some(([line]) => {
+      const record = JSON.parse(line as string) as { event?: string };
+      return record.event === "lsp.configuration.invalid";
+    })).toBe(true);
+    expect(extensionMock.executeCommand).toHaveBeenCalledWith(
+      "workbench.action.openSettings",
+      "foundryScript.lsp.mode",
+    );
+  });
+
   it("settles activation while testing configuration and LSP startup remain deferred", async () => {
     const testing = deferred<void>();
     const lsp = deferred<void>();
@@ -1148,8 +1174,11 @@ describe("extension entry point", () => {
     ).resolves.toMatchObject({ host: "127.0.0.1", port: 62002 });
   });
 
-  it("rejects F5 in disabled mode with dedicated actionable diagnostics", async () => {
-    extensionMock.configuration.set("lsp.mode", "off");
+  it.each([
+    ["disabled", "off"],
+    ["malformed", "malformed"],
+  ])("rejects F5 in %s mode with dedicated actionable diagnostics", async (_name, mode) => {
+    extensionMock.configuration.set("lsp.mode", mode);
     await activate(createContext());
     const factory = extensionMock.registerDebugAdapterDescriptorFactory.mock
       .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
@@ -1169,7 +1198,7 @@ describe("extension entry point", () => {
     expect(extensionMock.debugOutputChannel.appendLine).toHaveBeenCalledWith(
       expect.stringMatching(/off.*foundryScript\.lsp\.mode/i),
     );
-    expect(extensionMock.showErrorMessage).toHaveBeenCalledOnce();
+    expect(extensionMock.showErrorMessage).toHaveBeenCalled();
   });
 
   it("offers project settings and does not connect when selection is ambiguous", async () => {
@@ -2300,7 +2329,7 @@ describe("package.json manifest", () => {
       enum: ["spawn", "attach", "auto", "off"],
     });
     expect(properties["foundryScript.lsp.port"]).toMatchObject({
-      type: "number",
+      type: "integer",
       default: 6005,
       minimum: 1,
       maximum: 65535,

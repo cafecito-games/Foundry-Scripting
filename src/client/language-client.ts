@@ -34,7 +34,7 @@ export interface ChangeWorkspaceParams {
   path: string;
 }
 
-const capabilitiesNotification = new NotificationType<FoundryCapabilities>(
+const capabilitiesNotification = new NotificationType<unknown>(
   CAPABILITIES_NOTIFICATION,
 );
 const changeWorkspaceNotification = new NotificationType<ChangeWorkspaceParams>(
@@ -46,9 +46,38 @@ function copyCapabilities(
 ): FoundryCapabilities {
   return {
     native_classes: capabilities.native_classes.map((nativeClass) => ({
-      ...nativeClass,
+      name: nativeClass.name,
+      inherits: nativeClass.inherits,
     })),
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function parseFoundryCapabilities(
+  value: unknown,
+): FoundryCapabilities | undefined {
+  if (!isRecord(value) || !Array.isArray(value.native_classes)) {
+    return undefined;
+  }
+  const nativeClasses: FoundryNativeClass[] = [];
+  for (const nativeClass of value.native_classes) {
+    if (
+      !isRecord(nativeClass) ||
+      typeof nativeClass.name !== "string" ||
+      nativeClass.name.length === 0 ||
+      typeof nativeClass.inherits !== "string"
+    ) {
+      return undefined;
+    }
+    nativeClasses.push({
+      name: nativeClass.name,
+      inherits: nativeClass.inherits,
+    });
+  }
+  return { native_classes: nativeClasses };
 }
 
 export interface FoundryScriptLanguageClientOptions {
@@ -136,7 +165,14 @@ export class FoundryScriptLanguageClient extends LanguageClient {
     );
     this.registerFeature(semanticTokens);
 
-    this.onNotification(capabilitiesNotification, (capabilities) => {
+    this.onNotification(capabilitiesNotification, (params) => {
+      const capabilities = parseFoundryCapabilities(params);
+      if (capabilities === undefined) {
+        writeLog(outputChannel, "warn", "lsp.capabilities.invalid", {
+          reason: "invalid_schema",
+        });
+        return;
+      }
       this.currentCapabilities = copyCapabilities(capabilities);
       writeLog(outputChannel, "info", "lsp.capabilities.received", {
         nativeClassCount: capabilities.native_classes.length,

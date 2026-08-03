@@ -7,6 +7,10 @@ import type {
   ProjectResolution,
   ProjectResolutionFailure,
 } from "../project/resolver.js";
+import {
+  ConnectionConfigurationFailure,
+  validateConnectionSettings,
+} from "./settings.js";
 
 export interface LifecycleConnectionManager {
   start(options: StartConnectionOptions): Promise<void>;
@@ -33,6 +37,9 @@ export interface ConnectionLifecycleOptions<
   readonly reportProjectFailure: (
     failure: ProjectResolutionFailure,
   ) => void | Promise<void>;
+  readonly reportSettingsFailure: (
+    failure: ConnectionConfigurationFailure,
+  ) => void | Promise<void>;
   readonly reportStartupFailure: (
     error: unknown,
     project: string,
@@ -52,6 +59,7 @@ export class ConnectionLifecycle<
   private ownedCoordinator: TCoordinator | undefined;
   private activeManager: TManager | undefined;
   private activeCoordinator: TCoordinator | undefined;
+  private disconnectedStatePending = false;
   private readonly managerStops = new WeakMap<TManager, Promise<void>>();
   private readonly coordinatorDisposals = new WeakMap<
     TCoordinator,
@@ -110,12 +118,27 @@ export class ConnectionLifecycle<
       return;
     }
 
-    const settings = { ...this.options.readSettings() };
+    let settings: ConnectionSettings;
+    try {
+      settings = validateConnectionSettings(this.options.readSettings());
+    } catch (error) {
+      if (error instanceof ConnectionConfigurationFailure) {
+        if (this.disconnectedStatePending) {
+          this.publishAuthoritativeState({ kind: "disconnected" });
+        }
+        this.notify(
+          "lsp.lifecycle.settings_notification_failed",
+          () => this.options.reportSettingsFailure(error),
+        );
+        return;
+      }
+      throw error;
+    }
     if (settings.mode === "off") {
-      this.options.publishState({ kind: "off" });
+      this.publishAuthoritativeState({ kind: "off" });
       return;
     }
-    this.options.publishState({ kind: "disconnected" });
+    this.publishAuthoritativeState({ kind: "disconnected" });
 
     const resolution = await this.options.resolveProject();
     if (!this.isCurrent(generation)) {
@@ -171,6 +194,9 @@ export class ConnectionLifecycle<
   }
 
   private invalidateManager(): void {
+    if (this.ownedManager !== undefined || this.ownedCoordinator !== undefined) {
+      this.disconnectedStatePending = true;
+    }
     this.activeManager = undefined;
     this.activeCoordinator = undefined;
     const manager = this.ownedManager;
@@ -237,6 +263,11 @@ export class ConnectionLifecycle<
 
   private isCurrent(generation: number): boolean {
     return !this.stopped && generation === this.generation;
+  }
+
+  private publishAuthoritativeState(state: ConnectionState): void {
+    this.disconnectedStatePending = false;
+    this.options.publishState(state);
   }
 
   private notify(event: string, task: () => void | Promise<void>): void {

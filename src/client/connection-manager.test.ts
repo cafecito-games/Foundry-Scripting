@@ -5,6 +5,7 @@ import {
   type ConnectionState,
   type LanguageClientHandle,
 } from "./connection-manager.js";
+import { ConnectionConfigurationFailure } from "./settings.js";
 import type { TcpEndpoint } from "./transport.js";
 import {
   ToolingHostCoordinator,
@@ -139,7 +140,7 @@ describe("connection modes", () => {
     const manager = managerWith([]);
 
     await manager.start({
-      settings: { mode: "off", port: 6005, enginePath: "foundry" },
+      settings: { mode: "off", port: 6005, dapPort: 6006, enginePath: "foundry" },
       project: "/workspace/game",
     });
 
@@ -148,12 +149,31 @@ describe("connection modes", () => {
     expect(states).toEqual([{ kind: "off" }]);
   });
 
+  it("rejects an invalid direct settings snapshot before coordinator or client work", async () => {
+    const manager = managerWith([createSuccessfulClient()]);
+
+    await expect(
+      manager.start({
+        settings: {
+          mode: "attach",
+          port: "6005",
+          dapPort: 6006,
+          enginePath: "foundry",
+        } as unknown as { mode: "attach"; port: number; dapPort: number; enginePath: string },
+        project: "/workspace/game",
+      }),
+    ).rejects.toBeInstanceOf(ConnectionConfigurationFailure);
+    expect(launchHost).not.toHaveBeenCalled();
+    expect(endpoints).toEqual([]);
+    expect(states).toEqual([]);
+  });
+
   it("attach connects to the configured loopback port without owning a host", async () => {
     const client = createSuccessfulClient();
     const manager = managerWith([client]);
 
     await manager.start({
-      settings: { mode: "attach", port: 7001, enginePath: "foundry" },
+      settings: { mode: "attach", port: 7001, dapPort: 6006, enginePath: "foundry" },
       project: "/workspace/game",
     });
     await manager.stop();
@@ -175,7 +195,7 @@ describe("connection modes", () => {
       settings: {
         mode: "spawn",
         port: 7001,
-        enginePath: "/opt/foundry",
+        dapPort: 6006, enginePath: "/opt/foundry",
       },
       project: "/workspace/game",
     });
@@ -206,7 +226,7 @@ describe("connection modes", () => {
     const manager = managerWith([client]);
 
     const lspReadiness = manager.start({
-      settings: { mode: "spawn", port: 6005, enginePath: "foundry" },
+      settings: { mode: "spawn", port: 6005, dapPort: 6006, enginePath: "foundry" },
       project: "/workspace/game",
     });
     const dapReadiness = coordinator.acquireDapLease();
@@ -226,7 +246,7 @@ describe("connection modes", () => {
     launchHost.mockResolvedValue(host);
     const manager = managerWith([client]);
     await manager.start({
-      settings: { mode: "spawn", port: 6005, enginePath: "foundry" },
+      settings: { mode: "spawn", port: 6005, dapPort: 6006, enginePath: "foundry" },
       project: "/workspace/game",
     });
 
@@ -253,7 +273,7 @@ describe("connection modes", () => {
     const manager = managerWith([client]);
 
     await manager.start({
-      settings: { mode: "auto", port: 6005, enginePath: "foundry" },
+      settings: { mode: "auto", port: 6005, dapPort: 6006, enginePath: "foundry" },
       project: "/workspace/game",
     });
 
@@ -272,7 +292,7 @@ describe("connection modes", () => {
     const manager = managerWith([externalClient, spawnedClient]);
 
     await manager.start({
-      settings: { mode: "auto", port: 6005, enginePath: "foundry" },
+      settings: { mode: "auto", port: 6005, dapPort: 6006, enginePath: "foundry" },
       project: "/workspace/game",
     });
 
@@ -298,7 +318,7 @@ describe("connection modes", () => {
       spawnedClient,
     ]);
     await manager.start({
-      settings: { mode: "auto", port: 6005, enginePath: "foundry" },
+      settings: { mode: "auto", port: 6005, dapPort: 6006, enginePath: "foundry" },
       project: "/workspace/game",
     });
 
@@ -320,7 +340,7 @@ describe("connection modes", () => {
     const refusedRetry = createClient(connectionRefused());
     const manager = managerWith([externalClient, refusedRetry]);
     await manager.start({
-      settings: { mode: "auto", port: 6005, enginePath: "foundry" },
+      settings: { mode: "auto", port: 6005, dapPort: 6006, enginePath: "foundry" },
       project: "/workspace/game",
     });
     const lease = await coordinator.acquireDapLease();
@@ -351,7 +371,7 @@ describe("connection modes", () => {
 
     await expect(
       manager.start({
-        settings: { mode: "auto", port: 6005, enginePath: "foundry" },
+        settings: { mode: "auto", port: 6005, dapPort: 6006, enginePath: "foundry" },
         project: "/workspace/game",
       }),
     ).rejects.toBe(protocolError);
@@ -374,7 +394,7 @@ describe("connection modes", () => {
 
       const starting = manager
         .start({
-          settings: { mode, port: 6100, enginePath: "foundry" },
+          settings: { mode, port: 6100, dapPort: 6006, enginePath: "foundry" },
           project: "/workspace/game",
         })
         .catch((error: unknown) => error);
@@ -411,7 +431,7 @@ describe("connection modes", () => {
 
     const starting = manager
       .start({
-        settings: { mode: "auto", port: 6005, enginePath: "foundry" },
+        settings: { mode: "auto", port: 6005, dapPort: 6006, enginePath: "foundry" },
         project: "/workspace/game",
       })
       .catch((error: unknown) => error);
@@ -444,7 +464,7 @@ describe("connection modes", () => {
 
     const starting = manager
       .start({
-        settings: { mode: "attach", port: 6005, enginePath: "foundry" },
+        settings: { mode: "attach", port: 6005, dapPort: 6006, enginePath: "foundry" },
         project: "/workspace/game",
       })
       .catch((error: unknown) => error);
@@ -478,7 +498,7 @@ describe("connection modes", () => {
     try {
       await expect(
         manager.start({
-          settings: { mode: "attach", port: 6005, enginePath: "foundry" },
+          settings: { mode: "attach", port: 6005, dapPort: 6006, enginePath: "foundry" },
           project: "/workspace/game",
         }),
       ).rejects.toBe(factoryFailure);
@@ -507,7 +527,7 @@ describe("connection modes", () => {
 
     const failure = await manager
       .start({
-        settings: { mode: "attach", port: 6100, enginePath: "foundry" },
+        settings: { mode: "attach", port: 6100, dapPort: 6006, enginePath: "foundry" },
         project: "/workspace/game",
       })
       .catch((error: unknown) => error);
@@ -533,7 +553,7 @@ describe("connection modes", () => {
 
     await expect(
       manager.start({
-        settings: { mode: "spawn", port: 6005, enginePath: "foundry" },
+        settings: { mode: "spawn", port: 6005, dapPort: 6006, enginePath: "foundry" },
         project: "/workspace/game",
       }),
     ).rejects.toMatchObject({ kind: "tcp_refused" });
@@ -549,7 +569,7 @@ describe("connection modes", () => {
     launchHost.mockResolvedValue(host);
     const manager = managerWith([client]);
     await manager.start({
-      settings: { mode: "spawn", port: 6005, enginePath: "foundry" },
+      settings: { mode: "spawn", port: 6005, dapPort: 6006, enginePath: "foundry" },
       project: "/workspace/game",
     });
 
@@ -566,7 +586,7 @@ describe("connection modes", () => {
 
     const starting = manager
       .start({
-        settings: { mode: "spawn", port: 6005, enginePath: "foundry" },
+        settings: { mode: "spawn", port: 6005, dapPort: 6006, enginePath: "foundry" },
         project: "/workspace/game",
       })
       .catch((error: unknown) => error);
@@ -588,7 +608,7 @@ describe("connection modes", () => {
 
     const starting = manager
       .start({
-        settings: { mode: "attach", port: 6005, enginePath: "foundry" },
+        settings: { mode: "attach", port: 6005, dapPort: 6006, enginePath: "foundry" },
         project: "/workspace/game",
       })
       .catch((error: unknown) => error);
@@ -607,13 +627,13 @@ describe("connection modes", () => {
     const unusedClient = createSuccessfulClient();
     const manager = managerWith([firstClient, unusedClient]);
     await manager.start({
-      settings: { mode: "attach", port: 6005, enginePath: "foundry" },
+      settings: { mode: "attach", port: 6005, dapPort: 6006, enginePath: "foundry" },
       project: "/workspace/game",
     });
 
     await expect(
       manager.start({
-        settings: { mode: "attach", port: 6006, enginePath: "foundry" },
+        settings: { mode: "attach", port: 6006, dapPort: 6006, enginePath: "foundry" },
         project: "/workspace/other",
       }),
     ).rejects.toThrow("already active");
@@ -635,7 +655,7 @@ describe("connection modes", () => {
     const secondClient = createSuccessfulClient();
     const manager = managerWith([firstClient, secondClient]);
     await manager.start({
-      settings: { mode: "attach", port: 6005, enginePath: "foundry" },
+      settings: { mode: "attach", port: 6005, dapPort: 6006, enginePath: "foundry" },
       project: "/workspace/game",
     });
 
@@ -664,7 +684,7 @@ describe("connection modes", () => {
     );
     const manager = managerWith([firstClient, ...failedClients]);
     await manager.start({
-      settings: { mode: "attach", port: 6005, enginePath: "foundry" },
+      settings: { mode: "attach", port: 6005, dapPort: 6006, enginePath: "foundry" },
       project: "/workspace/game",
     });
 
@@ -703,7 +723,7 @@ describe("connection modes", () => {
     const secondClient = createSuccessfulClient();
     const manager = managerWith([firstClient, secondClient]);
     await manager.start({
-      settings: { mode: "attach", port: 6005, enginePath: "foundry" },
+      settings: { mode: "attach", port: 6005, dapPort: 6006, enginePath: "foundry" },
       project: "/workspace/game",
     });
     firstClient.fireUnexpectedStop();
@@ -724,7 +744,7 @@ describe("connection modes", () => {
     const secondClient = createSuccessfulClient();
     const manager = managerWith([firstClient, secondClient]);
     await manager.start({
-      settings: { mode: "attach", port: 6005, enginePath: "foundry" },
+      settings: { mode: "attach", port: 6005, dapPort: 6006, enginePath: "foundry" },
       project: "/workspace/game",
     });
 
@@ -745,7 +765,7 @@ describe("connection modes", () => {
     launchHost.mockResolvedValueOnce(firstHost).mockResolvedValueOnce(secondHost);
     const manager = managerWith([firstClient, secondClient]);
     await manager.start({
-      settings: { mode: "spawn", port: 6005, enginePath: "foundry" },
+      settings: { mode: "spawn", port: 6005, dapPort: 6006, enginePath: "foundry" },
       project: "/workspace/game",
     });
     const lease = await coordinator.acquireDapLease();
@@ -771,7 +791,7 @@ describe("connection modes", () => {
     launchHost.mockResolvedValueOnce(firstHost).mockResolvedValueOnce(secondHost);
     const manager = managerWith([firstClient, secondClient]);
     await manager.start({
-      settings: { mode: "spawn", port: 6005, enginePath: "foundry" },
+      settings: { mode: "spawn", port: 6005, dapPort: 6006, enginePath: "foundry" },
       project: "/workspace/game",
     });
 
@@ -790,7 +810,7 @@ describe("connection modes", () => {
     const unusedClient = createSuccessfulClient();
     const manager = managerWith([firstClient, unusedClient]);
     await manager.start({
-      settings: { mode: "attach", port: 6005, enginePath: "foundry" },
+      settings: { mode: "attach", port: 6005, dapPort: 6006, enginePath: "foundry" },
       project: "/workspace/game",
     });
 

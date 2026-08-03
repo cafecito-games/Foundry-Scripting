@@ -62,12 +62,16 @@ export function parseToolingReadinessLine(
     return undefined;
   }
 
-  let record: ToolingReadinessRecord;
+  let value: unknown;
   try {
-    record = JSON.parse(line.slice(prefix.length)) as ToolingReadinessRecord;
+    value = JSON.parse(line.slice(prefix.length));
   } catch {
     return undefined;
   }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as ToolingReadinessRecord;
 
   if (
     record.project !== expectedProject ||

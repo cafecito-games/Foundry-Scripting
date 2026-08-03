@@ -4,6 +4,7 @@ import type {
   StartConnectionOptions,
 } from "./connection-manager.js";
 import { ConnectionLifecycle } from "./lifecycle.js";
+import { ConnectionConfigurationFailure } from "./settings.js";
 import type { ProjectResolution } from "../project/resolver.js";
 
 const defaultSettings: ConnectionSettings = {
@@ -40,6 +41,104 @@ describe("connection lifecycle", () => {
     expect(harness.createCoordinator).not.toHaveBeenCalled();
     expect(harness.createManager).not.toHaveBeenCalled();
     expect(harness.states).toEqual([{ kind: "off" }]);
+  });
+
+  it("reports settings failures without resolving a project or creating resources", async () => {
+    const failure = new ConnectionConfigurationFailure(
+      "foundryScript.lsp.port",
+      "foundryScript.lsp.port must be a finite integer from 1-65535.",
+    );
+    const readSettings = vi.fn(() => {
+      throw failure;
+    });
+    const harness = createHarness({ readSettings });
+
+    await harness.lifecycle.requestReconciliation();
+
+    expect(harness.reportSettingsFailure).toHaveBeenCalledWith(failure);
+    expect(harness.resolveProject).not.toHaveBeenCalled();
+    expect(harness.createCoordinator).not.toHaveBeenCalled();
+    expect(harness.createManager).not.toHaveBeenCalled();
+    expect(harness.reportStartupFailure).not.toHaveBeenCalled();
+    expect(harness.logBackgroundFailure).not.toHaveBeenCalled();
+    expect(harness.states).toEqual([]);
+  });
+
+  it("validates a malformed typed settings snapshot before project resolution", async () => {
+    const harness = createHarness({
+      settings: {
+        ...defaultSettings,
+        mode: "malformed",
+      } as unknown as ConnectionSettings,
+    });
+
+    await harness.lifecycle.requestReconciliation();
+
+    expect(harness.reportSettingsFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ setting: "foundryScript.lsp.mode" }),
+    );
+    expect(harness.resolveProject).not.toHaveBeenCalled();
+    expect(harness.createCoordinator).not.toHaveBeenCalled();
+    expect(harness.createManager).not.toHaveBeenCalled();
+    expect(harness.states).toEqual([]);
+  });
+
+  it("publishes disconnected after invalid settings replace a connected generation", async () => {
+    const harness = createHarness();
+    await harness.lifecycle.requestReconciliation();
+    harness.states.push({ kind: "connected" });
+    harness.settings = {
+      ...defaultSettings,
+      mode: "malformed",
+    } as unknown as ConnectionSettings;
+
+    await harness.lifecycle.requestReconciliation();
+
+    expect(harness.managers[0]?.stop).toHaveBeenCalledOnce();
+    expect(harness.coordinators[0]?.dispose).toHaveBeenCalledOnce();
+    expect(harness.managers).toHaveLength(1);
+    expect(harness.coordinators).toHaveLength(1);
+    expect(harness.resolveProject).toHaveBeenCalledOnce();
+    expect(harness.reportSettingsFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ setting: "foundryScript.lsp.mode" }),
+    );
+    expect(harness.lifecycle.currentManager).toBeUndefined();
+    expect(harness.lifecycle.currentCoordinator).toBeUndefined();
+    expect(harness.states.at(-1)).toEqual({ kind: "disconnected" });
+  });
+
+  it("preserves disconnected publication across superseded queued reconciliation", async () => {
+    const harness = createHarness();
+    await harness.lifecycle.requestReconciliation();
+    harness.states.push({ kind: "connected" });
+    const release = deferred<void>();
+    harness.managers[0]?.stop.mockImplementation(() => release.promise);
+
+    harness.settings = { ...defaultSettings, port: 7001 };
+    const firstReplacement = harness.lifecycle.requestReconciliation();
+    await vi.waitFor(() =>
+      expect(harness.managers[0]?.stop).toHaveBeenCalledOnce(),
+    );
+
+    harness.settings = {
+      ...defaultSettings,
+      mode: "malformed",
+    } as unknown as ConnectionSettings;
+    const invalidReplacement = harness.lifecycle.requestReconciliation();
+    release.resolve(undefined);
+    await Promise.all([firstReplacement, invalidReplacement]);
+
+    expect(harness.managers[0]?.stop).toHaveBeenCalledOnce();
+    expect(harness.coordinators[0]?.dispose).toHaveBeenCalledOnce();
+    expect(harness.managers).toHaveLength(1);
+    expect(harness.coordinators).toHaveLength(1);
+    expect(harness.resolveProject).toHaveBeenCalledOnce();
+    expect(harness.reportSettingsFailure).toHaveBeenCalledOnce();
+    expect(harness.states).toEqual([
+      { kind: "disconnected" },
+      { kind: "connected" },
+      { kind: "disconnected" },
+    ]);
   });
 
   it("supports off to enabled and enabled to off without replacement overlap", async () => {
@@ -196,6 +295,7 @@ interface HarnessOptions {
   readonly resolveProject?: ReturnType<typeof vi.fn>;
   readonly managerStarts?: readonly Promise<void>[];
   readonly reportProjectFailure?: ReturnType<typeof vi.fn>;
+  readonly readSettings?: ReturnType<typeof vi.fn>;
 }
 
 function createHarness(options: HarnessOptions = {}) {
@@ -244,15 +344,17 @@ function createHarness(options: HarnessOptions = {}) {
     return manager;
   });
   const reportProjectFailure = options.reportProjectFailure ?? vi.fn();
+  const reportSettingsFailure = vi.fn();
   const reportStartupFailure = vi.fn();
   const logBackgroundFailure = vi.fn();
   const lifecycle = new ConnectionLifecycle({
-    readSettings: () => harness.settings,
+    readSettings: options.readSettings ?? (() => harness.settings),
     resolveProject,
     createCoordinator,
     createManager,
     publishState: (state) => states.push(state),
     reportProjectFailure,
+    reportSettingsFailure,
     reportStartupFailure,
     logBackgroundFailure,
   });
@@ -266,6 +368,7 @@ function createHarness(options: HarnessOptions = {}) {
     createCoordinator,
     createManager,
     reportProjectFailure,
+    reportSettingsFailure,
     reportStartupFailure,
     logBackgroundFailure,
   });

@@ -292,6 +292,100 @@ describe("FoundryScript language client", () => {
     });
   });
 
+  it.each([
+    ["null top-level value", null],
+    ["boolean top-level value", true],
+    ["number top-level value", 42],
+    ["string top-level value", "capabilities"],
+    ["array top-level value", []],
+    ["missing native classes", {}],
+    ["non-array native classes", { native_classes: {} }],
+    ["null native class", { native_classes: [null] }],
+    ["array native class", { native_classes: [[]] }],
+    ["primitive native class", { native_classes: [42] }],
+    ["missing native class name", { native_classes: [{ inherits: "Object" }] }],
+    ["empty native class name", { native_classes: [{ name: "", inherits: "Object" }] }],
+    ["non-string native class name", { native_classes: [{ name: 42, inherits: "Object" }] }],
+    ["missing native class inheritance", { native_classes: [{ name: "Node" }] }],
+    ["non-string native class inheritance", { native_classes: [{ name: "Node", inherits: 42 }] }],
+  ])("rejects %s without changing the capability snapshot", (_name, invalid) => {
+    const appendLine = vi.fn();
+    const outputChannel = {
+      appendLine,
+    } as unknown as vscode.OutputChannel;
+    const onCapabilities = vi.fn();
+    const client = new FoundryScriptLanguageClient({
+      endpoint: { host: "127.0.0.1", port: 6005 },
+      outputChannel,
+      onCapabilities,
+    });
+    const handler = languageClientMock.notificationHandlers.get(
+      "foundry_script/capabilities",
+    );
+    if (handler === undefined) {
+      throw new Error("capabilities notification handler was not registered");
+    }
+    handler({ native_classes: [{ name: "Node", inherits: "Object" }] });
+    onCapabilities.mockClear();
+    appendLine.mockClear();
+
+    expect(() => handler(invalid)).not.toThrow();
+    expect(client.capabilities).toEqual({
+      native_classes: [{ name: "Node", inherits: "Object" }],
+    });
+    expect(onCapabilities).not.toHaveBeenCalled();
+    expect(appendLine).toHaveBeenCalledOnce();
+    const record = JSON.parse(
+      appendLine.mock.calls[0]?.[0] as string,
+    ) as unknown;
+    if (typeof record !== "object" || record === null || Array.isArray(record)) {
+      throw new Error("capability rejection log was not an object");
+    }
+    expect(record).toMatchObject({
+      level: "warn",
+      event: "lsp.capabilities.invalid",
+      reason: "invalid_schema",
+    });
+    expect(Object.keys(record).sort()).toEqual([
+      "event",
+      "level",
+      "reason",
+      "timestamp",
+    ]);
+  });
+
+  it("recovers from malformed capabilities with an isolated valid snapshot", () => {
+    const outputChannel = {
+      appendLine: vi.fn(),
+    } as unknown as vscode.OutputChannel;
+    const onCapabilities = vi.fn();
+    const client = new FoundryScriptLanguageClient({
+      endpoint: { host: "127.0.0.1", port: 6005 },
+      outputChannel,
+      onCapabilities,
+    });
+    const handler = languageClientMock.notificationHandlers.get(
+      "foundry_script/capabilities",
+    );
+    if (handler === undefined) {
+      throw new Error("capabilities notification handler was not registered");
+    }
+
+    handler({ native_classes: [{ name: "Node" }] });
+    handler({
+      native_classes: [{ name: "CharacterBody", inherits: "Node" }],
+      ignored: "forward compatible",
+    });
+
+    expect(client.capabilities).toEqual({
+      native_classes: [{ name: "CharacterBody", inherits: "Node" }],
+    });
+    expect(onCapabilities).toHaveBeenCalledOnce();
+    expect(onCapabilities).toHaveBeenCalledWith({
+      native_classes: [{ name: "CharacterBody", inherits: "Node" }],
+    });
+  });
+
   it("records the requested server workspace and forwards the notification", () => {
     const outputChannel = {
       appendLine: vi.fn(),
