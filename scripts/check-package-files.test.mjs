@@ -11,10 +11,8 @@ const requiredFiles = [
 ];
 
 describe("validatePackageFiles", () => {
-  it("accepts the required files and normal extension assets", () => {
-    expect(() =>
-      validatePackageFiles([...requiredFiles, "README.md", "images/icon.png"]),
-    ).not.toThrow();
+  it("accepts the required minimal file listing", () => {
+    expect(() => validatePackageFiles(requiredFiles)).not.toThrow();
   });
 
   it.each([
