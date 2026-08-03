@@ -335,12 +335,23 @@ describe("FoundryScript language client", () => {
     });
     expect(onCapabilities).not.toHaveBeenCalled();
     expect(appendLine).toHaveBeenCalledOnce();
-    expect(JSON.parse(appendLine.mock.calls[0]?.[0] as string)).toEqual(
-      expect.objectContaining({
-        level: "warn",
-        event: "lsp.capabilities.invalid",
-      }),
-    );
+    const record = JSON.parse(
+      appendLine.mock.calls[0]?.[0] as string,
+    ) as unknown;
+    if (typeof record !== "object" || record === null || Array.isArray(record)) {
+      throw new Error("capability rejection log was not an object");
+    }
+    expect(record).toMatchObject({
+      level: "warn",
+      event: "lsp.capabilities.invalid",
+      reason: "invalid_schema",
+    });
+    expect(Object.keys(record).sort()).toEqual([
+      "event",
+      "level",
+      "reason",
+      "timestamp",
+    ]);
   });
 
   it("recovers from malformed capabilities with an isolated valid snapshot", () => {
