@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { TestAdapterFailure } from "./adapter.js";
 import type { TestDiscoveryModel } from "./discovery.js";
 import {
@@ -35,6 +35,10 @@ const cleanModel: TestDiscoveryModel = {
 };
 
 describe("testing runtime", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("invalidates changed configuration synchronously before async work", async () => {
     const nextNegotiation = deferred<typeof negotiatedAdapter>();
     const negotiate = vi
@@ -427,29 +431,27 @@ describe("testing runtime", () => {
     expect(harness.states.at(-1)?.kind).toBe("ready");
   });
 
-  it("bounds stop when an outstanding operation ignores abort", async () => {
+  it("stops promptly when a capability operation ignores abort", async () => {
     vi.useFakeTimers();
-    const never = new Promise<typeof negotiatedAdapter>(() => undefined);
+    const pending = deferred<typeof negotiatedAdapter>();
+    let phaseSignal: AbortSignal | undefined;
     const harness = createHarness({
-      negotiate: vi.fn(() => never),
+      negotiate: vi.fn((_request, signal: AbortSignal) => {
+        phaseSignal = signal;
+        return pending.promise;
+      }),
       lifecycleTimeoutMs: 5_000,
     });
     const configure = harness.runtime.configure(enabledConfiguration);
 
-    const stop = harness.runtime.stop();
-    let stopped = false;
-    void stop.then(() => {
-      stopped = true;
-    });
-    await vi.advanceTimersByTimeAsync(4_999);
-    expect(stopped).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-    await stop;
+    await harness.runtime.stop();
 
-    expect(stopped).toBe(true);
+    expect(phaseSignal?.aborted).toBe(true);
     expect(harness.states.at(-1)).toEqual({ kind: "disabled" });
-    void configure;
-    vi.useRealTimers();
+    pending.resolve(negotiatedAdapter);
+    await configure;
+    expect(harness.discover).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("publishes negotiation failure without starting discovery", async () => {
@@ -465,6 +467,85 @@ describe("testing runtime", () => {
 
     expect(harness.discover).not.toHaveBeenCalled();
     expect(harness.states.at(-1)).toEqual({ kind: "error", failure });
+  });
+
+  it("bounds silent capability negotiation with an isolated phase signal", async () => {
+    vi.useFakeTimers();
+    const pending = deferred<typeof negotiatedAdapter>();
+    let phaseSignal: AbortSignal | undefined;
+    const harness = createHarness({
+      phaseTimeoutMs: 25,
+      negotiate: vi.fn((_request, signal: AbortSignal) => {
+        phaseSignal = signal;
+        return pending.promise;
+      }),
+    });
+
+    const configure = harness.runtime.configure(enabledConfiguration);
+    expect(phaseSignal).toBeDefined();
+    await vi.advanceTimersByTimeAsync(25);
+    await configure;
+
+    expect(phaseSignal?.aborted).toBe(true);
+    expect(harness.discover).not.toHaveBeenCalled();
+    expect(harness.states.at(-1)).toMatchObject({
+      kind: "error",
+      failure: {
+        kind: "readiness_timeout",
+        phase: "capabilities",
+      },
+    });
+    const timeoutState = harness.states.at(-1);
+    expect(timeoutState?.kind === "error" ? timeoutState.failure.message : "")
+      .toContain("25 ms");
+    expect(vi.getTimerCount()).toBe(0);
+
+    const stateCount = harness.states.length;
+    pending.resolve(negotiatedAdapter);
+    await Promise.resolve();
+    expect(harness.states).toHaveLength(stateCount);
+    expect(harness.onDiscovery).not.toHaveBeenCalled();
+  });
+
+  it("bounds silent discovery with a fresh isolated phase signal", async () => {
+    vi.useFakeTimers();
+    const pending = deferred<TestDiscoveryModel>();
+    let capabilitySignal: AbortSignal | undefined;
+    let discoverySignal: AbortSignal | undefined;
+    const harness = createHarness({
+      phaseTimeoutMs: 25,
+      negotiate: vi.fn((_request, signal: AbortSignal) => {
+        capabilitySignal = signal;
+        return Promise.resolve(negotiatedAdapter);
+      }),
+      discover: vi.fn((_request, signal: AbortSignal) => {
+        discoverySignal = signal;
+        return pending.promise;
+      }),
+    });
+
+    const configure = harness.runtime.configure(enabledConfiguration);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(discoverySignal).toBeDefined();
+    expect(discoverySignal).not.toBe(capabilitySignal);
+    await vi.advanceTimersByTimeAsync(25);
+    await configure;
+
+    expect(discoverySignal?.aborted).toBe(true);
+    expect(harness.states.at(-1)).toMatchObject({
+      kind: "error",
+      failure: {
+        kind: "readiness_timeout",
+        phase: "discovery",
+      },
+    });
+    expect(vi.getTimerCount()).toBe(0);
+
+    const stateCount = harness.states.length;
+    pending.resolve(cleanModel);
+    await Promise.resolve();
+    expect(harness.states).toHaveLength(stateCount);
+    expect(harness.onDiscovery).not.toHaveBeenCalled();
   });
 
   it("stops idempotently and leaves later completion inert", async () => {
