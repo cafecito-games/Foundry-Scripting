@@ -14,7 +14,7 @@ async function loadModule(): Promise<DebugExecutorModule | undefined> {
 }
 
 describe("Foundry test debug executor", () => {
-  it("builds the structured project_test launch with exactly selected IDs", async () => {
+  it("builds the exact project_test contract without CLI-only framework args", async () => {
     const module = await loadModule();
     expect(module).toBeDefined();
     const report = path.join(

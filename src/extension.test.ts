@@ -1339,6 +1339,10 @@ describe("extension entry point", () => {
       name: "Debug Foundry Tests",
     });
 
+    // Activation eagerly registers only the runtime lease-drain listener.
+    // The executor's lifecycle listeners are scoped lazily to an active run.
+    expect(extensionMock.onDidStartDebugSession).not.toHaveBeenCalled();
+    expect(extensionMock.onDidTerminateDebugSession).toHaveBeenCalledOnce();
     extensionMock.testingDebugExecutorOptions?.onDidStartDebugSession(started);
     extensionMock.testingDebugExecutorOptions?.onDidTerminateDebugSession(
       terminated,

@@ -413,6 +413,8 @@ export function createFoundryTestDebugConfiguration(
   request: TestExecutionRequest,
   reportPath: string,
 ): vscode.DebugConfiguration {
+  // frameworkArgs belong to the CLI adapter boundary. The engine's internal
+  // project_test DAP contract intentionally contains only these adapter fields.
   return {
     type: "foundryscript",
     request: "launch",
