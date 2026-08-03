@@ -232,15 +232,14 @@ describe("diagnostics arbitration", () => {
   });
 
   it("replaces a nonempty CLI snapshot with a clean one without disturbing active LSP output", () => {
-    const { collection, unit } = createHarness();
+    const { collection, unit } = createHarness(true);
     const uri = fakeUri("file:///player.fs");
 
+    unit.accept({ source: "lsp", uri, diagnostics: [fakeDiagnostic("lsp")] });
     unit.replace({
       source: "cli",
       entries: [{ uri, diagnostics: [fakeDiagnostic("cli")] }],
     });
-    unit.setLanguageServerConnected(true);
-    unit.accept({ source: "lsp", uri, diagnostics: [fakeDiagnostic("lsp")] });
     unit.replace({ source: "cli", entries: [] });
 
     expect(labelsAt(collection, uri)).toEqual(["lsp"]);
