@@ -33,6 +33,8 @@ describe("connection settings validation", () => {
     ["NaN LSP port", { port: Number.NaN }, "foundryScript.lsp.port", "finite integer"],
     ["infinite LSP port", { port: Number.POSITIVE_INFINITY }, "foundryScript.lsp.port", "finite integer"],
     ["string DAP port", { dapPort: "6006" }, "foundryScript.dap.port", "finite integer"],
+    ["missing DAP port", { dapPort: undefined }, "foundryScript.dap.port", "finite integer"],
+    ["null DAP port", { dapPort: null }, "foundryScript.dap.port", "finite integer"],
     ["fractional DAP port", { dapPort: 1.5 }, "foundryScript.dap.port", "finite integer"],
     ["zero DAP port", { dapPort: 0 }, "foundryScript.dap.port", "1-65535"],
     ["large DAP port", { dapPort: 65536 }, "foundryScript.dap.port", "1-65535"],

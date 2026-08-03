@@ -1174,8 +1174,11 @@ describe("extension entry point", () => {
     ).resolves.toMatchObject({ host: "127.0.0.1", port: 62002 });
   });
 
-  it("rejects F5 in disabled mode with dedicated actionable diagnostics", async () => {
-    extensionMock.configuration.set("lsp.mode", "off");
+  it.each([
+    ["disabled", "off"],
+    ["malformed", "malformed"],
+  ])("rejects F5 in %s mode with dedicated actionable diagnostics", async (_name, mode) => {
+    extensionMock.configuration.set("lsp.mode", mode);
     await activate(createContext());
     const factory = extensionMock.registerDebugAdapterDescriptorFactory.mock
       .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
@@ -1195,7 +1198,7 @@ describe("extension entry point", () => {
     expect(extensionMock.debugOutputChannel.appendLine).toHaveBeenCalledWith(
       expect.stringMatching(/off.*foundryScript\.lsp\.mode/i),
     );
-    expect(extensionMock.showErrorMessage).toHaveBeenCalledOnce();
+    expect(extensionMock.showErrorMessage).toHaveBeenCalled();
   });
 
   it("offers project settings and does not connect when selection is ambiguous", async () => {

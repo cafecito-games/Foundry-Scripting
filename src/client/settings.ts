@@ -5,7 +5,7 @@ export type LspMode = ToolingHostMode;
 export interface ConnectionSettings {
   readonly mode: LspMode;
   readonly port: number;
-  readonly dapPort?: number;
+  readonly dapPort: number;
   readonly enginePath: string;
 }
 
@@ -64,7 +64,7 @@ export function validateConnectionSettings(value: unknown): ConnectionSettings {
     );
   }
   const port = requirePort(settings.port, "foundryScript.lsp.port");
-  const dapPort = requirePort(settings.dapPort ?? 6006, "foundryScript.dap.port");
+  const dapPort = requirePort(settings.dapPort, "foundryScript.dap.port");
   if (port === dapPort) {
     throw new ConnectionConfigurationFailure(
       "foundryScript.lsp.port",
