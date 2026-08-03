@@ -222,6 +222,33 @@ describe("packaged VS Code integration runner contract", () => {
     ).toEqual(["arbitrary extension stderr"]);
   });
 
+  it("allows exact VS Code Electron Linux headless stderr", async () => {
+    const runner = await import("./run-vscode-integration.mjs");
+    expect(
+      runner.unexpectedVSCodeStderrLines(
+        '[2433:0803/234809.391641:ERROR:bus.cc(407)] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")\n' +
+          "[2457:0803/234809.503860:ERROR:viz_main_impl.cc(196)] Exiting GPU process due to errors during initialization\n" +
+          "[2513:0803/234809.902556:ERROR:command_buffer_proxy_impl.cc(131)] ContextResult::kTransientFailure: Failed to send GpuControl.CreateCommandBuffer.\n",
+      ),
+    ).toEqual([]);
+  });
+
+  it("rejects near-miss and arbitrary application stderr", async () => {
+    const runner = await import("./run-vscode-integration.mjs");
+    const stderr =
+      "[2433:0803/234809.391641:ERROR:bus.cc(407)] Failed to connect to the bus: Permission denied\n" +
+      "[2457:0803/234809.503860:ERROR:viz_main_impl.cc(196)] GPU process crashed unexpectedly\n" +
+      "[2513:0803/234809.902556:ERROR:command_buffer_proxy_impl.cc(131)] ContextResult::kFatalFailure: Failed to send GpuControl.CreateCommandBuffer.\n" +
+      "arbitrary extension D-Bus failure\n";
+
+    expect(runner.unexpectedVSCodeStderrLines(stderr)).toEqual([
+      "[2433:0803/234809.391641:ERROR:bus.cc(407)] Failed to connect to the bus: Permission denied",
+      "[2457:0803/234809.503860:ERROR:viz_main_impl.cc(196)] GPU process crashed unexpectedly",
+      "[2513:0803/234809.902556:ERROR:command_buffer_proxy_impl.cc(131)] ContextResult::kFatalFailure: Failed to send GpuControl.CreateCommandBuffer.",
+      "arbitrary extension D-Bus failure",
+    ]);
+  });
+
   it("retains scenario logs when an isolated worker fails", async () => {
     const runner = await import("./run-vscode-integration.mjs");
     let suiteRoot;

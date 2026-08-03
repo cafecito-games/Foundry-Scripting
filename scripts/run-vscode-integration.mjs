@@ -403,7 +403,9 @@ export function unexpectedVSCodeStderrLines(stderr) {
     /^No search provider registered for scheme: foundry-e2e, waiting$/,
     /^Failed to fetch chat participant registry\b/,
     /Blocked vscode-file request\b/,
-    /\b(?:libva|MESA-LOADER|D-Bus|dbus|ozone|X11)\b/i,
+    /^\[\d+:\d{4}\/\d{6}\.\d{6}:ERROR:bus\.cc\(407\)\] Failed to connect to the bus: Could not parse server address: Unknown address type \(examples of valid types are "tcp" and on UNIX "unix"\)$/,
+    /^\[\d+:\d{4}\/\d{6}\.\d{6}:ERROR:viz_main_impl\.cc\(196\)\] Exiting GPU process due to errors during initialization$/,
+    /^\[\d+:\d{4}\/\d{6}\.\d{6}:ERROR:command_buffer_proxy_impl\.cc\(131\)\] ContextResult::kTransientFailure: Failed to send GpuControl\.CreateCommandBuffer\.$/,
   ];
   return stderr
     .split(/\r?\n/)
