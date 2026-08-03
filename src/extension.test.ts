@@ -1801,6 +1801,102 @@ describe("extension entry point", () => {
     expect(run.end).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ["Run", 0, extensionMock.testingExecute],
+    ["Debug", 1, extensionMock.testingDebugExecute],
+  ])(
+    "blocks the cached %s profile immediately after a local workspace becomes virtual",
+    async (_name, profileIndex, execute) => {
+      extensionMock.configuration.set("lsp.mode", "off");
+      extensionMock.configuration.set("testing.enabled", true);
+      extensionMock.workspaceFolders.push({
+        uri: { fsPath: "/workspace/game", scheme: "file" },
+      });
+      const model = nestedDiscoveryModel();
+      const adapter = {
+        protocolVersion: 1,
+        framework: { id: "neutral", name: "Neutral", version: "1" },
+        extensions: [],
+      };
+      const run = {
+        enqueued: vi.fn(),
+        started: vi.fn(),
+        passed: vi.fn(),
+        skipped: vi.fn(),
+        failed: vi.fn(),
+        errored: vi.fn(),
+        appendOutput: vi.fn(),
+        end: vi.fn(),
+      };
+      extensionMock.testController.createTestRun.mockReturnValue(run);
+      execute.mockResolvedValue({
+        kind: "completed",
+        completion: {
+          valid: true,
+          complete: true,
+          classification: "conforming",
+          codes: [],
+          diagnostics: [],
+        },
+        processResult: { kind: "exited", exitCode: 0, stdout: "", stderr: "" },
+      });
+
+      await activate(createContext());
+      extensionMock.testingRuntimeOptions?.onDiscovery("/workspace/game", model);
+      extensionMock.testingReadyContext.mockReturnValue({
+        configuration: {
+          enabled: true,
+          enginePath: "/opt/foundry",
+          project: "/workspace/game",
+          runner: "res://tests/runner.fs",
+          frameworkArgs: [],
+        },
+        adapter,
+        model,
+      });
+      const pendingResolution = deferred<{
+        success: false;
+        failure: {
+          kind: "unsupported_workspace";
+          message: string;
+        };
+      }>();
+      extensionMock.resolveProject.mockReturnValue(pendingResolution.promise);
+      extensionMock.workspaceFolders.splice(0, 1, {
+        uri: { fsPath: "/workspace/game", scheme: "vscode-vfs" },
+      });
+      extensionMock.workspaceFoldersChangeHandler?.();
+      const handler = extensionMock.testController.createRunProfile.mock.calls[
+        profileIndex
+      ]?.[2] as
+        | ((request: unknown, token: unknown) => Promise<void>)
+        | undefined;
+
+      await handler?.(
+        {},
+        {
+          isCancellationRequested: false,
+          onCancellationRequested: () => ({ dispose: vi.fn() }),
+        },
+      );
+
+      expect(execute).not.toHaveBeenCalled();
+      expect(run.appendOutput).toHaveBeenCalledWith(
+        "Foundry test execution is not ready.\r\n",
+      );
+      expect(run.end).toHaveBeenCalledOnce();
+      pendingResolution.resolve({
+        success: false,
+        failure: {
+          kind: "unsupported_workspace",
+          message:
+            "Native Foundry tooling requires a local file workspace.",
+        },
+      });
+      await Promise.resolve();
+    },
+  );
+
   it("passes the original Debug request to one DAP execution without the ordinary executor", async () => {
     extensionMock.configuration.set("lsp.mode", "off");
     const model = nestedDiscoveryModel();

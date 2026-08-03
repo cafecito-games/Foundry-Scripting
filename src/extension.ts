@@ -93,6 +93,15 @@ const CONNECTION_CONFIGURATION_SECTIONS = [
   "foundryScript.projectPath",
 ] as const;
 
+function isNativeWorkspaceEligible(): boolean {
+  return (
+    classifyNativeWorkspaceEligibility(
+      vscode.workspace.isTrusted,
+      vscode.workspace.workspaceFolders?.map((folder) => folder.uri.scheme),
+    ).kind === "eligible"
+  );
+}
+
 function readConnectionSettings(): ConnectionSettings {
   const configuration = vscode.workspace.getConfiguration("foundryScript");
   return validateConnectionSettings({
@@ -298,6 +307,8 @@ function registerTestingRuntime(
       );
     },
   });
+  const readyContext = () =>
+    isNativeWorkspaceEligible() ? runtime.readyContext() : undefined;
   let watcherProject: string | undefined;
   let watcherDisposables: vscode.Disposable[] = [];
   const disposeWatchers = (): void => {
@@ -361,7 +372,7 @@ function registerTestingRuntime(
   };
   const runProfile = new FoundryTestRunProfile({
     controller,
-    readyContext: () => runtime.readyContext(),
+    readyContext,
     snapshot: () => explorer.snapshot(),
     execute: (request, signal, observer) =>
       executor.execute(request, signal, observer),
@@ -380,7 +391,7 @@ function registerTestingRuntime(
   );
   const debugProfile = new FoundryTestRunProfile({
     controller,
-    readyContext: () => runtime.readyContext(),
+    readyContext,
     snapshot: () => explorer.snapshot(),
     execute: (request, signal, observer, run) =>
       debugExecutor.execute(request, signal, observer, run),
@@ -756,21 +767,16 @@ function createNativeRuntimeGate(
   let startFinished = false;
   let startPromise: Promise<void> | undefined;
   let stopPromise: Promise<void> | undefined;
-  const isEligible = (): boolean =>
-    classifyNativeWorkspaceEligibility(
-      vscode.workspace.isTrusted,
-      vscode.workspace.workspaceFolders?.map((folder) => folder.uri.scheme),
-    ).kind === "eligible";
   const startIfEligible = (): void => {
     if (stopped || startRequested) return;
-    if (!isEligible()) return;
+    if (!isNativeWorkspaceEligible()) return;
 
     startRequested = true;
     startFinished = false;
     startPromise = Promise.resolve()
       .then(() => {
         if (stopped) return;
-        if (!isEligible()) {
+        if (!isNativeWorkspaceEligible()) {
           startRequested = false;
           return;
         }
