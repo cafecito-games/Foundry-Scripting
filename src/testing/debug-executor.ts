@@ -91,6 +91,9 @@ export class FoundryTestDebugExecutor {
     observer: TestExecutionObserver,
     testRun: vscode.TestRun,
   ): Promise<TestExecutionResult> {
+    if (signal.aborted) {
+      return cancelledExecutionResult(request, observer);
+    }
     const temporaryDirectory = await this.makeTemporaryDirectory(
       path.join(this.temporaryRoot, "foundryscript-test-debug-"),
     );
@@ -99,14 +102,15 @@ export class FoundryTestDebugExecutor {
     let session: FoundryTestDebugSession | undefined;
     let terminated = false;
     let exitCode: number | undefined;
-    let cancellationRequested = signal.aborted;
-    let cancellationRequestedAt = signal.aborted ? this.now() : undefined;
+    let cancellationRequested = false;
+    let cancellationRequestedAt: number | undefined;
     let stopPromise: Promise<void> | undefined;
     let stdout = "";
     let stderr = "";
     let launchFailure: string | undefined;
     let restartGeneration = 0;
     let processCount = 0;
+    let retainTemporaryDirectory = false;
     const stopSession = (): Promise<void> => {
       if (session === undefined || terminated) return Promise.resolve();
       if (stopPromise !== undefined) return stopPromise;
@@ -123,6 +127,7 @@ export class FoundryTestDebugExecutor {
       void stopSession();
     };
     signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
     const matches = (candidate: FoundryTestDebugSession): boolean =>
       reportPathFor(candidate.configuration) === reportPath;
     const subscriptions = [
@@ -132,7 +137,9 @@ export class FoundryTestDebugExecutor {
         if (cancellationRequested) void stopSession();
       }),
       this.options.onDidTerminateDebugSession((candidate) => {
-        if (matches(candidate)) terminated = true;
+        if (!matches(candidate)) return;
+        session ??= candidate;
+        terminated = true;
       }),
       this.options.onDidDebugMessage((event) => {
         if (!matches(event.session)) return;
@@ -202,6 +209,9 @@ export class FoundryTestDebugExecutor {
       }),
     ];
     try {
+      if (cancellationRequested) {
+        return cancelledExecutionResult(request, observer);
+      }
       const started = await this.options.startDebugging(configuration, {
         noDebug: false,
         testRun,
@@ -214,10 +224,22 @@ export class FoundryTestDebugExecutor {
       }
       const sessionStartedAt = this.now();
       while (session === undefined) {
-        if (this.now() - sessionStartedAt >= this.sessionStartTimeoutMs) {
+        if (
+          cancellationRequestedAt !== undefined &&
+          this.now() - cancellationRequestedAt >= this.terminationTimeoutMs
+        ) {
+          retainTemporaryDirectory = true;
           throw new TestAdapterFailure(
             "readiness_timeout",
-            `VS Code did not publish the FoundryScript test debug session within ${String(this.sessionStartTimeoutMs)} ms.`,
+            `VS Code did not publish the FoundryScript test debug session within ${String(this.terminationTimeoutMs)} ms after cancellation; its report directory was retained at ${temporaryDirectory}.`,
+            { phase: "execution", stdout, stderr },
+          );
+        }
+        if (this.now() - sessionStartedAt >= this.sessionStartTimeoutMs) {
+          retainTemporaryDirectory = true;
+          throw new TestAdapterFailure(
+            "readiness_timeout",
+            `VS Code did not publish the FoundryScript test debug session within ${String(this.sessionStartTimeoutMs)} ms; its report directory was retained at ${temporaryDirectory}.`,
             { phase: "execution", stdout, stderr },
           );
         }
@@ -233,13 +255,14 @@ export class FoundryTestDebugExecutor {
       let parser = createParser();
       let consumed: Buffer = Buffer.alloc(0);
       let consumedGeneration = restartGeneration;
+      let reportReadinessStartedAt = this.now();
       const resetForRestart = (): void => {
         if (consumedGeneration === restartGeneration) return;
         parser = createParser();
         consumed = Buffer.alloc(0);
         consumedGeneration = restartGeneration;
+        reportReadinessStartedAt = this.now();
       };
-      const reportReadinessStartedAt = this.now();
       while (!terminated) {
         resetForRestart();
         consumed = await this.readNewBytes(reportPath, consumed, parser, true);
@@ -318,10 +341,12 @@ export class FoundryTestDebugExecutor {
     } finally {
       signal.removeEventListener("abort", onAbort);
       for (const subscription of subscriptions) subscription.dispose();
-      try {
-        await this.removeTemporaryDirectory(temporaryDirectory);
-      } catch (error) {
-        this.onCleanupError?.(error, temporaryDirectory);
+      if (!retainTemporaryDirectory) {
+        try {
+          await this.removeTemporaryDirectory(temporaryDirectory);
+        } catch (error) {
+          this.onCleanupError?.(error, temporaryDirectory);
+        }
       }
     }
   }
@@ -367,6 +392,21 @@ export class FoundryTestDebugExecutor {
     }
     return Buffer.from(bytes);
   }
+}
+
+function cancelledExecutionResult(
+  request: TestExecutionRequest,
+  observer: TestExecutionObserver,
+): TestExecutionResult {
+  const completion = new FoundryTap13Parser(
+    request.leaves,
+    observer.onPoint,
+  ).finish({ kind: "cancelled" });
+  return {
+    kind: "cancelled",
+    completion,
+    processResult: { kind: "cancelled", stdout: "", stderr: "" },
+  };
 }
 
 export function createFoundryTestDebugConfiguration(

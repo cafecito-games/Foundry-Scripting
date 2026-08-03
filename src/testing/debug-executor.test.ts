@@ -185,6 +185,111 @@ describe("Foundry test debug executor", () => {
     expect(now).toBe(10);
   });
 
+  it("does not launch a DAP session when the TestRun is already cancelled", async () => {
+    const module = await loadModule();
+    expect(module?.FoundryTestDebugExecutor).toBeDefined();
+    const cancellation = new AbortController();
+    cancellation.abort();
+    const startDebugging = vi.fn(async () => true);
+    const makeTemporaryDirectory = vi.fn(async () => "/tmp/unused");
+    const executor = new module!.FoundryTestDebugExecutor({
+      startDebugging,
+      stopDebugging: vi.fn(async () => undefined),
+      onDidStartDebugSession: () => ({ dispose: vi.fn() }),
+      onDidTerminateDebugSession: () => ({ dispose: vi.fn() }),
+      onDidDebugMessage: () => ({ dispose: vi.fn() }),
+      makeTemporaryDirectory,
+    });
+
+    await expect(
+      executor.execute(
+        executionRequest(),
+        cancellation.signal,
+        { onPoint: vi.fn(), onOutput: vi.fn() },
+        {} as never,
+      ),
+    ).resolves.toMatchObject({
+      kind: "cancelled",
+      completion: { valid: true, classification: "cancelled" },
+      processResult: { kind: "cancelled" },
+    });
+    expect(startDebugging).not.toHaveBeenCalled();
+    expect(makeTemporaryDirectory).not.toHaveBeenCalled();
+  });
+
+  it("bounds cancellation while VS Code has not published the debug session", async () => {
+    const module = await loadModule();
+    expect(module?.FoundryTestDebugExecutor).toBeDefined();
+    const reportPath = "/tmp/foundryscript-test-debug-unpublished/report.tap";
+    const cancellation = new AbortController();
+    const removeTemporaryDirectory = vi.fn(async () => undefined);
+    let now = 0;
+    const executor = new module!.FoundryTestDebugExecutor({
+      startDebugging: async () => true,
+      stopDebugging: vi.fn(async () => undefined),
+      onDidStartDebugSession: () => ({ dispose: vi.fn() }),
+      onDidTerminateDebugSession: () => ({ dispose: vi.fn() }),
+      onDidDebugMessage: () => ({ dispose: vi.fn() }),
+      makeTemporaryDirectory: async () => path.dirname(reportPath),
+      removeTemporaryDirectory,
+      now: () => now,
+      sessionStartTimeoutMs: 1_000,
+      terminationTimeoutMs: 20,
+      waitForPoll: async () => {
+        now += 10;
+        cancellation.abort();
+        if (now > 30) throw new Error("unbounded session publication wait");
+      },
+    });
+
+    await expect(
+      executor.execute(
+        executionRequest(),
+        cancellation.signal,
+        { onPoint: vi.fn(), onOutput: vi.fn() },
+        {} as never,
+      ),
+    ).rejects.toMatchObject({
+      kind: "readiness_timeout",
+    });
+    expect(now).toBe(30);
+    expect(removeTemporaryDirectory).not.toHaveBeenCalled();
+  });
+
+  it("retains the report directory when a started session is never published", async () => {
+    const module = await loadModule();
+    expect(module?.FoundryTestDebugExecutor).toBeDefined();
+    const reportPath = "/tmp/foundryscript-test-debug-lost/report.tap";
+    const removeTemporaryDirectory = vi.fn(async () => undefined);
+    let now = 0;
+    const executor = new module!.FoundryTestDebugExecutor({
+      startDebugging: async () => true,
+      stopDebugging: vi.fn(async () => undefined),
+      onDidStartDebugSession: () => ({ dispose: vi.fn() }),
+      onDidTerminateDebugSession: () => ({ dispose: vi.fn() }),
+      onDidDebugMessage: () => ({ dispose: vi.fn() }),
+      makeTemporaryDirectory: async () => path.dirname(reportPath),
+      removeTemporaryDirectory,
+      now: () => now,
+      sessionStartTimeoutMs: 20,
+      waitForPoll: async () => {
+        now += 10;
+      },
+    });
+
+    await expect(
+      executor.execute(
+        executionRequest(),
+        new AbortController().signal,
+        { onPoint: vi.fn(), onOutput: vi.fn() },
+        {} as never,
+      ),
+    ).rejects.toMatchObject({
+      kind: "readiness_timeout",
+    });
+    expect(removeTemporaryDirectory).not.toHaveBeenCalled();
+  });
+
   it("streams complete flushed points while the debuggee remains active", async () => {
     const module = await loadModule();
     expect(module?.FoundryTestDebugExecutor).toBeDefined();
@@ -548,6 +653,76 @@ describe("Foundry test debug executor", () => {
       "test-a",
       "test-b",
     ]);
+  });
+
+  it("starts a fresh report-readiness window for a late restart", async () => {
+    const module = await loadModule();
+    expect(module?.FoundryTestDebugExecutor).toBeDefined();
+    const reportPath = "/tmp/foundryscript-test-debug-late-restart/report.tap";
+    const session: SessionValue = {
+      id: "late-restart-session",
+      configuration: projectTestConfiguration(reportPath),
+    };
+    const startListeners = new Set<(session: SessionValue) => void>();
+    const terminateListeners = new Set<(session: SessionValue) => void>();
+    const messageListeners = new Set<(event: DebugMessageValue) => void>();
+    let artifact = report(1);
+    let polls = 0;
+    let now = 0;
+    const send = (direction: "adapter" | "client", message: unknown): void => {
+      for (const listener of messageListeners) {
+        listener({ direction, session, message });
+      }
+    };
+    const executor = new module!.FoundryTestDebugExecutor({
+      startDebugging: async (configuration) => {
+        session.configuration = configuration;
+        for (const listener of startListeners) listener(session);
+        send("adapter", { type: "event", event: "process", body: {} });
+        return true;
+      },
+      stopDebugging: vi.fn(async () => undefined),
+      onDidStartDebugSession: (listener) => disposableListener(startListeners, listener),
+      onDidTerminateDebugSession: (listener) =>
+        disposableListener(terminateListeners, listener),
+      onDidDebugMessage: (listener) => disposableListener(messageListeners, listener),
+      makeTemporaryDirectory: async () => path.dirname(reportPath),
+      removeTemporaryDirectory: async () => undefined,
+      readArtifact: async () => Buffer.from(artifact),
+      now: () => now,
+      reportReadinessTimeoutMs: 30_000,
+      waitForPoll: async () => {
+        polls += 1;
+        if (polls === 1) {
+          now = 40_000;
+          send("client", { type: "request", command: "restart" });
+          artifact = "";
+          send("adapter", { type: "event", event: "process", body: {} });
+        } else if (polls === 2) {
+          now = 40_010;
+          artifact = report(1, point(1, "test-a"));
+        } else {
+          send("adapter", {
+            type: "event",
+            event: "exited",
+            body: { exitCode: 0 },
+          });
+          for (const listener of terminateListeners) listener(session);
+        }
+      },
+    });
+
+    await expect(
+      executor.execute(
+        executionRequest(),
+        new AbortController().signal,
+        { onPoint: vi.fn(), onOutput: vi.fn() },
+        {} as never,
+      ),
+    ).resolves.toMatchObject({
+      kind: "completed",
+      completion: { valid: true, classification: "conforming" },
+    });
   });
 });
 

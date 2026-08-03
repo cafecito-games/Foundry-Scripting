@@ -32,7 +32,6 @@ import { FoundryTestAdapterDiscoverer } from "./testing/discoverer.js";
 import {
   FoundryTestDebugExecutor,
   type FoundryTestDebugMessageEvent,
-  type FoundryTestDebugSession,
 } from "./testing/debug-executor.js";
 import { FoundryTestExecutor } from "./testing/executor.js";
 import { FoundryTestExplorer } from "./testing/explorer.js";
@@ -175,12 +174,6 @@ async function registerTestingRuntime(
       process.run(command, signal, onOutput),
     onCleanupError,
   });
-  const debugStartListeners = new Set<
-    (session: FoundryTestDebugSession) => void
-  >();
-  const debugTerminationListeners = new Set<
-    (session: FoundryTestDebugSession) => void
-  >();
   const debugMessageListeners = new Set<
     (event: FoundryTestDebugMessageEvent) => void
   >();
@@ -192,16 +185,7 @@ async function registerTestingRuntime(
     "foundryscript",
     {
       createDebugAdapterTracker: (session) => {
-        let terminated = false;
-        const terminate = (): void => {
-          if (terminated) return;
-          terminated = true;
-          for (const listener of debugTerminationListeners) listener(session);
-        };
         return {
-          onWillStartSession: () => {
-            for (const listener of debugStartListeners) listener(session);
-          },
           onWillReceiveMessage: (message) => {
             for (const listener of debugMessageListeners) {
               listener({ direction: "client", session, message });
@@ -212,8 +196,6 @@ async function registerTestingRuntime(
               listener({ direction: "adapter", session, message });
             }
           },
-          onWillStopSession: terminate,
-          onExit: terminate,
         };
       },
     },
@@ -224,9 +206,9 @@ async function registerTestingRuntime(
     stopDebugging: (session) =>
       vscode.debug.stopDebugging(session as vscode.DebugSession),
     onDidStartDebugSession: (listener) =>
-      subscribe(debugStartListeners, listener),
+      vscode.debug.onDidStartDebugSession((session) => listener(session)),
     onDidTerminateDebugSession: (listener) =>
-      subscribe(debugTerminationListeners, listener),
+      vscode.debug.onDidTerminateDebugSession((session) => listener(session)),
     onDidDebugMessage: (listener) => subscribe(debugMessageListeners, listener),
     onCleanupError,
   });

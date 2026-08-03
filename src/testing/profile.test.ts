@@ -143,6 +143,29 @@ describe("Foundry VS Code run profile", () => {
     );
   });
 
+  it("applies selection and TestRun ownership to a DAP-capable Debug executor", async () => {
+    const harness = createHarness({
+      points: [passPoint("test-a", 5)],
+      cancelled: true,
+    });
+
+    await harness.profile.run(
+      request([harness.items.get("suite-a")!], [harness.items.get("test-b")!]),
+      token(),
+    );
+
+    expect(harness.executed?.leaves.map((leaf) => leaf.id)).toEqual(["test-a"]);
+    expect(harness.execute.mock.calls[0]?.[3]).toBe(harness.run);
+    expect(harness.run.passed).toHaveBeenCalledWith(
+      harness.items.get("test-a"),
+      5,
+    );
+    expect(harness.run.passed).not.toHaveBeenCalledWith(
+      harness.items.get("test-b"),
+      expect.anything(),
+    );
+  });
+
   it("includes TAP diagnostic codes and line context for invalid completion", async () => {
     const harness = createHarness({
       points: [passPoint("test-a", 5)],

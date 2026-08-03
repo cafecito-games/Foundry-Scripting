@@ -172,10 +172,12 @@ const extensionMock = vi.hoisted(() => {
   debugProviderDisposable: { dispose: vi.fn() },
   debugDescriptorDisposable: { dispose: vi.fn() },
   debugTrackerDisposable: { dispose: vi.fn() },
+  debugStartDisposable: { dispose: vi.fn() },
   debugTerminationDisposable: { dispose: vi.fn() },
   registerDebugConfigurationProvider: vi.fn(),
   registerDebugAdapterDescriptorFactory: vi.fn(),
   registerDebugAdapterTrackerFactory: vi.fn(),
+  onDidStartDebugSession: vi.fn(),
   onDidTerminateDebugSession: vi.fn(),
   stopDebugging: vi.fn(),
   resolveProject: vi.fn(),
@@ -218,6 +220,12 @@ const extensionMock = vi.hoisted(() => {
       }
     | undefined,
   testingExecute: vi.fn(),
+  testingDebugExecutorOptions: undefined as
+    | {
+        onDidStartDebugSession: (listener: (session: unknown) => void) => unknown;
+        onDidTerminateDebugSession: (listener: (session: unknown) => void) => unknown;
+      }
+    | undefined,
   testingDebugExecute: vi.fn(),
   testingRuntimeOptions: undefined as
     | {
@@ -309,6 +317,7 @@ vi.mock("vscode", () => ({
       extensionMock.registerDebugAdapterDescriptorFactory,
     registerDebugAdapterTrackerFactory:
       extensionMock.registerDebugAdapterTrackerFactory,
+    onDidStartDebugSession: extensionMock.onDidStartDebugSession,
     onDidTerminateDebugSession: extensionMock.onDidTerminateDebugSession,
     stopDebugging: extensionMock.stopDebugging,
   },
@@ -398,6 +407,10 @@ vi.mock("./testing/executor.js", () => ({
 vi.mock("./testing/debug-executor.js", () => ({
   FoundryTestDebugExecutor: class {
     readonly execute = extensionMock.testingDebugExecute;
+
+    constructor(options: unknown) {
+      extensionMock.testingDebugExecutorOptions = options as never;
+    }
   },
 }));
 
@@ -475,6 +488,7 @@ describe("extension entry point", () => {
     extensionMock.debugProviderDisposable.dispose.mockReset();
     extensionMock.debugDescriptorDisposable.dispose.mockReset();
     extensionMock.debugTrackerDisposable.dispose.mockReset();
+    extensionMock.debugStartDisposable.dispose.mockReset();
     extensionMock.debugTerminationDisposable.dispose.mockReset();
     extensionMock.registerDebugConfigurationProvider.mockReset();
     extensionMock.registerDebugConfigurationProvider.mockReturnValue(
@@ -487,6 +501,10 @@ describe("extension entry point", () => {
     extensionMock.registerDebugAdapterTrackerFactory.mockReset();
     extensionMock.registerDebugAdapterTrackerFactory.mockReturnValue(
       extensionMock.debugTrackerDisposable,
+    );
+    extensionMock.onDidStartDebugSession.mockReset();
+    extensionMock.onDidStartDebugSession.mockReturnValue(
+      extensionMock.debugStartDisposable,
     );
     extensionMock.onDidTerminateDebugSession.mockReset();
     extensionMock.onDidTerminateDebugSession.mockReturnValue(
@@ -1308,6 +1326,35 @@ describe("extension entry point", () => {
     expect(extensionMock.testingDebugExecute.mock.calls[0]?.[3]).toBe(run);
     expect(extensionMock.testingExecute).not.toHaveBeenCalled();
     expect(run.end).toHaveBeenCalledOnce();
+  });
+
+  it("tracks test-debug sessions through VS Code lifecycle events", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    await activate(createContext());
+    const started = vi.fn();
+    const terminated = vi.fn();
+    const session = createDebugSession("test-debug-lifecycle", {
+      type: "foundryscript",
+      request: "launch",
+      name: "Debug Foundry Tests",
+    });
+
+    extensionMock.testingDebugExecutorOptions?.onDidStartDebugSession(started);
+    extensionMock.testingDebugExecutorOptions?.onDidTerminateDebugSession(
+      terminated,
+    );
+    const startListener = extensionMock.onDidStartDebugSession.mock.calls[0]?.[0] as
+      | ((value: vscode.DebugSession) => void)
+      | undefined;
+    const terminateListener = extensionMock.onDidTerminateDebugSession.mock
+      .calls[1]?.[0] as ((value: vscode.DebugSession) => void) | undefined;
+    startListener?.(session);
+    terminateListener?.(session);
+
+    expect(extensionMock.onDidStartDebugSession).toHaveBeenCalledOnce();
+    expect(extensionMock.onDidTerminateDebugSession).toHaveBeenCalledTimes(2);
+    expect(started).toHaveBeenCalledWith(session);
+    expect(terminated).toHaveBeenCalledWith(session);
   });
 
   it("shares the owned process and cleanup diagnostics with discovery and runs", async () => {
