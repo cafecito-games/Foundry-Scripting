@@ -426,6 +426,36 @@ describe("connection modes", () => {
     pendingStart.resolve(undefined);
   });
 
+  it("reports timeout when abort makes the client reject synchronously", async () => {
+    vi.useFakeTimers();
+    const client = testClient(vi.fn(() =>
+      new Promise<void>((_resolve, reject) => {
+        const signal = signals[0];
+        if (signal === undefined) {
+          throw new Error("client startup signal was not captured");
+        }
+        signal.addEventListener("abort", () => {
+          const error = new Error("client startup aborted");
+          error.name = "AbortError";
+          reject(error);
+        }, { once: true });
+      })));
+    const manager = managerWith([client], 25);
+
+    const starting = manager
+      .start({
+        settings: { mode: "attach", port: 6005, enginePath: "foundry" },
+        project: "/workspace/game",
+      })
+      .catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(25);
+
+    await expect(starting).resolves.toMatchObject({
+      kind: "initialization_timeout",
+    });
+    expect(client.stop).toHaveBeenCalledOnce();
+  });
+
   it("reports attachment refusal with the project and port", async () => {
     const refusal = Object.assign(new Error("connect ECONNREFUSED"), {
       code: "ECONNREFUSED",

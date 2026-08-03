@@ -316,7 +316,6 @@ export class ConnectionManager {
       }
       signal.addEventListener("abort", rejectCancellation, { once: true });
       timeout = setTimeout(() => {
-        startupController.abort();
         reject(
           new ConnectionFailure(
             "initialization_timeout",
@@ -326,6 +325,7 @@ export class ConnectionManager {
             this.initializationTimeoutMs,
           ),
         );
+        startupController.abort();
       }, this.initializationTimeoutMs);
     });
     try {
