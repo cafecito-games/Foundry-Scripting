@@ -166,6 +166,7 @@ function createLspServer(configuration) {
             }),
           );
         } else if (message.method === "initialized") {
+          record("lsp-initialized");
           socket.write(frame({ jsonrpc: "2.0", method: "foundry_script/capabilities", params: { native_classes: [] } }));
           if (configuration.mode === "clean-disconnect") socket.end();
         } else if (message.method === "textDocument/didOpen" || message.method === "textDocument/didChange") {

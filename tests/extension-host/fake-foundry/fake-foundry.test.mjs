@@ -158,6 +158,29 @@ describe("fake Foundry executable", () => {
       });
     });
     expect(response).toContain('"capabilities"');
+    const initialized = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "initialized",
+      params: {},
+    });
+    socket.write(
+      `Content-Length: ${Buffer.byteLength(initialized)}\r\n\r\n${initialized}`,
+    );
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("initialized event timeout")),
+        2_000,
+      );
+      const poll = async () => {
+        if ((await records(control)).some((event) => event.phase === "lsp-initialized")) {
+          clearTimeout(timeout);
+          resolve();
+        } else {
+          setTimeout(poll, 10);
+        }
+      };
+      void poll();
+    });
     socket.destroy();
     child.kill("SIGTERM");
     const result = await output(child);
@@ -165,6 +188,7 @@ describe("fake Foundry executable", () => {
     expect(await records(control)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ phase: "ready" }),
+        expect.objectContaining({ phase: "lsp-initialized" }),
         expect.objectContaining({ phase: "signal", signal: "SIGTERM" }),
         expect.objectContaining({ phase: "exit" }),
       ]),

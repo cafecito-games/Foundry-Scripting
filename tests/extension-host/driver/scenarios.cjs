@@ -225,8 +225,11 @@ async function reconfiguration() {
   const secondProject = folders[1].uri.fsPath;
   await activateFoundryScript(await localDocument(folders[0]));
   await waitFor("first tooling host", async () => {
-    const ready = phaseEvents(await readEvents(), "tooling", "ready");
-    return ready.length === 1 && ready[0].project === firstProject;
+    const events = await readEvents();
+    const ready = phaseEvents(events, "tooling", "ready");
+    return ready.length === 1 &&
+      ready[0].project === firstProject &&
+      phaseEvents(events, "tooling", "lsp-initialized").length === 1;
   });
   await waitForAdapterGeneration(1);
 
@@ -236,7 +239,8 @@ async function reconfiguration() {
   await waitFor("connection-setting replacement", async () => {
     const events = await readEvents();
     return phaseEvents(events, "tooling", "ready").length === 2 &&
-      phaseEvents(events, "tooling", "signal").length >= 1;
+      phaseEvents(events, "tooling", "signal").length >= 1 &&
+      phaseEvents(events, "tooling", "lsp-initialized").length === 2;
   });
 
   assert.equal(
@@ -249,8 +253,11 @@ async function reconfiguration() {
     true,
   );
   await waitFor("first-folder replacement", async () => {
-    const ready = phaseEvents(await readEvents(), "tooling", "ready");
-    return ready.length === 3 && ready[2].project === secondProject;
+    const events = await readEvents();
+    const ready = phaseEvents(events, "tooling", "ready");
+    return ready.length === 3 &&
+      ready[2].project === secondProject &&
+      phaseEvents(events, "tooling", "lsp-initialized").length === 3;
   });
   const beforeTestingChange = phaseEvents(await readEvents(), "discover").length;
   await vscode.workspace
