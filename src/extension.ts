@@ -462,12 +462,19 @@ function registerTestingRuntime(
       configurationGeneration += 1;
       refresh.dispose();
       disposeWatchers();
-      stopPromise = Promise.all([runtime.stop(), process.stop()])
+      stopPromise = Promise.all([
+        Promise.resolve().then(() => runtime.stop()),
+        Promise.resolve().then(() => process.stop()),
+      ])
         .then(() => undefined)
         .catch((error: unknown) => {
-          output.appendLine(
-            `Testing shutdown failed: ${error instanceof Error ? error.message : String(error)}`,
-          );
+          try {
+            output.appendLine(
+              `Testing shutdown failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          } catch {
+            // VS Code may dispose the channel while deactivation is still running.
+          }
         });
       return stopPromise;
     },
@@ -531,6 +538,17 @@ async function showProjectResolutionFailure(
 }
 
 function writeTestingState(output: vscode.OutputChannel, state: TestingState): void {
+  try {
+    writeTestingStateToOpenChannel(output, state);
+  } catch {
+    // VS Code may dispose the channel while deactivation is still running.
+  }
+}
+
+function writeTestingStateToOpenChannel(
+  output: vscode.OutputChannel,
+  state: TestingState,
+): void {
   switch (state.kind) {
     case "disabled":
       output.appendLine("Testing adapter negotiation disabled.");

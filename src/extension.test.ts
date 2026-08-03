@@ -2494,6 +2494,26 @@ describe("extension entry point", () => {
     );
   });
 
+  it("continues native cleanup when VS Code has already closed output channels", async () => {
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game", scheme: "file" },
+    });
+    await activate(createContext());
+    extensionMock.testingOutputChannel.appendLine.mockImplementationOnce(() => {
+      throw new Error("Channel has been closed");
+    });
+    extensionMock.testingStop.mockImplementation(() => {
+      extensionMock.testingRuntimeOptions?.onState({ kind: "disabled" });
+      return Promise.resolve();
+    });
+
+    await expect(deactivate()).resolves.toBeUndefined();
+
+    expect(extensionMock.testingProcessStop).toHaveBeenCalledOnce();
+    expect(extensionMock.stop).toHaveBeenCalledOnce();
+    expect(extensionMock.coordinatorDispose).toHaveBeenCalledOnce();
+  });
+
   it("catches and logs background testing shutdown failures", async () => {
     extensionMock.configuration.set("lsp.mode", "off");
     extensionMock.testingStop.mockRejectedValue(
