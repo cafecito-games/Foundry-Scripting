@@ -84,8 +84,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: cafecito-games/Foundry
-          # Foundry v0.1.0-alpha.19, matching foundry-grammar.json.
-          ref: 7a86a1464be0699c81a8a5b5c849447b4a7707bf
+          # Foundry v0.1.0-alpha.24, matching foundry-grammar.json.
+          ref: e91ab07e63ce0a783778dc885bb11d9c65603256
           path: foundry-engine
       - uses: actions/setup-node@v4
         with:
@@ -98,6 +98,9 @@ jobs:
     name: dap-conformance
     runs-on: ubuntu-22.04
     timeout-minutes: 120
+    env:
+      FOUNDRY_RELEASE_ASSET: Foundry_v0.1.0-alpha.24_linux.x86_64.zip
+      FOUNDRY_RELEASE_SHA256: 5499f49a9aa298d97d98a025bb002c70816179e5fcf8a2104a622cfbf1e9e076
     steps:
       - name: Checkout FoundryScript extension
         uses: actions/checkout@v4
@@ -107,33 +110,19 @@ jobs:
           node-version: "20"
           cache: npm
       - run: npm ci
-      - name: Checkout pinned Foundry engine
-        uses: actions/checkout@v4
-        with:
-          repository: cafecito-games/Foundry
-          ref: c11e3a080959af4ca8fbdd9b1a3d97a889b351b4
-          path: .foundry-engine
-          submodules: recursive
-      - name: Install Foundry build dependencies
+      - name: Download verified Foundry v0.1.0-alpha.24 release asset
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libwayland-bin
-          python -m pip install scons==4.10.1
-      - name: Restore Foundry build cache
-        uses: actions/cache@v4
-        with:
-          path: .foundry-engine/.scons_cache
-          key: dap-conformance-foundry-c11e3a080-${{ runner.os }}-${{ runner.arch }}
-      - name: Build pinned Foundry editor
-        working-directory: .foundry-engine
-        run: >-
-          scons platform=linuxbsd target=editor dev_mode=yes dev_build=yes
-          module_text_server_fb_enabled=yes
-          cache_path="$GITHUB_WORKSPACE/.foundry-engine/.scons_cache"
-          redirect_build_objects=no
+          mkdir -p .foundry-release
+          curl --fail --location --retry 3 \
+            --output ".foundry-release/${FOUNDRY_RELEASE_ASSET}" \
+            "https://github.com/cafecito-games/Foundry/releases/download/v0.1.0-alpha.24/${FOUNDRY_RELEASE_ASSET}"
+          echo "${FOUNDRY_RELEASE_SHA256}  .foundry-release/${FOUNDRY_RELEASE_ASSET}" \
+            | sha256sum --check
+          unzip -q ".foundry-release/${FOUNDRY_RELEASE_ASSET}" -d .foundry-release
+          chmod +x .foundry-release/foundry.linuxbsd.editor.x86_64
       - name: Run required real-engine DAP conformance
         env:
-          FOUNDRY_ENGINE_PATH: ${{ github.workspace }}/.foundry-engine/bin/foundry.linuxbsd.editor.dev.x86_64
+          FOUNDRY_ENGINE_PATH: ${{ github.workspace }}/.foundry-release/foundry.linuxbsd.editor.x86_64
         run: npm run test:dap-conformance
 
   package:

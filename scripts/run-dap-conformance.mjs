@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const pinnedFoundryCommit = "c11e3a080";
+export const pinnedFoundryCommit = "e91ab07e6";
 
 function fail(message) {
   process.stderr.write(`${message}\n`);

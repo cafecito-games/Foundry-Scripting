@@ -79,7 +79,7 @@ describe("corpus CI configuration", () => {
 
     expect(workflow).toContain("repository: cafecito-games/Foundry");
     expect(workflow).toContain(
-      "ref: 7a86a1464be0699c81a8a5b5c849447b4a7707bf",
+      "ref: e91ab07e63ce0a783778dc885bb11d9c65603256",
     );
     expect(workflow).toContain("path: foundry-engine");
     expect(workflow).toContain(

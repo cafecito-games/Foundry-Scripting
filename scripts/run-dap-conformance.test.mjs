@@ -56,7 +56,7 @@ describe("required DAP conformance runner", () => {
       FOUNDRY_ENGINE_PATH: fakeEngine,
     });
 
-    expect(error.stderr).toContain("requires Foundry commit c11e3a080");
+    expect(error.stderr).toContain("requires Foundry commit e91ab07e6");
     expect(error.stderr).toContain("deadbeef0");
   });
 
@@ -82,21 +82,28 @@ describe("required DAP conformance runner", () => {
     );
   });
 
-  it("has a required CI job that builds the pinned engine before running", async () => {
+  it("has a required CI job that verifies the published alpha.24 engine asset", async () => {
     const workflow = await readFile(
       path.join(path.dirname(path.dirname(scriptPath)), ".github/workflows/ci.yml"),
       "utf8",
     );
+    const dapJob = workflow.slice(
+      workflow.indexOf("  dap-conformance:"),
+      workflow.indexOf("\n  package:"),
+    );
 
-    expect(workflow).toContain("repository: cafecito-games/Foundry");
-    expect(workflow).toContain(
-      "ref: c11e3a080959af4ca8fbdd9b1a3d97a889b351b4",
+    expect(dapJob).toContain(
+      "Foundry_v0.1.0-alpha.24_linux.x86_64.zip",
     );
-    expect(workflow).toContain(
-      "key: dap-conformance-foundry-c11e3a080-${{ runner.os }}-${{ runner.arch }}",
+    expect(dapJob).toContain(
+      "5499f49a9aa298d97d98a025bb002c70816179e5fcf8a2104a622cfbf1e9e076",
     );
-    expect(workflow).toContain("npm run test:dap-conformance");
-    expect(workflow).toContain("FOUNDRY_ENGINE_PATH:");
-    expect(workflow).not.toMatch(/dap-conformance[\s\S]*continue-on-error:\s*true/);
+    expect(dapJob).toContain("sha256sum --check");
+    expect(dapJob).toContain("foundry.linuxbsd.editor.x86_64");
+    expect(dapJob).toContain("npm run test:dap-conformance");
+    expect(dapJob).toContain("FOUNDRY_ENGINE_PATH:");
+    expect(dapJob).not.toContain("repository: cafecito-games/Foundry");
+    expect(dapJob).not.toContain("scons platform=linuxbsd");
+    expect(dapJob).not.toMatch(/continue-on-error:\s*true/);
   });
 });
