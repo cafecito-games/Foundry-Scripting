@@ -290,6 +290,7 @@ describe("Foundry test executor", () => {
 
       expect(step).toBe(growthSteps);
       expect(finalReport.length).toBeGreaterThanOrEqual(2 * 1024 * 1024);
+      expect(files.contentBytesRead).toBe(2 * finalReport.length);
       expect(files.contentBytesRead).toBeLessThanOrEqual(
         2 * finalReport.length + REPORT_READ_CHUNK_SIZE,
       );

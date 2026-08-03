@@ -147,6 +147,24 @@ describe("incremental report reader", () => {
     });
   });
 
+  it("reports a final identity race after hashing the retained handle", async () => {
+    const files = new FakeReportFiles();
+    files.replace(Buffer.from("stable"));
+    const reader = new IncrementalReportReader("/run/report.tap", files);
+    await reader.readAvailable(() => undefined);
+    files.onRead = ({ position }) => {
+      if (position === 0) {
+        files.replace(Buffer.from("stable"));
+      }
+    };
+
+    await expect(reader.verifyFinal()).rejects.toMatchObject({
+      kind: "malformed_report",
+      message:
+        "The Foundry test adapter execution report was replaced after streaming began.",
+    });
+  });
+
   it("closes its retained handle at most once", async () => {
     const files = new FakeReportFiles();
     files.replace(Buffer.from("report"));
