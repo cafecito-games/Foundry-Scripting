@@ -111,7 +111,10 @@ const extensionMock = vi.hoisted(() => {
   };
   return {
   configuration: new Map<string, unknown>(),
-  workspaceFolders: [] as Array<{ uri: { fsPath: string } }>,
+  isTrusted: true,
+  workspaceFolders: [] as Array<{
+    uri: { fsPath: string; scheme?: string };
+  }>,
   outputChannel: {
     appendLine: vi.fn(),
     show: vi.fn(),
@@ -190,6 +193,8 @@ const extensionMock = vi.hoisted(() => {
   workspaceFoldersChangeHandler: undefined as (() => void) | undefined,
   workspaceFoldersChangeHandlers: [] as Array<() => void>,
   onDidChangeConfiguration: vi.fn(),
+  workspaceTrustGrantHandler: undefined as (() => void) | undefined,
+  onDidGrantWorkspaceTrust: vi.fn(),
   onDidChangeWorkspaceFolders: vi.fn(),
   watchers: [] as Array<ReturnType<typeof createWatcher>>,
   createFileSystemWatcher: vi.fn((pattern: unknown) => {
@@ -246,6 +251,8 @@ const extensionMock = vi.hoisted(() => {
   testingReadyContext: vi.fn(),
   testController,
   createTestController: vi.fn(() => testController),
+  createOutputChannel: vi.fn(),
+  createStatusBarItem: vi.fn(),
   };
 });
 
@@ -271,6 +278,9 @@ vi.mock("vscode", () => ({
     }
   },
   workspace: {
+    get isTrusted() {
+      return extensionMock.isTrusted;
+    },
     get workspaceFolders() {
       return extensionMock.workspaceFolders;
     },
@@ -279,6 +289,7 @@ vi.mock("vscode", () => ({
         extensionMock.configuration.get(key) ?? defaultValue,
     }),
     onDidChangeConfiguration: extensionMock.onDidChangeConfiguration,
+    onDidGrantWorkspaceTrust: extensionMock.onDidGrantWorkspaceTrust,
     onDidChangeWorkspaceFolders: extensionMock.onDidChangeWorkspaceFolders,
     createFileSystemWatcher: extensionMock.createFileSystemWatcher,
   },
@@ -292,18 +303,8 @@ vi.mock("vscode", () => ({
     }
   },
   window: {
-    createOutputChannel: vi.fn((name: string) =>
-      name === "FoundryScript Testing"
-        ? extensionMock.testingOutputChannel
-        : name === "FoundryScript Debug"
-          ? extensionMock.debugOutputChannel
-        : extensionMock.outputChannel,
-    ),
-    createStatusBarItem: vi.fn((_alignment: unknown, priority: number) =>
-      priority === 90
-        ? extensionMock.testingStatusItem
-        : extensionMock.statusItem,
-    ),
+    createOutputChannel: extensionMock.createOutputChannel,
+    createStatusBarItem: extensionMock.createStatusBarItem,
     showErrorMessage: extensionMock.showErrorMessage,
     showQuickPick: extensionMock.showQuickPick,
   },
@@ -453,6 +454,7 @@ describe("extension entry point", () => {
   beforeEach(async () => {
     await deactivate();
     extensionMock.configuration.clear();
+    extensionMock.isTrusted = true;
     extensionMock.workspaceFolders.length = 0;
     extensionMock.outputChannel.appendLine.mockClear();
     extensionMock.outputChannel.show.mockClear();
@@ -535,6 +537,7 @@ describe("extension entry point", () => {
     );
     extensionMock.configurationChangeHandler = undefined;
     extensionMock.configurationChangeHandlers.length = 0;
+    extensionMock.workspaceTrustGrantHandler = undefined;
     extensionMock.workspaceFoldersChangeHandler = undefined;
     extensionMock.workspaceFoldersChangeHandlers.length = 0;
     extensionMock.onDidChangeConfiguration.mockReset();
@@ -547,6 +550,13 @@ describe("extension entry point", () => {
         }
       };
       return { dispose: vi.fn() };
+      },
+    );
+    extensionMock.onDidGrantWorkspaceTrust.mockReset();
+    extensionMock.onDidGrantWorkspaceTrust.mockImplementation(
+      (handler: () => void) => {
+        extensionMock.workspaceTrustGrantHandler = handler;
+        return { dispose: vi.fn() };
       },
     );
     extensionMock.onDidChangeWorkspaceFolders.mockReset();
@@ -600,6 +610,22 @@ describe("extension entry point", () => {
         return extensionMock.diagnosticsUnit;
       },
     );
+    extensionMock.diagnosticsUnit.dispose.mockClear();
+    extensionMock.createOutputChannel.mockReset();
+    extensionMock.createOutputChannel.mockImplementation((name: string) =>
+      name === "FoundryScript Testing"
+        ? extensionMock.testingOutputChannel
+        : name === "FoundryScript Debug"
+          ? extensionMock.debugOutputChannel
+          : extensionMock.outputChannel,
+    );
+    extensionMock.createStatusBarItem.mockReset();
+    extensionMock.createStatusBarItem.mockImplementation(
+      (_alignment: unknown, priority: number) =>
+        priority === 90
+          ? extensionMock.testingStatusItem
+          : extensionMock.statusItem,
+    );
     extensionMock.start = vi.fn().mockResolvedValue(undefined);
     extensionMock.stop = vi.fn().mockResolvedValue(undefined);
     extensionMock.reconnectNow = vi.fn().mockResolvedValue(undefined);
@@ -634,6 +660,292 @@ describe("extension entry point", () => {
       stop: extensionMock.stop,
       reconnectNow: extensionMock.reconnectNow,
     }));
+  });
+
+  it.each([
+    ["an untrusted local workspace", false, "file"],
+    ["a trusted virtual workspace", true, "vscode-vfs"],
+  ])(
+    "settles activation with zero native runtime registrations in %s",
+    async (_name, isTrusted, scheme) => {
+      extensionMock.isTrusted = isTrusted;
+      extensionMock.workspaceFolders.push({
+        uri: { fsPath: "/workspace/game", scheme },
+      });
+      const context = createContext();
+
+      await activate(context);
+
+      expect(extensionMock.onDidGrantWorkspaceTrust).toHaveBeenCalledOnce();
+      expect(extensionMock.onDidChangeWorkspaceFolders).toHaveBeenCalledOnce();
+      expect(extensionMock.createDiagnosticsUnit).not.toHaveBeenCalled();
+      expect(extensionMock.createDiagnosticCollection).not.toHaveBeenCalled();
+      expect(extensionMock.registerFoundryTaskProvider).not.toHaveBeenCalled();
+      expect(extensionMock.registerTaskProvider).not.toHaveBeenCalled();
+      expect(extensionMock.createOutputChannel).not.toHaveBeenCalled();
+      expect(extensionMock.createStatusBarItem).not.toHaveBeenCalled();
+      expect(extensionMock.registerCommand).not.toHaveBeenCalled();
+      expect(extensionMock.registerDebugConfigurationProvider).not.toHaveBeenCalled();
+      expect(extensionMock.registerDebugAdapterDescriptorFactory).not.toHaveBeenCalled();
+      expect(extensionMock.registerDebugAdapterTrackerFactory).not.toHaveBeenCalled();
+      expect(extensionMock.createTestController).not.toHaveBeenCalled();
+      expect(extensionMock.createToolingHostCoordinator).not.toHaveBeenCalled();
+      expect(extensionMock.createConnectionManager).not.toHaveBeenCalled();
+      expect(extensionMock.start).not.toHaveBeenCalled();
+      expect(extensionMock.testingConfigure).not.toHaveBeenCalled();
+      expect(extensionMock.testingNegotiate).not.toHaveBeenCalled();
+      expect(extensionMock.testingProcessRun).not.toHaveBeenCalled();
+    },
+  );
+
+  it("starts every native subsystem exactly once after trust is granted", async () => {
+    extensionMock.isTrusted = false;
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game", scheme: "file" },
+    });
+    await activate(createContext());
+
+    extensionMock.isTrusted = true;
+    extensionMock.workspaceTrustGrantHandler?.();
+    extensionMock.workspaceTrustGrantHandler?.();
+    extensionMock.workspaceFoldersChangeHandler?.();
+
+    await expectNativeRuntimeStartedOnce();
+  });
+
+  it("starts every native subsystem exactly once after a virtual workspace becomes local", async () => {
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game", scheme: "vscode-vfs" },
+    });
+    await activate(createContext());
+
+    extensionMock.workspaceFolders.splice(0, 1, {
+      uri: { fsPath: "/workspace/game", scheme: "file" },
+    });
+    extensionMock.workspaceFoldersChangeHandler?.();
+    extensionMock.workspaceFoldersChangeHandler?.();
+    extensionMock.workspaceTrustGrantHandler?.();
+
+    await expectNativeRuntimeStartedOnce();
+  });
+
+  it("rechecks workspace eligibility before a queued native runtime start", async () => {
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game", scheme: "file" },
+    });
+
+    const activation = activate(createContext());
+    extensionMock.workspaceFolders.splice(0, 1, {
+      uri: { fsPath: "/workspace/game", scheme: "vscode-vfs" },
+    });
+    extensionMock.workspaceFoldersChangeHandler?.();
+
+    await activation;
+    expect(extensionMock.createDiagnosticsUnit).not.toHaveBeenCalled();
+    expect(extensionMock.registerFoundryTaskProvider).not.toHaveBeenCalled();
+    expect(extensionMock.createOutputChannel).not.toHaveBeenCalled();
+    expect(extensionMock.registerCommand).not.toHaveBeenCalled();
+    expect(extensionMock.registerDebugConfigurationProvider).not.toHaveBeenCalled();
+    expect(extensionMock.registerDebugAdapterDescriptorFactory).not.toHaveBeenCalled();
+    expect(extensionMock.registerDebugAdapterTrackerFactory).not.toHaveBeenCalled();
+    expect(extensionMock.createTestController).not.toHaveBeenCalled();
+    expect(extensionMock.createToolingHostCoordinator).not.toHaveBeenCalled();
+    expect(extensionMock.createConnectionManager).not.toHaveBeenCalled();
+
+    extensionMock.workspaceFolders.splice(0, 1, {
+      uri: { fsPath: "/workspace/game", scheme: "file" },
+    });
+    extensionMock.workspaceFoldersChangeHandler?.();
+
+    await expectNativeRuntimeStartedOnce();
+  });
+
+  it("deactivates safely before the workspace becomes eligible", async () => {
+    extensionMock.isTrusted = false;
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game", scheme: "file" },
+    });
+    await activate(createContext());
+
+    await deactivate();
+    await deactivate();
+    extensionMock.isTrusted = true;
+    extensionMock.workspaceTrustGrantHandler?.();
+    await Promise.resolve();
+
+    expect(extensionMock.createDiagnosticsUnit).not.toHaveBeenCalled();
+    expect(extensionMock.registerFoundryTaskProvider).not.toHaveBeenCalled();
+    expect(extensionMock.registerDebugConfigurationProvider).not.toHaveBeenCalled();
+    expect(extensionMock.createTestController).not.toHaveBeenCalled();
+    expect(extensionMock.createConnectionManager).not.toHaveBeenCalled();
+    expect(extensionMock.start).not.toHaveBeenCalled();
+    expect(extensionMock.testingStop).not.toHaveBeenCalled();
+    expect(extensionMock.stop).not.toHaveBeenCalled();
+  });
+
+  it("deactivates safely while an eligible gate start is still queued", async () => {
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game", scheme: "file" },
+    });
+
+    const activation = activate(createContext());
+    const deactivation = deactivate();
+
+    await expect(Promise.all([activation, deactivation])).resolves.toEqual([
+      undefined,
+      undefined,
+    ]);
+    expect(extensionMock.createDiagnosticsUnit).not.toHaveBeenCalled();
+    expect(extensionMock.registerFoundryTaskProvider).not.toHaveBeenCalled();
+    expect(extensionMock.registerDebugConfigurationProvider).not.toHaveBeenCalled();
+    expect(extensionMock.createTestController).not.toHaveBeenCalled();
+    expect(extensionMock.createConnectionManager).not.toHaveBeenCalled();
+    expect(extensionMock.start).not.toHaveBeenCalled();
+  });
+
+  it("stops active work without replacement when a local workspace becomes virtual", async () => {
+    extensionMock.configuration.set("testing.enabled", true);
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game", scheme: "file" },
+    });
+    await activate(createContext());
+    await waitForConnectionStart();
+    await vi.waitFor(() =>
+      expect(extensionMock.testingConfigure).toHaveBeenCalledOnce(),
+    );
+    extensionMock.resolveProject.mockResolvedValue({
+      success: false,
+      failure: {
+        kind: "unsupported_workspace",
+        scheme: "vscode-vfs",
+        message:
+          "Workspace URI scheme 'vscode-vfs' is unsupported; native Foundry tooling requires a local file workspace.",
+      },
+    });
+
+    extensionMock.workspaceFolders.splice(0, 1, {
+      uri: { fsPath: "/workspace/game", scheme: "vscode-vfs" },
+    });
+    extensionMock.workspaceFoldersChangeHandler?.();
+
+    await vi.waitFor(() => expect(extensionMock.stop).toHaveBeenCalledOnce());
+    await vi.waitFor(() =>
+      expect(extensionMock.testingConfigure).toHaveBeenCalledTimes(2),
+    );
+    expect(extensionMock.createConnectionManager).toHaveBeenCalledOnce();
+    expect(extensionMock.createToolingHostCoordinator).toHaveBeenCalledOnce();
+    expect(extensionMock.start).toHaveBeenCalledOnce();
+    expect(extensionMock.coordinatorDispose).toHaveBeenCalledOnce();
+    const configured = extensionMock.testingConfigure.mock.calls.at(-1)?.[0] as
+      | {
+          enabled: boolean;
+          project: string | undefined;
+          projectFailure?: { kind: string };
+        }
+      | undefined;
+    expect(configured).toMatchObject({
+      enabled: true,
+      project: undefined,
+      projectFailure: { kind: "invalid_project" },
+    });
+    expect(extensionMock.testingProcessRun).not.toHaveBeenCalled();
+    expect(extensionMock.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining("vscode-vfs"),
+    );
+    expect(extensionMock.outputChannel.appendLine.mock.calls.some(([line]) => {
+      const record = JSON.parse(line as string) as {
+        event?: string;
+        kind?: string;
+      };
+      return record.event === "lsp.project.resolution_failed" &&
+        record.kind === "unsupported_workspace";
+    })).toBe(true);
+  });
+
+  it("rolls back a partial native registration failure and retries", async () => {
+    const failure = new Error("registration exploded");
+    const failedTaskProvider = { dispose: vi.fn() };
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    extensionMock.registerFoundryTaskProvider.mockImplementationOnce(
+      (context: vscode.ExtensionContext) => {
+        context.subscriptions.push(failedTaskProvider);
+      },
+    );
+    extensionMock.isTrusted = false;
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game", scheme: "file" },
+    });
+    const context = createContext();
+    await activate(context);
+    extensionMock.registerDebugConfigurationProvider.mockImplementationOnce(() => {
+      throw failure;
+    });
+
+    try {
+      extensionMock.isTrusted = true;
+      extensionMock.workspaceTrustGrantHandler?.();
+
+      await vi.waitFor(() =>
+        expect(consoleError).toHaveBeenCalledWith(
+          "FoundryScript native runtime registration failed:",
+          failure,
+        ),
+      );
+      expect(context.subscriptions).toHaveLength(3);
+      expect(extensionMock.diagnosticsUnit.dispose).toHaveBeenCalledOnce();
+      expect(failedTaskProvider.dispose).toHaveBeenCalledOnce();
+      expect(extensionMock.debugOutputChannel.dispose).toHaveBeenCalledOnce();
+      expect(extensionMock.outputChannel.dispose).toHaveBeenCalledOnce();
+      expect(extensionMock.statusItem.dispose).toHaveBeenCalledOnce();
+      expect(
+        extensionMock.registeredCommands.has(CONNECTION_ACTIONS_COMMAND),
+      ).toBe(false);
+
+      extensionMock.createDiagnosticsUnit.mockClear();
+      extensionMock.createDiagnosticCollection.mockClear();
+      extensionMock.registerFoundryTaskProvider.mockClear();
+      extensionMock.createOutputChannel.mockClear();
+      extensionMock.createStatusBarItem.mockClear();
+      extensionMock.registerCommand.mockClear();
+      extensionMock.registerDebugConfigurationProvider.mockClear();
+      extensionMock.registerDebugAdapterDescriptorFactory.mockClear();
+      extensionMock.registerDebugAdapterTrackerFactory.mockClear();
+
+      extensionMock.workspaceFoldersChangeHandler?.();
+      await expectNativeRuntimeStartedOnce();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("catches and logs a native shutdown failure from context disposal", async () => {
+    const failure = new Error("shutdown exploded");
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game", scheme: "file" },
+    });
+    const context = createContext();
+    await activate(context);
+    extensionMock.debugProviderDisposable.dispose.mockImplementationOnce(() => {
+      throw failure;
+    });
+
+    try {
+      context.subscriptions[2]?.dispose();
+
+      await vi.waitFor(() =>
+        expect(consoleError).toHaveBeenCalledWith(
+          "FoundryScript native runtime shutdown failed:",
+          failure,
+        ),
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("starts the configured connection mode for the open project", async () => {
@@ -2287,6 +2599,27 @@ async function waitForConnectionStart(): Promise<void> {
   await vi.waitFor(() => expect(extensionMock.start).toHaveBeenCalledOnce());
   await Promise.resolve();
   await Promise.resolve();
+}
+
+async function expectNativeRuntimeStartedOnce(): Promise<void> {
+  await vi.waitFor(() => {
+    expect(extensionMock.start).toHaveBeenCalledOnce();
+    expect(extensionMock.testingConfigure).toHaveBeenCalledOnce();
+  });
+  expect(extensionMock.createDiagnosticsUnit).toHaveBeenCalledOnce();
+  expect(extensionMock.createDiagnosticCollection).toHaveBeenCalledOnce();
+  expect(extensionMock.registerFoundryTaskProvider).toHaveBeenCalledOnce();
+  expect(extensionMock.createOutputChannel).toHaveBeenCalledTimes(3);
+  expect(extensionMock.createStatusBarItem).toHaveBeenCalledOnce();
+  expect(extensionMock.registerCommand).toHaveBeenCalledOnce();
+  expect(extensionMock.registerDebugConfigurationProvider).toHaveBeenCalledOnce();
+  expect(extensionMock.registerDebugAdapterDescriptorFactory).toHaveBeenCalledOnce();
+  expect(extensionMock.registerDebugAdapterTrackerFactory).toHaveBeenCalledTimes(2);
+  expect(extensionMock.createTestController).toHaveBeenCalledOnce();
+  expect(extensionMock.createToolingHostCoordinator).toHaveBeenCalledOnce();
+  expect(extensionMock.createConnectionManager).toHaveBeenCalledOnce();
+  expect(extensionMock.onDidGrantWorkspaceTrust).toHaveBeenCalledOnce();
+  expect(extensionMock.onDidChangeWorkspaceFolders).toHaveBeenCalledTimes(3);
 }
 
 describe("package.json manifest", () => {

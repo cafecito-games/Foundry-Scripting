@@ -55,6 +55,7 @@ import {
   type TestingState,
 } from "./testing/status.js";
 import type { ToolingHostCoordinator } from "./tooling/coordinator.js";
+import { classifyNativeWorkspaceEligibility } from "./workspace-support.js";
 
 type ActiveConnectionLifecycle = ConnectionLifecycle<
   ConnectionManager,
@@ -68,6 +69,13 @@ interface ActiveTestingLifecycle {
 }
 
 let activeTestingLifecycle: ActiveTestingLifecycle | undefined;
+
+interface ActiveNativeRuntimeGate {
+  readonly startIfEligible: () => void;
+  readonly stop: () => Promise<void>;
+}
+
+let activeNativeRuntimeGate: ActiveNativeRuntimeGate | undefined;
 
 const TESTING_CONFIGURATION_SECTIONS = [
   "foundryScript.testing.enabled",
@@ -587,7 +595,7 @@ async function showTestingFailure(
   }
 }
 
-export async function activate(context: vscode.ExtensionContext): Promise<void> {
+function startNativeRuntime(context: vscode.ExtensionContext): void {
   const diagnostics = createDiagnosticsUnit(() =>
     vscode.languages.createDiagnosticCollection("foundryscript"),
   );
@@ -709,11 +717,126 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       : { kind: "disconnected" },
   );
   void lifecycle.requestReconciliation();
+}
+
+function logNativeRuntimeFailure(message: string, error: unknown): void {
+  console.error(message, error);
+}
+
+async function rollbackNativeRuntimeStart(
+  context: vscode.ExtensionContext,
+  subscriptionStart: number,
+): Promise<void> {
+  try {
+    await stopNativeRuntime();
+  } catch (error) {
+    logNativeRuntimeFailure(
+      "FoundryScript native runtime rollback shutdown failed:",
+      error,
+    );
+  }
+  const subscriptions = context.subscriptions.splice(subscriptionStart);
+  for (const subscription of subscriptions.reverse()) {
+    try {
+      await Promise.resolve(subscription.dispose());
+    } catch (error) {
+      logNativeRuntimeFailure(
+        "FoundryScript native runtime rollback disposal failed:",
+        error,
+      );
+    }
+  }
+}
+
+function createNativeRuntimeGate(
+  context: vscode.ExtensionContext,
+): ActiveNativeRuntimeGate {
+  let stopped = false;
+  let startRequested = false;
+  let startFinished = false;
+  let startPromise: Promise<void> | undefined;
+  let stopPromise: Promise<void> | undefined;
+  const isEligible = (): boolean =>
+    classifyNativeWorkspaceEligibility(
+      vscode.workspace.isTrusted,
+      vscode.workspace.workspaceFolders?.map((folder) => folder.uri.scheme),
+    ).kind === "eligible";
+  const startIfEligible = (): void => {
+    if (stopped || startRequested) return;
+    if (!isEligible()) return;
+
+    startRequested = true;
+    startFinished = false;
+    startPromise = Promise.resolve()
+      .then(() => {
+        if (stopped) return;
+        if (!isEligible()) {
+          startRequested = false;
+          return;
+        }
+        const subscriptionStart = context.subscriptions.length;
+        try {
+          startNativeRuntime(context);
+          return;
+        } catch (error) {
+          return rollbackNativeRuntimeStart(context, subscriptionStart).then(() => {
+            startRequested = false;
+            throw error;
+          });
+        }
+      })
+      .catch((error: unknown) => {
+        logNativeRuntimeFailure(
+          "FoundryScript native runtime registration failed:",
+          error,
+        );
+      })
+      .finally(() => {
+        startFinished = true;
+      });
+  };
+  return {
+    startIfEligible,
+    stop: () => {
+      if (stopPromise !== undefined) return stopPromise;
+      stopped = true;
+      stopPromise = startFinished
+        ? stopNativeRuntime()
+        : (async () => {
+            await startPromise;
+            await stopNativeRuntime();
+          })();
+      return stopPromise;
+    },
+  };
+}
+
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  const gate = createNativeRuntimeGate(context);
+  activeNativeRuntimeGate = gate;
+  context.subscriptions.push(
+    vscode.workspace.onDidGrantWorkspaceTrust(gate.startIfEligible),
+    vscode.workspace.onDidChangeWorkspaceFolders(gate.startIfEligible),
+    {
+      dispose: () => {
+        if (activeNativeRuntimeGate !== gate) return;
+        activeNativeRuntimeGate = undefined;
+        void gate.stop().catch((error: unknown) => {
+          logNativeRuntimeFailure(
+            "FoundryScript native runtime shutdown failed:",
+            error,
+          );
+        });
+      },
+    },
+  );
+  gate.startIfEligible();
+  await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
 }
 
-export async function deactivate(): Promise<void> {
+async function stopNativeRuntime(): Promise<void> {
   const debugRuntime = activeDebugRuntime;
   const connectionLifecycle = activeConnectionLifecycle;
   const testingLifecycle = activeTestingLifecycle;
@@ -722,4 +845,14 @@ export async function deactivate(): Promise<void> {
   activeTestingLifecycle = undefined;
   await debugRuntime?.shutdown();
   await Promise.all([connectionLifecycle?.stop(), testingLifecycle?.stop()]);
+}
+
+export async function deactivate(): Promise<void> {
+  const gate = activeNativeRuntimeGate;
+  activeNativeRuntimeGate = undefined;
+  if (gate !== undefined) {
+    await gate.stop();
+    return;
+  }
+  await stopNativeRuntime();
 }
