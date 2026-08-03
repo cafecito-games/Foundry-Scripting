@@ -73,6 +73,33 @@ jobs:
       - run: npm ci
       - run: npm run check:grammar-sync
 
+  dependency-audit:
+    name: dependency-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npm run audit:production
+      - run: npm run audit:development
+
+  vscode-minimum:
+    name: vscode-minimum
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.9.0"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: xvfb-run -a npm run test:vscode-minimum
+
   corpus:
     name: corpus
     runs-on: ubuntu-latest

@@ -51,6 +51,26 @@ export interface FoundryTestDebugExecutorOptions {
   readonly sessionStartTimeoutMs?: number;
   readonly reportReadinessTimeoutMs?: number;
   readonly terminationTimeoutMs?: number;
+  readonly supportsTestRunLinking?: boolean;
+}
+
+export function supportsTestRunDebugOption(version: string): boolean {
+  const match = /^(\d+)\.(\d+)/u.exec(version);
+  if (match === null) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > 1 || (major === 1 && minor >= 91);
+}
+
+export function createTestDebugSessionOptions(
+  testRun: vscode.TestRun,
+  supportsTestRunLinking: boolean,
+): vscode.DebugSessionOptions {
+  const options: vscode.DebugSessionOptions = { noDebug: false };
+  if (supportsTestRunLinking) {
+    Object.assign(options, { testRun });
+  }
+  return options;
 }
 
 export class FoundryTestDebugExecutor {
@@ -212,10 +232,13 @@ export class FoundryTestDebugExecutor {
       if (cancellationRequested) {
         return cancelledExecutionResult(request, observer);
       }
-      const started = await this.options.startDebugging(configuration, {
-        noDebug: false,
-        testRun,
-      });
+      const started = await this.options.startDebugging(
+        configuration,
+        createTestDebugSessionOptions(
+          testRun,
+          this.options.supportsTestRunLinking ?? false,
+        ),
+      );
       if (!started) {
         throw new TestAdapterFailure(
           "spawn_failed",

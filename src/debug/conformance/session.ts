@@ -29,8 +29,13 @@ async function waitForReadiness(
         }
         const match = /FOUNDRY_TOOLING (\{[^\n]+\})/.exec(output());
         if (match !== null) {
+          const readinessRecord = match[1];
+          if (readinessRecord === undefined) {
+            reject(new Error("Foundry tooling readiness record was empty."));
+            return;
+          }
           try {
-            const readiness: unknown = JSON.parse(match[1]);
+            const readiness: unknown = JSON.parse(readinessRecord);
             if (
               typeof readiness === "object" &&
               readiness !== null &&
@@ -40,7 +45,7 @@ async function waitForReadiness(
               resolve(readiness.dap_port);
               return;
             }
-            reject(new Error(`Invalid readiness record: ${match[1]}`));
+            reject(new Error(`Invalid readiness record: ${readinessRecord}`));
           } catch (error) {
             reject(error instanceof Error ? error : new Error(String(error)));
           }

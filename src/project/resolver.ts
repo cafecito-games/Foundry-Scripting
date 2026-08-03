@@ -86,7 +86,8 @@ export async function resolveFoundryProject(
     ...new Set(manifests.map((manifest) => path.resolve(path.dirname(manifest)))),
   ];
   if (projects.length === 1) {
-    return { success: true, project: projects[0] };
+    const project = projects[0];
+    if (project !== undefined) return { success: true, project };
   }
   if (projects.length === 0) {
     return failure(

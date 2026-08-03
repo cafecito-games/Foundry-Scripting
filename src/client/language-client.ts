@@ -136,7 +136,7 @@ export class FoundryScriptLanguageClient extends LanguageClient {
       createTcpServerOptions({
         ...endpoint,
         output: outputChannel,
-        signal,
+        ...(signal === undefined ? {} : { signal }),
         ...(interceptNotification === undefined
           ? {}
           : { interceptNotification }),

@@ -57,7 +57,7 @@ describe("Foundry test debug executor", () => {
     });
   });
 
-  it("starts one DAP-owned session linked to the TestRun and consumes its TAP", async () => {
+  it("starts one DAP-owned session with minimum-host options and consumes its TAP", async () => {
     const module = await loadModule();
     expect(module?.FoundryTestDebugExecutor).toBeDefined();
     const reportPath = "/tmp/foundryscript-test-debug-unique/report.tap";
@@ -117,7 +117,7 @@ describe("Foundry test debug executor", () => {
 
     expect(startDebugging).toHaveBeenCalledWith(
       projectTestConfiguration(reportPath),
-      { noDebug: false, testRun },
+      { noDebug: false },
     );
     expect(observer.onPoint).toHaveBeenCalledOnce();
     expect(observer.onPoint).toHaveBeenCalledWith(
@@ -131,6 +131,31 @@ describe("Foundry test debug executor", () => {
     expect(removeTemporaryDirectory).toHaveBeenCalledWith(
       path.dirname(reportPath),
     );
+  });
+
+  it("gates TestRun debug linkage to VS Code versions that declare it", async () => {
+    const module = await loadModule();
+    expect(module?.supportsTestRunDebugOption).toBeTypeOf("function");
+    expect(module?.createTestDebugSessionOptions).toBeTypeOf("function");
+    if (
+      module?.supportsTestRunDebugOption === undefined ||
+      module.createTestDebugSessionOptions === undefined
+    ) {
+      return;
+    }
+
+    const testRun = { name: "linked run" };
+    expect(module.supportsTestRunDebugOption("1.90.2")).toBe(false);
+    expect(module.supportsTestRunDebugOption("1.91.0")).toBe(true);
+    expect(module.supportsTestRunDebugOption("2.0.0-insider")).toBe(true);
+    expect(module.supportsTestRunDebugOption("invalid")).toBe(false);
+    expect(module.createTestDebugSessionOptions(testRun as never, false)).toEqual({
+      noDebug: false,
+    });
+    expect(module.createTestDebugSessionOptions(testRun as never, true)).toEqual({
+      noDebug: false,
+      testRun,
+    });
   });
 
   it("waits boundedly for VS Code to publish the matching debug session", async () => {

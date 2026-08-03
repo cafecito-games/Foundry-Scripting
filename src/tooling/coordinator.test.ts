@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Mock } from "vitest";
 import {
   DapSessionLeaseUnavailable,
   ToolingHostCoordinator,
@@ -29,7 +30,7 @@ function createOwnedHost(
   lspPort = 49152,
   dapPort = 49153,
 ): OwnedToolingHost & {
-  stop: ReturnType<typeof vi.fn>;
+  stop: Mock<() => Promise<void>>;
   exit: (code?: number | null) => void;
 } {
   const listeners = new Set<(code: number | null) => void>();
@@ -42,7 +43,7 @@ function createOwnedHost(
       lspPort,
       dapPort,
     },
-    stop: vi.fn().mockResolvedValue(undefined),
+    stop: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     onExit: (listener) => {
       listeners.add(listener);
       return { dispose: () => listeners.delete(listener) };
@@ -63,12 +64,12 @@ const spawnRequest = {
 
 describe("ToolingHostCoordinator modes and state", () => {
   const states: ToolingHostCoordinatorState[] = [];
-  let launch: ReturnType<typeof vi.fn>;
+  let launch: Mock<ToolingHostLauncher["launch"]>;
   let launcher: ToolingHostLauncher;
 
   beforeEach(() => {
     states.length = 0;
-    launch = vi.fn();
+    launch = vi.fn<ToolingHostLauncher["launch"]>();
     launcher = { launch };
   });
 

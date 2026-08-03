@@ -262,6 +262,7 @@ const extensionMock = vi.hoisted(() => {
 });
 
 vi.mock("vscode", () => ({
+  version: "1.90.0",
   tests: {
     createTestController: extensionMock.createTestController,
   },
@@ -416,6 +417,7 @@ vi.mock("./testing/executor.js", () => ({
 }));
 
 vi.mock("./testing/debug-executor.js", () => ({
+  supportsTestRunDebugOption: vi.fn(() => false),
   FoundryTestDebugExecutor: class {
     readonly execute = extensionMock.testingDebugExecute;
 

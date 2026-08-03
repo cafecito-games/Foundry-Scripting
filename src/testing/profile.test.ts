@@ -1,6 +1,7 @@
 import path from "node:path";
 import type * as vscode from "vscode";
 import { describe, expect, it, vi } from "vitest";
+import type { Mock } from "vitest";
 import { TestAdapterFailure } from "./adapter.js";
 import type { TestDiscoveryModel, TestDiscoveryTest } from "./discovery.js";
 import type {
@@ -254,11 +255,11 @@ describe("Foundry VS Code run profile", () => {
 });
 
 interface Harness {
-  readonly controller: { readonly createTestRun: ReturnType<typeof vi.fn> };
+  readonly controller: { readonly createTestRun: Mock<() => FakeRun> };
   readonly run: FakeRun;
   readonly items: Map<string, vscode.TestItem>;
-  readonly execute: ReturnType<typeof vi.fn>;
-  readonly createLocation: ReturnType<typeof vi.fn>;
+  readonly execute: Mock<FoundryTestRunProfileOptions["execute"]>;
+  readonly createLocation: Mock<FoundryTestRunProfileOptions["createLocation"]>;
   profile: FoundryTestRunProfile;
   executed: TestExecutionRequest | undefined;
 }
@@ -291,7 +292,7 @@ function createHarness(
     run,
     items,
     createLocation,
-    execute: vi.fn(),
+    execute: vi.fn<FoundryTestRunProfileOptions["execute"]>(),
     profile: undefined as unknown as FoundryTestRunProfile,
     executed: undefined,
   };

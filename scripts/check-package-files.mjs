@@ -21,6 +21,8 @@ const PROHIBITED_PREFIXES = [
   "node_modules/",
 ];
 
+const PROHIBITED_FILES = ["tsconfig.production-strict.json"];
+
 function normalizePackagePath(packagePath) {
   return packagePath.replaceAll("\\", "/").replace(/^\.\//, "");
 }
@@ -36,6 +38,7 @@ export function validatePackageFiles(packageFiles) {
 
   for (const packagePath of normalizedFiles) {
     if (
+      PROHIBITED_FILES.includes(packagePath) ||
       PROHIBITED_PREFIXES.some((prefix) => packagePath.startsWith(prefix)) ||
       packagePath.endsWith(".map")
     ) {

@@ -45,7 +45,7 @@ export function createWorkspaceProjectResolver(
       .get("projectPath", "");
     return resolveFoundryProject({
       workspacePath,
-      workspaceScheme,
+      ...(workspaceScheme === undefined ? {} : { workspaceScheme }),
       configuredPath,
       manifestExists,
       findManifests,

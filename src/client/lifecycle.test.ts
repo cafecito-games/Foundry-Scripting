@@ -1,11 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
+import type { Mock } from "vitest";
 import type {
   ConnectionSettings,
   StartConnectionOptions,
 } from "./connection-manager.js";
 import { ConnectionLifecycle } from "./lifecycle.js";
 import { ConnectionConfigurationFailure } from "./settings.js";
-import type { ProjectResolution } from "../project/resolver.js";
+import type {
+  ProjectResolution,
+  ProjectResolutionFailure,
+} from "../project/resolver.js";
 
 const defaultSettings: ConnectionSettings = {
   mode: "attach",
@@ -280,22 +284,24 @@ describe("connection lifecycle", () => {
 });
 
 interface TestManager {
-  readonly start: ReturnType<typeof vi.fn>;
-  readonly stop: ReturnType<typeof vi.fn>;
-  readonly reconnectNow: ReturnType<typeof vi.fn>;
+  readonly start: Mock<(options: StartConnectionOptions) => Promise<void>>;
+  readonly stop: Mock<() => Promise<void>>;
+  readonly reconnectNow: Mock<() => Promise<void>>;
 }
 
 interface TestCoordinator {
-  readonly dispose: ReturnType<typeof vi.fn>;
+  readonly dispose: Mock<() => Promise<void>>;
 }
 
 interface HarnessOptions {
   readonly settings?: ConnectionSettings;
   readonly resolution?: ProjectResolution;
-  readonly resolveProject?: ReturnType<typeof vi.fn>;
+  readonly resolveProject?: Mock<() => Promise<ProjectResolution>>;
   readonly managerStarts?: readonly Promise<void>[];
-  readonly reportProjectFailure?: ReturnType<typeof vi.fn>;
-  readonly readSettings?: ReturnType<typeof vi.fn>;
+  readonly reportProjectFailure?: Mock<
+    (failure: ProjectResolutionFailure) => void | Promise<void>
+  >;
+  readonly readSettings?: Mock<() => ConnectionSettings>;
 }
 
 function createHarness(options: HarnessOptions = {}) {
@@ -308,11 +314,16 @@ function createHarness(options: HarnessOptions = {}) {
     settings: options.settings ?? defaultSettings,
     project: "/workspace/game",
   };
-  const resolveProject = options.resolveProject ?? vi.fn(() =>
-    Promise.resolve(options.resolution ?? {
-      success: true as const,
-      project: harness.project,
-    }));
+  const resolveProject =
+    options.resolveProject ??
+    vi.fn<() => Promise<ProjectResolution>>(() =>
+      Promise.resolve(
+        options.resolution ?? {
+          success: true as const,
+          project: harness.project,
+        },
+      ),
+    );
   const createCoordinator = vi.fn(() => {
     const id = coordinators.length;
     const coordinator: TestCoordinator = {
@@ -338,12 +349,14 @@ function createHarness(options: HarnessOptions = {}) {
         events.push(`manager:${id}:stop`);
         return Promise.resolve();
       }),
-      reconnectNow: vi.fn().mockResolvedValue(undefined),
+      reconnectNow: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     };
     managers.push(manager);
     return manager;
   });
-  const reportProjectFailure = options.reportProjectFailure ?? vi.fn();
+  const reportProjectFailure =
+    options.reportProjectFailure ??
+    vi.fn<(failure: ProjectResolutionFailure) => void | Promise<void>>();
   const reportSettingsFailure = vi.fn();
   const reportStartupFailure = vi.fn();
   const logBackgroundFailure = vi.fn();

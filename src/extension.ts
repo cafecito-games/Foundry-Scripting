@@ -37,6 +37,7 @@ import type { TestAdapterCommand } from "./testing/command.js";
 import { FoundryTestAdapterDiscoverer } from "./testing/discoverer.js";
 import {
   FoundryTestDebugExecutor,
+  supportsTestRunDebugOption,
   type FoundryTestDebugMessageEvent,
 } from "./testing/debug-executor.js";
 import { FoundryTestExecutor } from "./testing/executor.js";
@@ -299,6 +300,7 @@ function registerTestingRuntime(
       vscode.debug.onDidTerminateDebugSession((session) => listener(session)),
     onDidDebugMessage: (listener) => subscribe(debugMessageListeners, listener),
     onCleanupError,
+    supportsTestRunLinking: supportsTestRunDebugOption(vscode.version),
   });
   let shownFailureFingerprint: string | undefined;
   let failureConfigurationKey: string | undefined;

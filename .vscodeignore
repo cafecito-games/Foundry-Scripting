@@ -13,5 +13,6 @@ node_modules/**
 eslint.config.mjs
 esbuild.mjs
 tsconfig.json
+tsconfig.production-strict.json
 **/*.map
 **/*.test.ts
