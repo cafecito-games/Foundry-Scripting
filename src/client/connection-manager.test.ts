@@ -5,6 +5,7 @@ import {
   type ConnectionState,
   type LanguageClientHandle,
 } from "./connection-manager.js";
+import { ConnectionConfigurationFailure } from "./settings.js";
 import type { TcpEndpoint } from "./transport.js";
 import {
   ToolingHostCoordinator,
@@ -146,6 +147,25 @@ describe("connection modes", () => {
     expect(endpoints).toEqual([]);
     expect(launchHost).not.toHaveBeenCalled();
     expect(states).toEqual([{ kind: "off" }]);
+  });
+
+  it("rejects an invalid direct settings snapshot before coordinator or client work", async () => {
+    const manager = managerWith([createSuccessfulClient()]);
+
+    await expect(
+      manager.start({
+        settings: {
+          mode: "attach",
+          port: "6005",
+          dapPort: 6006,
+          enginePath: "foundry",
+        } as unknown as { mode: "attach"; port: number; dapPort: number; enginePath: string },
+        project: "/workspace/game",
+      }),
+    ).rejects.toBeInstanceOf(ConnectionConfigurationFailure);
+    expect(launchHost).not.toHaveBeenCalled();
+    expect(endpoints).toEqual([]);
+    expect(states).toEqual([]);
   });
 
   it("attach connects to the configured loopback port without owning a host", async () => {

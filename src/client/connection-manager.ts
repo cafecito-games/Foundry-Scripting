@@ -6,18 +6,14 @@ import {
 import { type LogOutput, writeLog } from "./logging.js";
 import type {
   ToolingHostCoordinator,
-  ToolingHostMode,
   ToolingHostRequest,
 } from "../tooling/coordinator.js";
+import {
+  validateConnectionSettings,
+  type ConnectionSettings,
+} from "./settings.js";
 
-export type LspMode = ToolingHostMode;
-
-export interface ConnectionSettings {
-  mode: LspMode;
-  port: number;
-  dapPort?: number;
-  enginePath: string;
-}
+export type { ConnectionSettings, LspMode } from "./settings.js";
 
 export interface LanguageClientHandle {
   start: () => Promise<void>;
@@ -154,18 +150,23 @@ export class ConnectionManager {
     ) {
       throw new Error("A Foundry language server connection is already active.");
     }
-    this.startOptions = { settings, project };
+    const validatedSettings = validateConnectionSettings(settings);
+    this.startOptions = { settings: validatedSettings, project };
     const generation = ++this.generation;
-    if (settings.mode === "off") {
+    if (validatedSettings.mode === "off") {
       this.publish({ kind: "off" });
     }
     const controller = new AbortController();
-    const promise = this.startConnection(settings, project, controller.signal);
+    const promise = this.startConnection(
+      validatedSettings,
+      project,
+      controller.signal,
+    );
     const pending = { controller, promise };
     this.pendingStart = pending;
     try {
       await promise;
-      if (generation === this.generation && settings.mode !== "off") {
+      if (generation === this.generation && validatedSettings.mode !== "off") {
         this.publish({ kind: "connected" });
       }
     } catch (error) {
