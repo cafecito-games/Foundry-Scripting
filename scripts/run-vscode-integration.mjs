@@ -402,6 +402,7 @@ export function unexpectedVSCodeStderrLines(stderr) {
     /^Ignoring the error while validating workspace folder foundry-e2e:/,
     /^No search provider registered for scheme: foundry-e2e, waiting$/,
     /^Failed to fetch chat participant registry\b/,
+    /Blocked vscode-file request\b/,
     /\b(?:libva|MESA-LOADER|D-Bus|dbus|ozone|X11)\b/i,
   ];
   return stderr

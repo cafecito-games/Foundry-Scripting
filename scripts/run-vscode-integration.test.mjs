@@ -184,7 +184,8 @@ describe("packaged VS Code integration runner contract", () => {
     expect(
       runner.unexpectedVSCodeStderrLines(
         "Ignoring the error while validating workspace folder foundry-e2e:/project - ENOPRO\n" +
-          "No search provider registered for scheme: foundry-e2e, waiting\n",
+          "No search provider registered for scheme: foundry-e2e, waiting\n" +
+          "[main] Blocked vscode-file request vscode-file://workerMain.js\n",
       ),
     ).toEqual([]);
     expect(

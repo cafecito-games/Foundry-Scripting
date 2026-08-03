@@ -307,6 +307,7 @@ async function reconfiguration() {
       ready[2].project === secondProject &&
       phaseEvents(events, "tooling", "lsp-initialized").length === 3;
   });
+  await waitForAdapterGeneration(2);
   const beforeTestingChange = phaseEvents(await readEvents(), "discover").length;
   await vscode.workspace
     .getConfiguration("foundryScript")
