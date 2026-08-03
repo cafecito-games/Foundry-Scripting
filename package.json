@@ -261,6 +261,8 @@
     "sync-grammar": "node scripts/sync-grammar.mjs",
     "check:grammar-sync": "node scripts/sync-grammar.mjs --check",
     "check:package-files": "node scripts/check-package-files.mjs",
+    "audit:production": "npm audit --omit=dev",
+    "audit:development": "npm audit --audit-level=moderate",
     "package": "vsce package"
   },
   "devDependencies": {
