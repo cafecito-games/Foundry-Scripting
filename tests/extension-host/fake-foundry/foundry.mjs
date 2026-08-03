@@ -141,6 +141,11 @@ function listen(server) {
 function createLspServer(configuration) {
   return net.createServer((socket) => {
     let bytes = Buffer.alloc(0);
+    socket.on("error", (error) => {
+      record("socket-error", {
+        code: typeof error.code === "string" ? error.code : "UNKNOWN",
+      });
+    });
     socket.on("data", (chunk) => {
       bytes = Buffer.concat([bytes, chunk]);
       while (true) {
