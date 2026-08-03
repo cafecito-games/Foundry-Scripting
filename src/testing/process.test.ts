@@ -105,6 +105,149 @@ describe("Foundry test adapter child process", () => {
     ]);
   });
 
+  it.each([
+    { output: "1234567", expected: "1234567" },
+    { output: "12345678", expected: "12345678" },
+    { output: "123456789", expected: "23456789" },
+  ])("retains the exact newest suffix at and around the limit", async ({ output, expected }) => {
+    const child = new FakeChildProcess();
+    const process = new FoundryTestAdapterProcess({
+      spawnProcess: () => child.asChildProcess(),
+      outputTailLimit: 8,
+    });
+    const result = process.run(command, new AbortController().signal);
+
+    child.stdout.write(output);
+    await Promise.resolve();
+    child.complete(0);
+
+    await expect(result).resolves.toMatchObject({ stdout: expected });
+  });
+
+  it("bounds multi-megabyte stdout and stderr independently to default diagnostic tails", async () => {
+    const child = new FakeChildProcess();
+    const process = new FoundryTestAdapterProcess({
+      spawnProcess: () => child.asChildProcess(),
+    });
+    const result = process.run(command, new AbortController().signal);
+    const stdout = `${"a".repeat(2 * 1024 * 1024)}stdout-end`;
+    const stderr = `${"b".repeat(3 * 1024 * 1024)}stderr-end`;
+
+    child.stdout.write(stdout);
+    child.stderr.write(stderr);
+    await Promise.resolve();
+    child.complete(0);
+
+    await expect(result).resolves.toMatchObject({
+      stdout: stdout.slice(-65_536),
+      stderr: stderr.slice(-65_536),
+    });
+  });
+
+  it("keeps many small chunks bounded while delivering every chunk to both observers", async () => {
+    const child = new FakeChildProcess();
+    const shared: string[] = [];
+    const scoped: string[] = [];
+    const process = new FoundryTestAdapterProcess({
+      spawnProcess: () => child.asChildProcess(),
+      outputTailLimit: 127,
+      onOutput: (text) => shared.push(text),
+    });
+    const result = process.run(
+      command,
+      new AbortController().signal,
+      (text) => scoped.push(text),
+    );
+    const chunks = Array.from({ length: 20_000 }, (_, index) => `${index % 10}`);
+
+    for (const chunk of chunks) child.stdout.write(chunk);
+    await Promise.resolve();
+    child.complete(0);
+
+    const complete = chunks.join("");
+    await expect(result).resolves.toMatchObject({
+      stdout: complete.slice(-127),
+    });
+    expect(shared.join("")).toBe(complete);
+    expect(scoped).toEqual(shared);
+  });
+
+  it("returns bounded independent tails when cancellation closes the child", async () => {
+    const child = new FakeChildProcess();
+    const controller = new AbortController();
+    const process = new FoundryTestAdapterProcess({
+      spawnProcess: () => child.asChildProcess(),
+      outputTailLimit: 5,
+    });
+    const result = process.run(command, controller.signal);
+    child.stdout.write("stdout-complete");
+    child.stderr.write("stderr-complete");
+    await Promise.resolve();
+
+    controller.abort();
+    child.complete(null);
+
+    await expect(result).resolves.toEqual({
+      kind: "cancelled",
+      stdout: "plete",
+      stderr: "plete",
+    });
+  });
+
+  it("returns bounded tails at the cancellation hard deadline", async () => {
+    const child = new FakeChildProcess();
+    const controller = new AbortController();
+    const process = new FoundryTestAdapterProcess({
+      spawnProcess: () => child.asChildProcess(),
+      outputTailLimit: 4,
+      terminationGraceMs: 5,
+      shutdownDeadlineMs: 10,
+    });
+    const result = process.run(command, controller.signal);
+    child.stdout.write("123456");
+    child.stderr.write("abcdef");
+    await Promise.resolve();
+
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(10);
+
+    await expect(result).resolves.toEqual({
+      kind: "cancelled",
+      stdout: "3456",
+      stderr: "cdef",
+    });
+  });
+
+  it("returns bounded tails when a cancelled child reports an error", async () => {
+    const child = new FakeChildProcess();
+    const controller = new AbortController();
+    const process = new FoundryTestAdapterProcess({
+      spawnProcess: () => child.asChildProcess(),
+      outputTailLimit: 3,
+    });
+    const result = process.run(command, controller.signal);
+    child.stdout.write("observer-still-receives-this");
+    await Promise.resolve();
+
+    controller.abort();
+    child.emit("error", new Error("terminated"));
+
+    await expect(result).resolves.toEqual({
+      kind: "cancelled",
+      stdout: "his",
+      stderr: "",
+    });
+  });
+
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects invalid output tail limit %s synchronously",
+    (outputTailLimit) => {
+      expect(
+        () => new FoundryTestAdapterProcess({ outputTailLimit }),
+      ).toThrow("outputTailLimit must be a positive integer");
+    },
+  );
+
   it.each(["ENOENT", "EACCES", "ENOTDIR", "ERR_INVALID_ARG_VALUE"])(
     "maps synchronous %s process creation errors to missing engine",
     async (code) => {

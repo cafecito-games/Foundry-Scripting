@@ -48,6 +48,14 @@ export interface FoundryTapCompletion {
   readonly bailoutMessage?: string;
 }
 
+export interface FoundryTapParserBufferInstrumentation {
+  readonly onCopy: (kind: "bytes" | "text", units: number) => void;
+  readonly onBuffer: (
+    bufferedBytes: number,
+    bufferedTextCodeUnits: number,
+  ) => void;
+}
+
 export type FoundryTapProcessContext =
   | { readonly kind: "exited"; readonly exitCode: number }
   | { readonly kind: "cancelled"; readonly exitCode?: number | null }
@@ -94,8 +102,10 @@ export class FoundryTap13Parser {
     ignoreBOM: true,
   });
   private phase: ParserPhase = "header";
-  private byteSuffix = new Uint8Array();
-  private textSuffix = "";
+  private byteFragments: Uint8Array[] = [];
+  private bufferedByteLength = 0;
+  private textFragments: string[] = [];
+  private bufferedTextLength = 0;
   private firstText = true;
   private terminalLf = false;
   private lineEndingValid = true;
@@ -119,6 +129,7 @@ export class FoundryTap13Parser {
     private readonly expectedLeaves: readonly FoundryTapPlanLeaf[] | undefined,
     private readonly onPoint: (point: FoundryTapPoint) => void,
     selectionInvalid = false,
+    private readonly instrumentation?: FoundryTapParserBufferInstrumentation,
   ) {
     if (selectionInvalid) {
       this.add("report.selection", "The requested selection is invalid.");
@@ -129,30 +140,27 @@ export class FoundryTap13Parser {
     if (this.decoderFailed || bytes.length === 0) {
       return;
     }
-    const combined = new Uint8Array(this.byteSuffix.length + bytes.length);
-    combined.set(this.byteSuffix);
-    combined.set(bytes, this.byteSuffix.length);
     let start = 0;
-    for (let index = 0; index < combined.length; index += 1) {
-      if (combined[index] !== 0x0a) {
+    for (let index = 0; index < bytes.length; index += 1) {
+      if (bytes[index] !== 0x0a) {
         continue;
       }
-      if (!this.decode(combined.subarray(start, index + 1))) {
-        this.byteSuffix = new Uint8Array();
+      this.appendByteFragment(bytes.subarray(start, index + 1));
+      if (!this.decode(this.takeByteFragments())) {
+        this.clearByteFragments();
         return;
       }
       start = index + 1;
     }
-    this.byteSuffix = combined.slice(start);
+    this.appendByteFragment(bytes.subarray(start));
   }
 
   finish(context: FoundryTapProcessContext): FoundryTapCompletion {
     if (context.kind === "cancelled") {
       return this.finishCancellation(context.exitCode);
     }
-    if (this.byteSuffix.length > 0) {
-      this.decode(this.byteSuffix);
-      this.byteSuffix = new Uint8Array();
+    if (this.bufferedByteLength > 0) {
+      this.decode(this.takeByteFragments());
     }
     if (!this.decoderFailed) {
       let decoded: string;
@@ -167,9 +175,8 @@ export class FoundryTap13Parser {
       this.acceptDecoded(decoded);
     }
 
-    if (!this.decoderFailed && this.textSuffix.length > 0) {
-      const finalLine = this.textSuffix;
-      this.textSuffix = "";
+    if (!this.decoderFailed && this.bufferedTextLength > 0) {
+      const finalLine = this.takeTextFragments();
       this.lineNumber += 1;
       this.acceptLine(finalLine);
     }
@@ -247,17 +254,91 @@ export class FoundryTap13Parser {
       );
     }
     this.terminalLf = text.endsWith("\n");
-    this.textSuffix += text;
-    while (true) {
-      const newline = this.textSuffix.indexOf("\n");
+    let start = 0;
+    while (start < text.length) {
+      const newline = text.indexOf("\n", start);
       if (newline < 0) {
-        break;
+        this.appendTextFragment(text.slice(start), text.length - start);
+        return;
       }
-      const line = this.textSuffix.slice(0, newline);
-      this.textSuffix = this.textSuffix.slice(newline + 1);
+      this.appendTextFragment(text.slice(start, newline), newline - start);
+      const line = this.takeTextFragments();
       this.lineNumber += 1;
       this.acceptLine(line.endsWith("\r") ? line.slice(0, -1) : line);
+      start = newline + 1;
     }
+  }
+
+  private appendByteFragment(fragment: Uint8Array): void {
+    if (fragment.length === 0) {
+      return;
+    }
+    const owned = fragment.slice();
+    this.instrumentation?.onCopy("bytes", owned.length);
+    this.byteFragments.push(owned);
+    this.bufferedByteLength += owned.length;
+    this.recordBuffered();
+  }
+
+  private takeByteFragments(): Uint8Array {
+    const length = this.bufferedByteLength;
+    const fragments = this.byteFragments;
+    this.clearByteFragments();
+    if (fragments.length === 1) {
+      return fragments[0];
+    }
+    const combined = new Uint8Array(length);
+    let offset = 0;
+    for (const fragment of fragments) {
+      combined.set(fragment, offset);
+      offset += fragment.length;
+    }
+    this.instrumentation?.onCopy("bytes", length);
+    this.instrumentation?.onBuffer(
+      length * 2,
+      this.bufferedTextLength,
+    );
+    return combined;
+  }
+
+  private clearByteFragments(): void {
+    this.byteFragments = [];
+    this.bufferedByteLength = 0;
+    this.recordBuffered();
+  }
+
+  private appendTextFragment(fragment: string, copiedUnits: number): void {
+    if (fragment.length === 0) {
+      return;
+    }
+    this.instrumentation?.onCopy("text", copiedUnits);
+    this.textFragments.push(fragment);
+    this.bufferedTextLength += fragment.length;
+    this.recordBuffered();
+  }
+
+  private takeTextFragments(): string {
+    const length = this.bufferedTextLength;
+    const fragments = this.textFragments;
+    this.textFragments = [];
+    this.bufferedTextLength = 0;
+    this.recordBuffered();
+    if (fragments.length === 0) {
+      return "";
+    }
+    if (fragments.length === 1) {
+      return fragments[0];
+    }
+    this.instrumentation?.onCopy("text", length);
+    this.instrumentation?.onBuffer(this.bufferedByteLength, length * 2);
+    return fragments.join("");
+  }
+
+  private recordBuffered(): void {
+    this.instrumentation?.onBuffer(
+      this.bufferedByteLength,
+      this.bufferedTextLength,
+    );
   }
 
   private acceptLine(line: string): void {
@@ -578,7 +659,11 @@ export class FoundryTap13Parser {
     if (this.decoderFailed) {
       return;
     }
-    if (!this.lineEndingValid || !this.terminalLf || this.textSuffix.length > 0) {
+    if (
+      !this.lineEndingValid ||
+      !this.terminalLf ||
+      this.bufferedTextLength > 0
+    ) {
       this.addOnce("report.line_ending", "The report must end with a terminal LF.");
       this.addOnce("report.incomplete", "The report is not completely flushed.");
     }
@@ -655,7 +740,7 @@ export class FoundryTap13Parser {
       this.lineEndingValid &&
       this.plan !== undefined &&
       this.terminalLf &&
-      this.textSuffix.length === 0 &&
+      this.bufferedTextLength === 0 &&
       !this.stoppedEarly &&
       this.pointCount >= this.plan
     );

@@ -24,7 +24,9 @@ export interface TestAdapterProcessResult {
   readonly kind: "exited" | "cancelled";
   readonly exitCode?: number;
   readonly signal?: NodeJS.Signals;
+  /** Newest bounded diagnostic tail, not a complete process transcript. */
   readonly stdout: string;
+  /** Newest bounded diagnostic tail, not a complete process transcript. */
   readonly stderr: string;
 }
 
@@ -37,6 +39,7 @@ export interface FoundryTestAdapterProcessOptions {
   readonly onOutput?: (text: string, stream: "stdout" | "stderr") => void;
   readonly terminationGraceMs?: number;
   readonly shutdownDeadlineMs?: number;
+  readonly outputTailLimit?: number;
 }
 
 interface ActiveTestAdapterProcess {
@@ -49,15 +52,21 @@ export class FoundryTestAdapterProcess {
   private readonly onOutput;
   private readonly terminationGraceMs;
   private readonly shutdownDeadlineMs;
+  private readonly outputTailLimit;
   private readonly active = new Set<ActiveTestAdapterProcess>();
   private stopped = false;
   private stopPromise: Promise<void> | undefined;
 
   constructor(options: FoundryTestAdapterProcessOptions = {}) {
+    const outputTailLimit = options.outputTailLimit ?? 65_536;
+    if (!Number.isInteger(outputTailLimit) || outputTailLimit <= 0) {
+      throw new TypeError("outputTailLimit must be a positive integer.");
+    }
     this.spawnProcess = options.spawnProcess ?? spawn;
     this.onOutput = options.onOutput;
     this.terminationGraceMs = options.terminationGraceMs ?? 2_000;
     this.shutdownDeadlineMs = options.shutdownDeadlineMs ?? 5_000;
+    this.outputTailLimit = outputTailLimit;
   }
 
   run(
@@ -88,8 +97,8 @@ export class FoundryTestAdapterProcess {
     }
     const operationSignal = controller.signal;
     const completion = new Promise<TestAdapterProcessResult>((resolve, reject) => {
-      let stdout = "";
-      let stderr = "";
+      const stdout = new ChunkedTextTail(this.outputTailLimit);
+      const stderr = new ChunkedTextTail(this.outputTailLimit);
       let cancelled = false;
       let settled = false;
       let terminationTimer: ReturnType<typeof setTimeout> | undefined;
@@ -97,13 +106,13 @@ export class FoundryTestAdapterProcess {
 
       const onStdout = (data: Buffer | string): void => {
         const text = data.toString();
-        stdout += text;
+        stdout.append(text);
         this.onOutput?.(text, "stdout");
         onOutput?.(text, "stdout");
       };
       const onStderr = (data: Buffer | string): void => {
         const text = data.toString();
-        stderr += text;
+        stderr.append(text);
         this.onOutput?.(text, "stderr");
         onOutput?.(text, "stderr");
       };
@@ -141,7 +150,7 @@ export class FoundryTestAdapterProcess {
       };
       const onError = (error: Error): void => {
         if (cancelled) {
-          finish(cancelledResult(stdout, stderr));
+          finish(cancelledResult(stdout.value(), stderr.value()));
         } else {
           fail(error);
         }
@@ -152,13 +161,13 @@ export class FoundryTestAdapterProcess {
       ): void => {
         finish(
           cancelled
-            ? cancelledResult(stdout, stderr)
+            ? cancelledResult(stdout.value(), stderr.value())
             : {
                 kind: "exited",
                 ...(code === null ? {} : { exitCode: code }),
                 ...(closeSignal === null ? {} : { signal: closeSignal }),
-                stdout,
-                stderr,
+                stdout: stdout.value(),
+                stderr: stderr.value(),
               },
         );
       };
@@ -174,7 +183,7 @@ export class FoundryTestAdapterProcess {
           }
         }, this.terminationGraceMs);
         shutdownTimer = setTimeout(() => {
-          finish(cancelledResult(stdout, stderr));
+          finish(cancelledResult(stdout.value(), stderr.value()));
         }, this.shutdownDeadlineMs);
         terminationTimer.unref?.();
         shutdownTimer.unref?.();
@@ -211,6 +220,75 @@ export class FoundryTestAdapterProcess {
       operations.map((operation) => operation.completion),
     ).then(() => undefined);
     return this.stopPromise;
+  }
+}
+
+class ChunkedTextTail {
+  private chunks: string[] = [];
+  private head = 0;
+  private headOffset = 0;
+  private retainedLength = 0;
+
+  constructor(private readonly limit: number) {}
+
+  append(text: string): void {
+    if (text.length === 0) {
+      return;
+    }
+    if (text.length >= this.limit) {
+      this.chunks = [text.slice(-this.limit)];
+      this.head = 0;
+      this.headOffset = 0;
+      this.retainedLength = this.limit;
+      return;
+    }
+
+    this.chunks.push(text);
+    this.retainedLength += text.length;
+    let discard = this.retainedLength - this.limit;
+    while (discard > 0) {
+      const chunk = this.chunks[this.head];
+      if (chunk === undefined) {
+        throw new Error("Output tail accounting became inconsistent.");
+      }
+      const available = chunk.length - this.headOffset;
+      if (discard >= available) {
+        discard -= available;
+        this.retainedLength -= available;
+        this.head += 1;
+        this.headOffset = 0;
+      } else {
+        this.headOffset += discard;
+        this.retainedLength -= discard;
+        discard = 0;
+      }
+    }
+    this.compactDiscardedChunks();
+  }
+
+  value(): string {
+    if (this.retainedLength === 0) {
+      return "";
+    }
+    const first = this.chunks[this.head];
+    if (first === undefined) {
+      throw new Error("Output tail accounting became inconsistent.");
+    }
+    if (this.head === this.chunks.length - 1) {
+      return first.slice(this.headOffset);
+    }
+    return [
+      first.slice(this.headOffset),
+      ...this.chunks.slice(this.head + 1),
+    ].join("");
+  }
+
+  private compactDiscardedChunks(): void {
+    if (this.head < 64 || this.head * 2 < this.chunks.length) {
+      return;
+    }
+    this.chunks = this.chunks.slice(this.head);
+    this.head = 0;
   }
 }
 
