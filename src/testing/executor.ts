@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -23,6 +23,10 @@ import {
   type FoundryTapPlanLeaf,
   type FoundryTapPoint,
 } from "./report.js";
+import {
+  IncrementalReportReader,
+  type ReportFileAccess,
+} from "./report-reader.js";
 
 export interface TestExecutionRequest extends TestAdapterNegotiationRequest {
   readonly project: string;
@@ -47,7 +51,7 @@ export interface FoundryTestExecutorOptions {
     signal: AbortSignal,
     onOutput?: (text: string, stream: "stdout" | "stderr") => void,
   ) => Promise<TestAdapterProcessResult>;
-  readonly readArtifact?: (artifactPath: string) => Promise<Buffer>;
+  readonly reportFileAccess?: ReportFileAccess;
   readonly makeTemporaryDirectory?: (prefix: string) => Promise<string>;
   readonly removeTemporaryDirectory?: (directory: string) => Promise<void>;
   readonly waitForPoll?: () => Promise<void>;
@@ -59,7 +63,7 @@ export interface FoundryTestExecutorOptions {
 
 export class FoundryTestExecutor {
   private readonly runProcess;
-  private readonly readArtifact;
+  private readonly reportFileAccess;
   private readonly makeTemporaryDirectory;
   private readonly removeTemporaryDirectory;
   private readonly waitForPoll;
@@ -79,7 +83,7 @@ export class FoundryTestExecutor {
     } else {
       this.runProcess = options.runProcess;
     }
-    this.readArtifact = options.readArtifact ?? readFile;
+    this.reportFileAccess = options.reportFileAccess;
     this.makeTemporaryDirectory = options.makeTemporaryDirectory ?? mkdtemp;
     this.removeTemporaryDirectory =
       options.removeTemporaryDirectory ??
@@ -115,10 +119,14 @@ export class FoundryTestExecutor {
       onUserCancellation();
     }
     let processPromise: Promise<TestAdapterProcessResult> | undefined;
+    const reportReader = new IncrementalReportReader(
+      reportPath,
+      this.reportFileAccess,
+    );
     try {
       const command = this.createCommand(request, reportPath);
       const parser = new FoundryTap13Parser(request.leaves, observer.onPoint);
-      let consumed: Buffer = Buffer.alloc(0);
+      let consumedBytes = 0;
       let reportReady = false;
       let settled = false;
       const readinessStartedAt = this.now();
@@ -129,10 +137,12 @@ export class FoundryTestExecutor {
       ).finally(() => {
         settled = true;
       });
+      void processPromise.catch(() => undefined);
 
       while (!settled) {
-        consumed = await this.readNewBytes(reportPath, consumed, parser, false);
-        reportReady ||= consumed.length > 0;
+        const read = await reportReader.readAvailable((chunk) => parser.push(chunk));
+        consumedBytes = read.totalBytes;
+        reportReady ||= consumedBytes > 0;
         if (
           !reportReady &&
           cause === undefined &&
@@ -153,16 +163,23 @@ export class FoundryTestExecutor {
       }
 
       const processResult = await processPromise;
-      consumed = await this.readNewBytes(
-        reportPath,
-        consumed,
-        parser,
-        true,
+      const allowMissing =
         processResult.kind === "cancelled" ||
           cause !== undefined ||
           isAbnormalProcessExit(processResult) ||
-          (processResult.exitCode !== undefined && processResult.exitCode !== 0),
-      );
+          (processResult.exitCode !== undefined && processResult.exitCode !== 0);
+      const finalRead = await reportReader.readAvailable((chunk) => parser.push(chunk));
+      consumedBytes = finalRead.totalBytes;
+      if (!finalRead.present) {
+        if (!allowMissing) {
+          throw missingReportFailure();
+        }
+      } else {
+        const verification = await reportReader.verifyFinal();
+        if (!verification.present && !allowMissing) {
+          throw missingReportFailure();
+        }
+      }
       if (cause === "readiness_timeout") {
         throw new TestAdapterFailure(
           "readiness_timeout",
@@ -181,7 +198,7 @@ export class FoundryTestExecutor {
         processResult.kind === "exited" &&
         processResult.exitCode !== undefined &&
         processResult.exitCode !== 0 &&
-        consumed.length === 0
+        consumedBytes === 0
       ) {
         throw createProcessCrashFailure("execution", processResult);
       }
@@ -205,13 +222,14 @@ export class FoundryTestExecutor {
     } finally {
       signal.removeEventListener("abort", onUserCancellation);
       try {
+        await reportReader.close();
+      } catch (error) {
+        this.reportCleanupError(error, temporaryDirectory);
+      }
+      try {
         await this.removeTemporaryDirectory(temporaryDirectory);
       } catch (error) {
-        try {
-          this.onCleanupError?.(error, temporaryDirectory);
-        } catch {
-          // Cleanup diagnostics must not replace the execution outcome.
-        }
+        this.reportCleanupError(error, temporaryDirectory);
       }
     }
   }
@@ -255,47 +273,18 @@ export class FoundryTestExecutor {
     }
   }
 
-  private async readNewBytes(
-    reportPath: string,
-    consumed: Buffer,
-    parser: FoundryTap13Parser,
-    final: boolean,
-    allowMissing = false,
-  ): Promise<Buffer> {
-    let bytes: Buffer;
+  private reportCleanupError(error: unknown, directory: string): void {
     try {
-      bytes = await this.readArtifact(reportPath);
-    } catch (error) {
-      if (errorCode(error) === "ENOENT" && (!final || allowMissing)) {
-        return consumed;
-      }
-      throw new TestAdapterFailure(
-        "report_read_failed",
-        errorCode(error) === "ENOENT"
-          ? "The Foundry test adapter execution report does not exist."
-          : "Unable to read the Foundry test adapter execution report.",
-        { cause: error },
-      );
+      this.onCleanupError?.(error, directory);
+    } catch {
+      // Cleanup diagnostics must not replace the execution outcome.
     }
-    if (
-      bytes.length < consumed.length ||
-      !bytes.subarray(0, consumed.length).equals(consumed)
-    ) {
-      throw new TestAdapterFailure(
-        "malformed_report",
-        "The Foundry test adapter execution report changed previously consumed bytes.",
-      );
-    }
-    if (bytes.length > consumed.length) {
-      parser.push(bytes.subarray(consumed.length));
-    }
-    return Buffer.from(bytes);
   }
 }
 
-function errorCode(error: unknown): string | undefined {
-  if (typeof error !== "object" || error === null || !("code" in error)) {
-    return undefined;
-  }
-  return String(error.code);
+function missingReportFailure(): TestAdapterFailure {
+  return new TestAdapterFailure(
+    "report_read_failed",
+    "The Foundry test adapter execution report does not exist.",
+  );
 }
