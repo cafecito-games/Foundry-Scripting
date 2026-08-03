@@ -33,6 +33,7 @@ import {
   FoundryTestAdapterNegotiator,
   TestAdapterFailure,
 } from "./testing/adapter.js";
+import type { TestAdapterCommand } from "./testing/command.js";
 import { FoundryTestAdapterDiscoverer } from "./testing/discoverer.js";
 import {
   FoundryTestDebugExecutor,
@@ -40,7 +41,10 @@ import {
 } from "./testing/debug-executor.js";
 import { FoundryTestExecutor } from "./testing/executor.js";
 import { FoundryTestExplorer } from "./testing/explorer.js";
-import { FoundryTestAdapterProcess } from "./testing/process.js";
+import {
+  FoundryTestAdapterProcess,
+  type TestAdapterProcessResult,
+} from "./testing/process.js";
 import { FoundryTestRunProfile } from "./testing/profile.js";
 import {
   TestingRefreshCoordinator,
@@ -93,13 +97,26 @@ const CONNECTION_CONFIGURATION_SECTIONS = [
   "foundryScript.projectPath",
 ] as const;
 
-function isNativeWorkspaceEligible(): boolean {
-  return (
-    classifyNativeWorkspaceEligibility(
-      vscode.workspace.isTrusted,
-      vscode.workspace.workspaceFolders?.map((folder) => folder.uri.scheme),
-    ).kind === "eligible"
+function currentNativeWorkspaceEligibility() {
+  return classifyNativeWorkspaceEligibility(
+    vscode.workspace.isTrusted,
+    vscode.workspace.workspaceFolders?.map((folder) => folder.uri.scheme),
   );
+}
+
+function isNativeWorkspaceEligible(): boolean {
+  return currentNativeWorkspaceEligibility().kind === "eligible";
+}
+
+function unsupportedTestingWorkspaceFailure(): TestAdapterFailure {
+  const eligibility = currentNativeWorkspaceEligibility();
+  const message =
+    eligibility.kind === "restricted"
+      ? "Foundry Test Explorer requires workspace trust."
+      : eligibility.kind === "unsupported_scheme"
+        ? `Workspace scheme "${eligibility.scheme}" is unsupported because native Foundry tooling requires a local file workspace.`
+        : "Foundry Test Explorer is unavailable in the current workspace.";
+  return new TestAdapterFailure("invalid_project", message);
 }
 
 function readConnectionSettings(): ConnectionSettings {
@@ -216,22 +233,31 @@ function registerTestingRuntime(
   const process = new FoundryTestAdapterProcess({
     onOutput: (text) => output.append(text),
   });
+  const runProcess = (
+    command: TestAdapterCommand,
+    signal: AbortSignal,
+    onOutput?: (text: string, stream: "stdout" | "stderr") => void,
+  ): Promise<TestAdapterProcessResult> =>
+    isNativeWorkspaceEligible()
+      ? onOutput === undefined
+        ? process.run(command, signal)
+        : process.run(command, signal, onOutput)
+      : Promise.reject(unsupportedTestingWorkspaceFailure());
   const onCleanupError = (error: unknown, directory: string): void => {
     output.appendLine(
       `Unable to remove test adapter temporary directory ${directory}: ${error instanceof Error ? error.message : String(error)}`,
     );
   };
   const negotiator = new FoundryTestAdapterNegotiator({
-    runProcess: (command, signal) => process.run(command, signal),
+    runProcess,
     onCleanupError,
   });
   const discoverer = new FoundryTestAdapterDiscoverer({
-    runProcess: (command, signal) => process.run(command, signal),
+    runProcess,
     onCleanupError,
   });
   const executor = new FoundryTestExecutor({
-    runProcess: (command, signal, onOutput) =>
-      process.run(command, signal, onOutput),
+    runProcess,
     onCleanupError,
   });
   const debugMessageListeners = new Set<
@@ -262,7 +288,9 @@ function registerTestingRuntime(
   );
   const debugExecutor = new FoundryTestDebugExecutor({
     startDebugging: (configuration, debugOptions) =>
-      vscode.debug.startDebugging(undefined, configuration, debugOptions),
+      isNativeWorkspaceEligible()
+        ? vscode.debug.startDebugging(undefined, configuration, debugOptions)
+        : Promise.resolve(false),
     stopDebugging: (session) =>
       vscode.debug.stopDebugging(session as vscode.DebugSession),
     onDidStartDebugSession: (listener) =>

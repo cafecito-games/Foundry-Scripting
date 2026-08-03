@@ -182,6 +182,7 @@ const extensionMock = vi.hoisted(() => {
   registerDebugAdapterTrackerFactory: vi.fn(),
   onDidStartDebugSession: vi.fn(),
   onDidTerminateDebugSession: vi.fn(),
+  startDebugging: vi.fn(),
   stopDebugging: vi.fn(),
   resolveProject: vi.fn(),
   configurationChangeHandler: undefined as
@@ -231,6 +232,10 @@ const extensionMock = vi.hoisted(() => {
   testingExecute: vi.fn(),
   testingDebugExecutorOptions: undefined as
     | {
+        startDebugging: (
+          configuration: unknown,
+          options: unknown,
+        ) => PromiseLike<boolean>;
         onDidStartDebugSession: (listener: (session: unknown) => void) => unknown;
         onDidTerminateDebugSession: (listener: (session: unknown) => void) => unknown;
       }
@@ -324,6 +329,7 @@ vi.mock("vscode", () => ({
       extensionMock.registerDebugAdapterTrackerFactory,
     onDidStartDebugSession: extensionMock.onDidStartDebugSession,
     onDidTerminateDebugSession: extensionMock.onDidTerminateDebugSession,
+    startDebugging: extensionMock.startDebugging,
     stopDebugging: extensionMock.stopDebugging,
   },
   DebugAdapterServer: class {
@@ -516,6 +522,8 @@ describe("extension entry point", () => {
     extensionMock.onDidTerminateDebugSession.mockReturnValue(
       extensionMock.debugTerminationDisposable,
     );
+    extensionMock.startDebugging.mockReset();
+    extensionMock.startDebugging.mockResolvedValue(true);
     extensionMock.stopDebugging.mockReset();
     extensionMock.stopDebugging.mockResolvedValue(true);
     extensionMock.resolveProject.mockReset();
@@ -1896,6 +1904,60 @@ describe("extension entry point", () => {
       await Promise.resolve();
     },
   );
+
+  it("rechecks workspace support at the Foundry test process boundary", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game", scheme: "file" },
+    });
+    extensionMock.testingProcessRun.mockResolvedValue({
+      kind: "exited",
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+    });
+    await activate(createContext());
+    const runProcesses = [
+      extensionMock.testingNegotiatorOptions?.runProcess,
+      extensionMock.testingDiscovererOptions?.runProcess,
+      extensionMock.testingExecutorOptions?.runProcess,
+    ];
+
+    extensionMock.workspaceFolders.splice(0, 1, {
+      uri: { fsPath: "/workspace/game", scheme: "vscode-vfs" },
+    });
+
+    for (const runProcess of runProcesses) {
+      await expect(
+        runProcess?.(
+          {
+            command: "foundry",
+            args: ["project", "test"],
+            cwd: "/workspace/game",
+          },
+          new AbortController().signal,
+        ),
+      ).rejects.toMatchObject({ kind: "invalid_project" });
+    }
+    expect(extensionMock.testingProcessRun).not.toHaveBeenCalled();
+  });
+
+  it("rechecks workspace support at the Foundry test debug boundary", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game", scheme: "file" },
+    });
+    await activate(createContext());
+    const startDebugging =
+      extensionMock.testingDebugExecutorOptions?.startDebugging;
+
+    extensionMock.workspaceFolders.splice(0, 1, {
+      uri: { fsPath: "/workspace/game", scheme: "vscode-vfs" },
+    });
+
+    await expect(startDebugging?.({}, {})).resolves.toBe(false);
+    expect(extensionMock.startDebugging).not.toHaveBeenCalled();
+  });
 
   it("passes the original Debug request to one DAP execution without the ordinary executor", async () => {
     extensionMock.configuration.set("lsp.mode", "off");

@@ -5,6 +5,7 @@ import {
   createWorkspaceProjectResolver,
   type ResolveWorkspaceProject,
 } from "../project/workspace.js";
+import { classifyNativeWorkspaceEligibility } from "../workspace-support.js";
 import {
   FOUNDRY_TASK_KINDS,
   FoundryTaskConfigurationError,
@@ -133,6 +134,12 @@ class FoundryTaskTerminal implements vscode.Pseudoterminal {
         this.closeEmitter.fire(1);
         return;
       }
+      const workspaceFailure = currentWorkspaceFailure();
+      if (workspaceFailure !== undefined) {
+        this.reportProjectFailure(workspaceFailure);
+        this.closeEmitter.fire(1);
+        return;
+      }
       const command = createFoundryTaskCommand({
         kind: this.kind,
         enginePath: configuration.get("enginePath", "foundry"),
@@ -226,6 +233,33 @@ class FoundryTaskTerminal implements vscode.Pseudoterminal {
       return 1;
     }
   }
+}
+
+function currentWorkspaceFailure(): ProjectResolutionFailure | undefined {
+  const folders = vscode.workspace.workspaceFolders;
+  const eligibility = classifyNativeWorkspaceEligibility(
+    vscode.workspace.isTrusted,
+    folders?.map((folder) => folder.uri.scheme),
+  );
+  if (eligibility.kind === "restricted") {
+    return {
+      kind: "unsupported_workspace",
+      message: "Workspace trust is required before running Foundry tasks.",
+    };
+  }
+  if (eligibility.kind === "unsupported_scheme") {
+    return {
+      kind: "unsupported_workspace",
+      message: `Workspace scheme "${eligibility.scheme}" is unsupported because native Foundry tooling requires a local file workspace.`,
+    };
+  }
+  if (folders?.[0] === undefined) {
+    return {
+      kind: "missing_workspace",
+      message: "Open a workspace folder before using Foundry tooling.",
+    };
+  }
+  return undefined;
 }
 
 function isFoundryTaskKind(value: unknown): value is FoundryTaskKind {
