@@ -73,8 +73,15 @@ export class IncrementalReportReader {
     }
 
     const handleMetadata = await this.ensureHandle(metadata);
-    this.assertCurrentIdentity(metadata, handleMetadata);
-    this.assertNotTruncated(metadata.size);
+    if (handleMetadata === undefined) {
+      return { present: false, bytesRead: 0, totalBytes: this.offset };
+    }
+    const currentPathMetadata = await this.pathMetadata();
+    if (currentPathMetadata === undefined) {
+      return { present: false, bytesRead: 0, totalBytes: this.offset };
+    }
+    this.assertCurrentIdentity(currentPathMetadata, handleMetadata);
+    this.assertNotTruncated(currentPathMetadata.size);
     this.assertNotTruncated(handleMetadata.size);
 
     const startedAt = this.offset;
@@ -82,7 +89,7 @@ export class IncrementalReportReader {
     while (this.offset < targetSize) {
       const requested = Math.min(REPORT_READ_CHUNK_SIZE, targetSize - this.offset);
       const buffer = Buffer.allocUnsafe(requested);
-      const { bytesRead } = await this.read(buffer, requested, this.offset);
+      const { bytesRead } = await this.read(buffer, 0, requested, this.offset);
       if (bytesRead === 0) {
         await this.rejectUnexpectedEnd(targetSize);
       }
@@ -106,8 +113,15 @@ export class IncrementalReportReader {
       return { present: false };
     }
     const handleMetadata = await this.ensureHandle(pathBefore);
-    this.assertCurrentIdentity(pathBefore, handleMetadata);
-    this.assertExactFinalSize(pathBefore.size);
+    if (handleMetadata === undefined) {
+      return { present: false };
+    }
+    const currentPathMetadata = await this.pathMetadata();
+    if (currentPathMetadata === undefined) {
+      return { present: false };
+    }
+    this.assertCurrentIdentity(currentPathMetadata, handleMetadata);
+    this.assertExactFinalSize(currentPathMetadata.size);
     this.assertExactFinalSize(handleMetadata.size);
 
     let position = 0;
@@ -115,17 +129,26 @@ export class IncrementalReportReader {
     while (position < this.offset) {
       const requested = Math.min(REPORT_READ_CHUNK_SIZE, this.offset - position);
       const buffer = Buffer.allocUnsafe(requested);
-      const { bytesRead } = await this.read(buffer, requested, position);
-      if (bytesRead !== requested) {
-        await this.rejectUnexpectedEnd(this.offset);
+      let filled = 0;
+      while (filled < requested) {
+        const { bytesRead } = await this.read(
+          buffer,
+          filled,
+          requested - filled,
+          position + filled,
+        );
+        if (bytesRead === 0) {
+          await this.rejectUnexpectedEnd(this.offset);
+        }
+        filled += bytesRead;
       }
       const digest = createHash("sha256")
-        .update(buffer.subarray(0, bytesRead))
+        .update(buffer)
         .digest();
       if (!digest.equals(this.expectedDigest(block))) {
         throw changedBytesFailure();
       }
-      position += bytesRead;
+      position += requested;
       block += 1;
     }
 
@@ -154,24 +177,27 @@ export class IncrementalReportReader {
 
   private async ensureHandle(
     initialPathMetadata: ReportFileMetadata,
-  ): Promise<ReportFileMetadata> {
+  ): Promise<ReportFileMetadata | undefined> {
     if (this.handle !== undefined) {
       return this.handleMetadata();
     }
 
     let pathMetadata = initialPathMetadata;
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      fileIdentity(pathMetadata);
       let candidate: ReportFileHandle;
       try {
         candidate = await this.files.open(this.reportPath);
       } catch (error) {
-        if (errorCode(error) === "ENOENT" && attempt === 0) {
+        if (errorCode(error) === "ENOENT") {
           const retried = await this.pathMetadata();
           if (retried === undefined) {
-            throw reportReadFailure(error);
+            return undefined;
           }
-          pathMetadata = retried;
-          continue;
+          if (attempt === 0) {
+            pathMetadata = retried;
+            continue;
+          }
         }
         throw reportReadFailure(error);
       }
@@ -182,20 +208,33 @@ export class IncrementalReportReader {
         await candidate.close().catch(() => undefined);
         throw reportReadFailure(error);
       }
-      if (sameIdentity(pathMetadata, candidateMetadata)) {
+      let candidateIdentity: string;
+      try {
+        candidateIdentity = fileIdentity(candidateMetadata);
+      } catch (error) {
+        await candidate.close().catch(() => undefined);
+        throw error;
+      }
+      const confirmedPathMetadata = await this.pathMetadata();
+      if (confirmedPathMetadata === undefined) {
+        await candidate.close().catch(() => undefined);
+        return undefined;
+      }
+      let confirmedPathIdentity: string;
+      try {
+        confirmedPathIdentity = fileIdentity(confirmedPathMetadata);
+      } catch (error) {
+        await candidate.close().catch(() => undefined);
+        throw error;
+      }
+      if (confirmedPathIdentity === candidateIdentity) {
         this.handle = candidate;
-        this.identity = fileIdentity(candidateMetadata);
+        this.identity = candidateIdentity;
         return candidateMetadata;
       }
       await candidate.close().catch(() => undefined);
       if (attempt === 0) {
-        const retried = await this.pathMetadata();
-        if (retried === undefined) {
-          throw reportReadFailure(Object.assign(new Error("Report disappeared while opening."), {
-            code: "ENOENT",
-          }));
-        }
-        pathMetadata = retried;
+        pathMetadata = confirmedPathMetadata;
       }
     }
     throw new TestAdapterFailure(
@@ -225,11 +264,12 @@ export class IncrementalReportReader {
 
   private async read(
     buffer: Buffer,
+    offset: number,
     length: number,
     position: number,
   ): Promise<{ readonly bytesRead: number }> {
     try {
-      return await this.handle!.read(buffer, 0, length, position);
+      return await this.handle!.read(buffer, offset, length, position);
     } catch (error) {
       throw reportReadFailure(error);
     }
@@ -341,18 +381,39 @@ function reportReadFailure(cause: unknown): TestAdapterFailure {
   );
 }
 
-function sameIdentity(
-  left: ReportFileMetadata,
-  right: ReportFileMetadata,
-): boolean {
-  return fileIdentity(left) === fileIdentity(right);
+function fileIdentity(metadata: ReportFileMetadata): string {
+  const device = stableDevice(metadata.device);
+  const inode = stablePositive(metadata.inode);
+  if (inode !== undefined) {
+    return `inode:${device}:${inode}`;
+  }
+  if (!Number.isFinite(metadata.birthtimeMs) || metadata.birthtimeMs <= 0) {
+    throw identityFailure();
+  }
+  return `birth:${device}:${metadata.birthtimeMs}`;
 }
 
-function fileIdentity(metadata: ReportFileMetadata): string {
-  if (metadata.inode !== 0 && metadata.inode !== 0n) {
-    return `${String(metadata.device)}:${String(metadata.inode)}`;
+function stableDevice(value: number | bigint): string {
+  if (typeof value === "bigint") {
+    if (value >= 0n) return String(value);
+  } else if (Number.isFinite(value) && value >= 0) {
+    return String(value);
   }
-  return `birth:${metadata.birthtimeMs}`;
+  throw identityFailure();
+}
+
+function stablePositive(value: number | bigint): string | undefined {
+  if (typeof value === "bigint") {
+    return value > 0n ? String(value) : undefined;
+  }
+  return Number.isFinite(value) && value > 0 ? String(value) : undefined;
+}
+
+function identityFailure(): TestAdapterFailure {
+  return new TestAdapterFailure(
+    "report_read_failed",
+    "Unable to determine a stable identity for the Foundry test adapter execution report.",
+  );
 }
 
 function errorCode(error: unknown): string | undefined {

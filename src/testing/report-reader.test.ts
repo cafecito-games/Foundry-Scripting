@@ -24,6 +24,36 @@ describe("incremental report reader", () => {
     expect(files.contentBytesRead).toBe(0);
   });
 
+  it("returns absent when the path disappears between stat and open", async () => {
+    const files = new FakeReportFiles();
+    files.replace(Buffer.from("report"));
+    files.onOpen = () => {
+      files.onOpen = undefined;
+      files.hide();
+    };
+    const reader = new IncrementalReportReader("/run/report.tap", files);
+
+    await expect(reader.readAvailable(() => undefined)).resolves.toEqual({
+      present: false,
+      bytesRead: 0,
+      totalBytes: 0,
+    });
+    expect(files.opens).toBe(1);
+  });
+
+  it("returns absent when final verification loses the path between stat and open", async () => {
+    const files = new FakeReportFiles();
+    files.replace(Buffer.alloc(0));
+    files.onOpen = () => {
+      files.onOpen = undefined;
+      files.hide();
+    };
+    const reader = new IncrementalReportReader("/run/report.tap", files);
+
+    await expect(reader.verifyFinal()).resolves.toEqual({ present: false });
+    expect(files.opens).toBe(1);
+  });
+
   it("streams initial and appended ranges in chunks no larger than 64 KiB", async () => {
     const files = new FakeReportFiles();
     const initial = Buffer.alloc(REPORT_READ_CHUNK_SIZE * 2 + 17, 0x61);
@@ -65,6 +95,43 @@ describe("incremental report reader", () => {
     expect(files.pathStats).toBeGreaterThan(1);
   });
 
+  it("preserves a retained identity across temporary path disappearance", async () => {
+    const files = new FakeReportFiles();
+    files.replace(Buffer.from("stable"));
+    const reader = new IncrementalReportReader("/run/report.tap", files);
+    await reader.readAvailable(() => undefined);
+    files.hide();
+
+    await expect(reader.readAvailable(() => undefined)).resolves.toMatchObject({
+      present: false,
+      totalBytes: 6,
+    });
+    files.restore();
+    await expect(reader.readAvailable(() => undefined)).resolves.toMatchObject({
+      present: true,
+      bytesRead: 0,
+    });
+    await expect(reader.verifyFinal()).resolves.toEqual({ present: true });
+  });
+
+  it("retries a stat/open identity race before consuming content", async () => {
+    const files = new FakeReportFiles();
+    files.replace(Buffer.from("old"));
+    files.onOpen = () => {
+      files.onOpen = undefined;
+      files.replace(Buffer.from("new"));
+    };
+    const chunks: Buffer[] = [];
+    const reader = new IncrementalReportReader("/run/report.tap", files);
+
+    await expect(
+      reader.readAvailable((chunk) => chunks.push(Buffer.from(chunk))),
+    ).resolves.toMatchObject({ present: true, totalBytes: 3 });
+    expect(Buffer.concat(chunks).toString()).toBe("new");
+    expect(files.opens).toBe(1);
+    expect(files.closes).toBe(0);
+  });
+
   it("rejects truncation below the consumed offset", async () => {
     const files = new FakeReportFiles();
     files.replace(Buffer.from("TAP version 13\n"));
@@ -94,6 +161,41 @@ describe("incremental report reader", () => {
     });
     expect(files.reads).toHaveLength(reads);
   });
+
+  it("uses device plus birth time when inode identity is unavailable", async () => {
+    const files = new FakeReportFiles();
+    files.inode = 0;
+    files.birthtimeMs = 100;
+    files.device = 7;
+    files.replace(Buffer.from("first"));
+    const reader = new IncrementalReportReader("/run/report.tap", files);
+    await reader.readAvailable(() => undefined);
+    files.device = 8;
+    files.replace(Buffer.from("other"));
+
+    await expect(reader.readAvailable(() => undefined)).rejects.toMatchObject({
+      kind: "malformed_report",
+      message:
+        "The Foundry test adapter execution report was replaced after streaming began.",
+    });
+  });
+
+  it.each([0, Number.NaN, Number.POSITIVE_INFINITY])(
+    "fails closed for unusable fallback birth time %s",
+    async (birthtimeMs) => {
+      const files = new FakeReportFiles();
+      files.inode = 0;
+      files.birthtimeMs = birthtimeMs;
+      files.replace(Buffer.from("report"));
+      const reader = new IncrementalReportReader("/run/report.tap", files);
+
+      await expect(reader.readAvailable(() => undefined)).rejects.toMatchObject({
+        kind: "report_read_failed",
+        message:
+          "Unable to determine a stable identity for the Foundry test adapter execution report.",
+      });
+    },
+  );
 
   it("finds same-identity consumed-prefix mutation during final verification", async () => {
     const files = new FakeReportFiles();
@@ -127,6 +229,21 @@ describe("incremental report reader", () => {
       { position: REPORT_READ_CHUNK_SIZE, length: REPORT_READ_CHUNK_SIZE },
       { position: REPORT_READ_CHUNK_SIZE * 2, length: 31 },
     ]);
+  });
+
+  it("fills logical verification blocks across legal positive short reads", async () => {
+    const files = new FakeReportFiles();
+    const contents = Buffer.alloc(REPORT_READ_CHUNK_SIZE + 19, 0x64);
+    files.replace(contents);
+    files.maxBytesPerRead = 7;
+    const reader = new IncrementalReportReader("/run/report.tap", files);
+    await reader.readAvailable(() => undefined);
+    const streamedBytes = files.contentBytesRead;
+
+    await expect(reader.verifyFinal()).resolves.toEqual({ present: true });
+
+    expect(files.contentBytesRead - streamedBytes).toBe(contents.length);
+    expect(files.reads.some(({ length }) => length > 7)).toBe(true);
   });
 
   it("reports a final size race instead of verifying a stale prefix", async () => {
@@ -195,7 +312,11 @@ interface ReadCall {
 
 class FakeReportFiles implements ReportFileAccess {
   contents: Buffer | undefined;
+  private hiddenContents: Buffer | undefined;
   identity = 0;
+  device = 7;
+  inode: number | bigint | undefined;
+  birthtimeMs: number | undefined;
   pathStats = 0;
   opens = 0;
   closes = 0;
@@ -204,10 +325,13 @@ class FakeReportFiles implements ReportFileAccess {
   readonly reads: ReadCall[] = [];
   statError: Error | undefined;
   onRead: ((call: ReadCall) => void) | undefined;
+  onOpen: (() => void) | undefined;
+  maxBytesPerRead: number | undefined;
 
   replace(contents: Buffer): void {
     this.identity += 1;
     this.contents = Buffer.from(contents);
+    this.hiddenContents = undefined;
   }
 
   append(contents: Buffer): void {
@@ -231,6 +355,19 @@ class FakeReportFiles implements ReportFileAccess {
     contents.copy(this.contents, position);
   }
 
+  hide(): void {
+    this.hiddenContents = this.contents;
+    this.contents = undefined;
+  }
+
+  restore(): void {
+    if (this.hiddenContents === undefined) {
+      throw new Error("Cannot restore a visible fake report.");
+    }
+    this.contents = this.hiddenContents;
+    this.hiddenContents = undefined;
+  }
+
   stat(_path: string): Promise<ReportFileMetadata> {
     this.pathStats += 1;
     if (this.statError !== undefined) {
@@ -241,6 +378,7 @@ class FakeReportFiles implements ReportFileAccess {
 
   open(_path: string): Promise<ReportFileHandle> {
     this.opens += 1;
+    this.onOpen?.();
     const openedIdentity = this.identity;
     if (this.contents === undefined) {
       return Promise.reject(missing());
@@ -263,7 +401,11 @@ class FakeReportFiles implements ReportFileAccess {
         if (contents === undefined) return Promise.resolve({ bytesRead: 0 });
         const bytesRead = Math.max(
           0,
-          Math.min(length, contents.length - position),
+          Math.min(
+            length,
+            this.maxBytesPerRead ?? length,
+            contents.length - position,
+          ),
         );
         contents.copy(buffer, offset, position, position + bytesRead);
         this.contentBytesRead += bytesRead;
@@ -286,9 +428,9 @@ class FakeReportFiles implements ReportFileAccess {
     }
     return {
       size: contents.length,
-      device: 7,
-      inode: identity,
-      birthtimeMs: identity,
+      device: this.device,
+      inode: this.inode ?? identity,
+      birthtimeMs: this.birthtimeMs ?? identity,
     };
   }
 }
