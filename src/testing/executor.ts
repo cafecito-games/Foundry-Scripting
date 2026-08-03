@@ -20,6 +20,7 @@ import {
 import {
   FoundryTap13Parser,
   type FoundryTapCompletion,
+  type FoundryTapParserBufferInstrumentation,
   type FoundryTapPlanLeaf,
   type FoundryTapPoint,
 } from "./report.js";
@@ -52,6 +53,7 @@ export interface FoundryTestExecutorOptions {
     onOutput?: (text: string, stream: "stdout" | "stderr") => void,
   ) => Promise<TestAdapterProcessResult>;
   readonly reportFileAccess?: ReportFileAccess;
+  readonly parserInstrumentation?: FoundryTapParserBufferInstrumentation;
   readonly makeTemporaryDirectory?: (prefix: string) => Promise<string>;
   readonly removeTemporaryDirectory?: (directory: string) => Promise<void>;
   readonly waitForPoll?: () => Promise<void>;
@@ -64,6 +66,7 @@ export interface FoundryTestExecutorOptions {
 export class FoundryTestExecutor {
   private readonly runProcess;
   private readonly reportFileAccess;
+  private readonly parserInstrumentation;
   private readonly makeTemporaryDirectory;
   private readonly removeTemporaryDirectory;
   private readonly waitForPoll;
@@ -84,6 +87,7 @@ export class FoundryTestExecutor {
       this.runProcess = options.runProcess;
     }
     this.reportFileAccess = options.reportFileAccess;
+    this.parserInstrumentation = options.parserInstrumentation;
     this.makeTemporaryDirectory = options.makeTemporaryDirectory ?? mkdtemp;
     this.removeTemporaryDirectory =
       options.removeTemporaryDirectory ??
@@ -125,7 +129,12 @@ export class FoundryTestExecutor {
     );
     try {
       const command = this.createCommand(request, reportPath);
-      const parser = new FoundryTap13Parser(request.leaves, observer.onPoint);
+      const parser = new FoundryTap13Parser(
+        request.leaves,
+        observer.onPoint,
+        false,
+        this.parserInstrumentation,
+      );
       let consumedBytes = 0;
       let reportReady = false;
       let settled = false;
