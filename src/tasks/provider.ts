@@ -99,7 +99,10 @@ export function registerFoundryTaskProvider(
   context.subscriptions.push(
     vscode.tasks.registerTaskProvider(
       FOUNDRY_TASK_TYPE,
-      new FoundryTaskProvider({ diagnostics, resolveProject }),
+      new FoundryTaskProvider({
+        ...(diagnostics === undefined ? {} : { diagnostics }),
+        ...(resolveProject === undefined ? {} : { resolveProject }),
+      }),
     ),
   );
 }
@@ -270,7 +273,7 @@ function isFoundryTaskKind(value: unknown): value is FoundryTaskKind {
 }
 
 function taskLabel(kind: FoundryTaskKind): string {
-  return kind[0].toUpperCase() + kind.slice(1);
+  return kind.charAt(0).toUpperCase() + kind.slice(1);
 }
 
 async function showOpenSettingsError(

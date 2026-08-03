@@ -116,7 +116,7 @@ export function validateSemanticTokensResponse(
   ) {
     return { ok: false, reason: "result_id_invalid" };
   }
-  if (!Array.isArray(response.data)) {
+  if (!isUnknownArray(response.data)) {
     return { ok: false, reason: "data_not_array" };
   }
   if (response.data.length % 5 !== 0) {
@@ -125,22 +125,36 @@ export function validateSemanticTokensResponse(
 
   const modifierMask = 2 ** legend.tokenModifiers.length - 1;
   for (let index = 0; index < response.data.length; index += 5) {
-    const record = response.data.slice(index, index + 5);
-    if (!record.every(isUinteger)) {
+    const deltaLine = response.data[index];
+    const deltaStart = response.data[index + 1];
+    const length = response.data[index + 2];
+    const tokenType = response.data[index + 3];
+    const tokenModifiers = response.data[index + 4];
+    if (
+      !isUinteger(deltaLine) ||
+      !isUinteger(deltaStart) ||
+      !isUinteger(length) ||
+      !isUinteger(tokenType) ||
+      !isUinteger(tokenModifiers)
+    ) {
       return { ok: false, reason: "record_value_invalid" };
     }
-    if (record[2] === 0) {
+    if (length === 0) {
       return { ok: false, reason: "token_length_zero" };
     }
-    if (record[3] >= legend.tokenTypes.length) {
+    if (tokenType >= legend.tokenTypes.length) {
       return { ok: false, reason: "token_type_out_of_range" };
     }
-    if (record[4] > modifierMask) {
+    if (tokenModifiers > modifierMask) {
       return { ok: false, reason: "token_modifiers_out_of_range" };
     }
   }
 
   return { ok: true, value };
+}
+
+function isUnknownArray(value: unknown): value is unknown[] {
+  return Array.isArray(value);
 }
 
 function capabilityShape(value: unknown): string {
@@ -278,7 +292,7 @@ export class FoundrySemanticTokensFeature implements StaticFeature {
         range: capabilityShape(provider?.range),
       },
     );
-    capabilities.semanticTokensProvider = undefined;
+    delete capabilities.semanticTokensProvider;
   }
 
   initialize(): void {}

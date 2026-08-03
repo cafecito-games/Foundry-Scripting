@@ -109,7 +109,13 @@ function parseVersions(value: unknown): number[] {
   }
   const versions = value as number[];
   for (let index = 1; index < versions.length; index += 1) {
-    if (versions[index] <= versions[index - 1]) {
+    const current = versions[index];
+    const previous = versions[index - 1];
+    if (
+      current === undefined ||
+      previous === undefined ||
+      current <= previous
+    ) {
       malformed('"supported_versions" must be unique and strictly ascending.');
     }
   }

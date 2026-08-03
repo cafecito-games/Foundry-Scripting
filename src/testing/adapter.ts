@@ -174,7 +174,7 @@ export class FoundryTestAdapterNegotiator {
         throw error;
       }
       throw new TestAdapterFailure(error.kind, error.message, {
-        setting: error.setting,
+        ...(error.setting === undefined ? {} : { setting: error.setting }),
         cause: error,
       });
     }
@@ -191,7 +191,7 @@ export class FoundryTestAdapterNegotiator {
         throw error;
       }
       throw new TestAdapterFailure(error.kind, error.message, {
-        setting: error.setting,
+        ...(error.setting === undefined ? {} : { setting: error.setting }),
         cause: error,
       });
     }

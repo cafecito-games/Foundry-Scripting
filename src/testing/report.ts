@@ -285,7 +285,8 @@ export class FoundryTap13Parser {
     const fragments = this.byteFragments;
     this.clearByteFragments();
     if (fragments.length === 1) {
-      return fragments[0];
+      const fragment = fragments.at(0);
+      if (fragment !== undefined) return fragment;
     }
     const combined = new Uint8Array(length);
     let offset = 0;
@@ -327,7 +328,8 @@ export class FoundryTap13Parser {
       return "";
     }
     if (fragments.length === 1) {
-      return fragments[0];
+      const fragment = fragments.at(0);
+      if (fragment !== undefined) return fragment;
     }
     this.instrumentation?.onCopy("text", length);
     this.instrumentation?.onBuffer(this.bufferedByteLength, length * 2);

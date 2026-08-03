@@ -197,7 +197,7 @@ function updateItem(
   } else if (!record.runnable) {
     item.description = "Not runnable";
   } else {
-    item.description = undefined;
+    Object.assign(item, { description: undefined });
   }
 }
 

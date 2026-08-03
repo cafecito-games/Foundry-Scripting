@@ -259,9 +259,15 @@ function observeOutput(
   };
 
   const acceptLine = (stream: HostOutputStream, line: string): void => {
-    state.toolingError ??= parseToolingErrorLine(line);
+    if (state.toolingError === undefined) {
+      const toolingError = parseToolingErrorLine(line);
+      if (toolingError !== undefined) state.toolingError = toolingError;
+    }
     if (stream === "stdout") {
-      state.readiness ??= parseToolingReadinessLine(line, expectedProject);
+      const readiness = parseToolingReadinessLine(line, expectedProject);
+      if (state.readiness === undefined && readiness !== undefined) {
+        state.readiness = readiness;
+      }
     }
     if (line !== "") onLine(stream, line);
   };

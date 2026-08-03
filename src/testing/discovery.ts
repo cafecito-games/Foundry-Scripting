@@ -89,6 +89,9 @@ export function parseTestDiscovery(bytes: Uint8Array): TestDiscoveryModel {
 
   const records = lines.map((line, index) => parseRecord(line, index + 1));
   const first = records[0];
+  if (first === undefined) {
+    throw incomplete("Discovery artifact contains no lifecycle records.");
+  }
   if (first.event !== "discovery_start") {
     throw malformed("Record 1 must be discovery_start.");
   }
@@ -101,6 +104,9 @@ export function parseTestDiscovery(bytes: Uint8Array): TestDiscoveryModel {
   for (let index = 1; index < records.length; index += 1) {
     const recordNumber = index + 1;
     const record = records[index];
+    if (record === undefined) {
+      throw incomplete(`Discovery artifact is missing record ${recordNumber}.`);
+    }
     if (end !== undefined) {
       throw malformed(`Record ${recordNumber} follows discovery_end.`);
     }

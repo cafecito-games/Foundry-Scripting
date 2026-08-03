@@ -122,7 +122,7 @@ export class FoundryTestAdapterDiscoverer {
         throw error;
       }
       throw new TestAdapterFailure(error.kind, error.message, {
-        setting: error.setting,
+        ...(error.setting === undefined ? {} : { setting: error.setting }),
         cause: error,
       });
     }
@@ -139,7 +139,7 @@ export class FoundryTestAdapterDiscoverer {
         throw error;
       }
       throw new TestAdapterFailure(error.kind, error.message, {
-        setting: error.setting,
+        ...(error.setting === undefined ? {} : { setting: error.setting }),
         cause: error,
       });
     }
