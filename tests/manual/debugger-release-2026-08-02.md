@@ -94,10 +94,13 @@ CI already includes non-optional `dap-conformance` and `package` jobs. The confo
 job checks out the full immutable engine SHA above and fails the pull request if the
 real-engine matrix fails.
 
-## Release decision
+## Historical release decision (superseded)
 
-**Not release-ready.** Keep the extension PR in draft until the lifecycle diagnostic is
-fixed and the first engine release containing
-`a2d9f6df06fb545c8106f24c7445466d6355085b` is published. After publication, rerun
-this matrix against the exact release binary and update README and CHANGELOG with its
-tag. Selected-test debugging remains a separate later phase.
+This was the decision on 2026-08-02 only. The current decision lives in
+`debugger-release-2026-08-03.md`.
+
+**Not release-ready at the time of this run.** The lifecycle diagnostic still needed a
+fix and no published release yet contained
+`a2d9f6df06fb545c8106f24c7445466d6355085b`. Selected-test debugging was then tracked
+as a later phase; it subsequently shipped through child issue #51 and is included in
+the current published-engine validation scope.
