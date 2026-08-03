@@ -7,6 +7,7 @@ function request(
 ): Parameters<typeof resolveFoundryProject>[0] {
   return {
     workspacePath: "/workspace/repository",
+    workspaceScheme: "file",
     configuredPath: "",
     manifestExists: vi.fn().mockResolvedValue(false),
     findManifests: vi.fn().mockResolvedValue([]),
@@ -20,12 +21,44 @@ describe("Foundry project resolver", () => {
     const findManifests = vi.fn();
 
     const result = await resolveFoundryProject(
-      request({ workspacePath: undefined, manifestExists, findManifests }),
+      request({
+        workspacePath: undefined,
+        workspaceScheme: undefined,
+        manifestExists,
+        findManifests,
+      }),
     );
 
     expect(result).toMatchObject({
       success: false,
       failure: { kind: "missing_workspace" },
+    });
+    expect(manifestExists).not.toHaveBeenCalled();
+    expect(findManifests).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-file workspace before path or filesystem access", async () => {
+    const manifestExists = vi.fn();
+    const findManifests = vi.fn();
+    const resolutionRequest = {
+      workspacePath: undefined,
+      workspaceScheme: "vscode-vfs",
+      get configuredPath(): string {
+        throw new Error("configuredPath must not be read");
+      },
+      manifestExists,
+      findManifests,
+    };
+
+    const result = await resolveFoundryProject(resolutionRequest);
+
+    expect(result).toEqual({
+      success: false,
+      failure: {
+        kind: "unsupported_workspace",
+        message:
+          'Workspace scheme "vscode-vfs" is unsupported because native Foundry tooling requires a local file workspace.',
+      },
     });
     expect(manifestExists).not.toHaveBeenCalled();
     expect(findManifests).not.toHaveBeenCalled();

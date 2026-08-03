@@ -33,6 +33,7 @@ import {
   FoundryTestAdapterNegotiator,
   TestAdapterFailure,
 } from "./testing/adapter.js";
+import type { TestAdapterCommand } from "./testing/command.js";
 import { FoundryTestAdapterDiscoverer } from "./testing/discoverer.js";
 import {
   FoundryTestDebugExecutor,
@@ -40,7 +41,10 @@ import {
 } from "./testing/debug-executor.js";
 import { FoundryTestExecutor } from "./testing/executor.js";
 import { FoundryTestExplorer } from "./testing/explorer.js";
-import { FoundryTestAdapterProcess } from "./testing/process.js";
+import {
+  FoundryTestAdapterProcess,
+  type TestAdapterProcessResult,
+} from "./testing/process.js";
 import { FoundryTestRunProfile } from "./testing/profile.js";
 import {
   TestingRefreshCoordinator,
@@ -55,6 +59,7 @@ import {
   type TestingState,
 } from "./testing/status.js";
 import type { ToolingHostCoordinator } from "./tooling/coordinator.js";
+import { classifyNativeWorkspaceEligibility } from "./workspace-support.js";
 
 type ActiveConnectionLifecycle = ConnectionLifecycle<
   ConnectionManager,
@@ -68,6 +73,13 @@ interface ActiveTestingLifecycle {
 }
 
 let activeTestingLifecycle: ActiveTestingLifecycle | undefined;
+
+interface ActiveNativeRuntimeGate {
+  readonly startIfEligible: () => void;
+  readonly stop: () => Promise<void>;
+}
+
+let activeNativeRuntimeGate: ActiveNativeRuntimeGate | undefined;
 
 const TESTING_CONFIGURATION_SECTIONS = [
   "foundryScript.testing.enabled",
@@ -84,6 +96,28 @@ const CONNECTION_CONFIGURATION_SECTIONS = [
   "foundryScript.enginePath",
   "foundryScript.projectPath",
 ] as const;
+
+function currentNativeWorkspaceEligibility() {
+  return classifyNativeWorkspaceEligibility(
+    vscode.workspace.isTrusted,
+    vscode.workspace.workspaceFolders?.map((folder) => folder.uri.scheme),
+  );
+}
+
+function isNativeWorkspaceEligible(): boolean {
+  return currentNativeWorkspaceEligibility().kind === "eligible";
+}
+
+function unsupportedTestingWorkspaceFailure(): TestAdapterFailure {
+  const eligibility = currentNativeWorkspaceEligibility();
+  const message =
+    eligibility.kind === "restricted"
+      ? "Foundry Test Explorer requires workspace trust."
+      : eligibility.kind === "unsupported_scheme"
+        ? `Workspace scheme "${eligibility.scheme}" is unsupported because native Foundry tooling requires a local file workspace.`
+        : "Foundry Test Explorer is unavailable in the current workspace.";
+  return new TestAdapterFailure("invalid_project", message);
+}
 
 function readConnectionSettings(): ConnectionSettings {
   const configuration = vscode.workspace.getConfiguration("foundryScript");
@@ -199,22 +233,31 @@ function registerTestingRuntime(
   const process = new FoundryTestAdapterProcess({
     onOutput: (text) => output.append(text),
   });
+  const runProcess = (
+    command: TestAdapterCommand,
+    signal: AbortSignal,
+    onOutput?: (text: string, stream: "stdout" | "stderr") => void,
+  ): Promise<TestAdapterProcessResult> =>
+    isNativeWorkspaceEligible()
+      ? onOutput === undefined
+        ? process.run(command, signal)
+        : process.run(command, signal, onOutput)
+      : Promise.reject(unsupportedTestingWorkspaceFailure());
   const onCleanupError = (error: unknown, directory: string): void => {
     output.appendLine(
       `Unable to remove test adapter temporary directory ${directory}: ${error instanceof Error ? error.message : String(error)}`,
     );
   };
   const negotiator = new FoundryTestAdapterNegotiator({
-    runProcess: (command, signal) => process.run(command, signal),
+    runProcess,
     onCleanupError,
   });
   const discoverer = new FoundryTestAdapterDiscoverer({
-    runProcess: (command, signal) => process.run(command, signal),
+    runProcess,
     onCleanupError,
   });
   const executor = new FoundryTestExecutor({
-    runProcess: (command, signal, onOutput) =>
-      process.run(command, signal, onOutput),
+    runProcess,
     onCleanupError,
   });
   const debugMessageListeners = new Set<
@@ -245,7 +288,9 @@ function registerTestingRuntime(
   );
   const debugExecutor = new FoundryTestDebugExecutor({
     startDebugging: (configuration, debugOptions) =>
-      vscode.debug.startDebugging(undefined, configuration, debugOptions),
+      isNativeWorkspaceEligible()
+        ? vscode.debug.startDebugging(undefined, configuration, debugOptions)
+        : Promise.resolve(false),
     stopDebugging: (session) =>
       vscode.debug.stopDebugging(session as vscode.DebugSession),
     onDidStartDebugSession: (listener) =>
@@ -290,6 +335,8 @@ function registerTestingRuntime(
       );
     },
   });
+  const readyContext = () =>
+    isNativeWorkspaceEligible() ? runtime.readyContext() : undefined;
   let watcherProject: string | undefined;
   let watcherDisposables: vscode.Disposable[] = [];
   const disposeWatchers = (): void => {
@@ -353,7 +400,7 @@ function registerTestingRuntime(
   };
   const runProfile = new FoundryTestRunProfile({
     controller,
-    readyContext: () => runtime.readyContext(),
+    readyContext,
     snapshot: () => explorer.snapshot(),
     execute: (request, signal, observer) =>
       executor.execute(request, signal, observer),
@@ -372,7 +419,7 @@ function registerTestingRuntime(
   );
   const debugProfile = new FoundryTestRunProfile({
     controller,
-    readyContext: () => runtime.readyContext(),
+    readyContext,
     snapshot: () => explorer.snapshot(),
     execute: (request, signal, observer, run) =>
       debugExecutor.execute(request, signal, observer, run),
@@ -587,7 +634,7 @@ async function showTestingFailure(
   }
 }
 
-export async function activate(context: vscode.ExtensionContext): Promise<void> {
+function startNativeRuntime(context: vscode.ExtensionContext): void {
   const diagnostics = createDiagnosticsUnit(() =>
     vscode.languages.createDiagnosticCollection("foundryscript"),
   );
@@ -709,11 +756,121 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       : { kind: "disconnected" },
   );
   void lifecycle.requestReconciliation();
+}
+
+function logNativeRuntimeFailure(message: string, error: unknown): void {
+  console.error(message, error);
+}
+
+async function rollbackNativeRuntimeStart(
+  context: vscode.ExtensionContext,
+  subscriptionStart: number,
+): Promise<void> {
+  try {
+    await stopNativeRuntime();
+  } catch (error) {
+    logNativeRuntimeFailure(
+      "FoundryScript native runtime rollback shutdown failed:",
+      error,
+    );
+  }
+  const subscriptions = context.subscriptions.splice(subscriptionStart);
+  for (const subscription of subscriptions.reverse()) {
+    try {
+      await Promise.resolve(subscription.dispose());
+    } catch (error) {
+      logNativeRuntimeFailure(
+        "FoundryScript native runtime rollback disposal failed:",
+        error,
+      );
+    }
+  }
+}
+
+function createNativeRuntimeGate(
+  context: vscode.ExtensionContext,
+): ActiveNativeRuntimeGate {
+  let stopped = false;
+  let startRequested = false;
+  let startFinished = false;
+  let startPromise: Promise<void> | undefined;
+  let stopPromise: Promise<void> | undefined;
+  const startIfEligible = (): void => {
+    if (stopped || startRequested) return;
+    if (!isNativeWorkspaceEligible()) return;
+
+    startRequested = true;
+    startFinished = false;
+    startPromise = Promise.resolve()
+      .then(() => {
+        if (stopped) return;
+        if (!isNativeWorkspaceEligible()) {
+          startRequested = false;
+          return;
+        }
+        const subscriptionStart = context.subscriptions.length;
+        try {
+          startNativeRuntime(context);
+          return;
+        } catch (error) {
+          return rollbackNativeRuntimeStart(context, subscriptionStart).then(() => {
+            startRequested = false;
+            throw error;
+          });
+        }
+      })
+      .catch((error: unknown) => {
+        logNativeRuntimeFailure(
+          "FoundryScript native runtime registration failed:",
+          error,
+        );
+      })
+      .finally(() => {
+        startFinished = true;
+      });
+  };
+  return {
+    startIfEligible,
+    stop: () => {
+      if (stopPromise !== undefined) return stopPromise;
+      stopped = true;
+      stopPromise = startFinished
+        ? stopNativeRuntime()
+        : (async () => {
+            await startPromise;
+            await stopNativeRuntime();
+          })();
+      return stopPromise;
+    },
+  };
+}
+
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  const gate = createNativeRuntimeGate(context);
+  activeNativeRuntimeGate = gate;
+  context.subscriptions.push(
+    vscode.workspace.onDidGrantWorkspaceTrust(gate.startIfEligible),
+    vscode.workspace.onDidChangeWorkspaceFolders(gate.startIfEligible),
+    {
+      dispose: () => {
+        if (activeNativeRuntimeGate !== gate) return;
+        activeNativeRuntimeGate = undefined;
+        void gate.stop().catch((error: unknown) => {
+          logNativeRuntimeFailure(
+            "FoundryScript native runtime shutdown failed:",
+            error,
+          );
+        });
+      },
+    },
+  );
+  gate.startIfEligible();
+  await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
 }
 
-export async function deactivate(): Promise<void> {
+async function stopNativeRuntime(): Promise<void> {
   const debugRuntime = activeDebugRuntime;
   const connectionLifecycle = activeConnectionLifecycle;
   const testingLifecycle = activeTestingLifecycle;
@@ -722,4 +879,14 @@ export async function deactivate(): Promise<void> {
   activeTestingLifecycle = undefined;
   await debugRuntime?.shutdown();
   await Promise.all([connectionLifecycle?.stop(), testingLifecycle?.stop()]);
+}
+
+export async function deactivate(): Promise<void> {
+  const gate = activeNativeRuntimeGate;
+  activeNativeRuntimeGate = undefined;
+  if (gate !== undefined) {
+    await gate.stop();
+    return;
+  }
+  await stopNativeRuntime();
 }

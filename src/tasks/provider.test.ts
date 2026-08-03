@@ -12,7 +12,10 @@ import type {
 
 const providerMock = vi.hoisted(() => ({
   configuration: new Map<string, unknown>(),
-  workspaceFolders: [] as Array<{ uri: { fsPath: string } }>,
+  isTrusted: true,
+  workspaceFolders: [] as Array<{
+    uri: { fsPath: string; scheme?: string };
+  }>,
   showErrorMessage: vi.fn(),
   executeCommand: vi.fn(),
   registerTaskProvider: vi.fn(),
@@ -94,6 +97,9 @@ vi.mock("vscode", () => {
     TaskScope: { Workspace: 1 },
     TaskGroup: { Build: { id: "build" }, Test: { id: "test" } },
     workspace: {
+      get isTrusted() {
+        return providerMock.isTrusted;
+      },
       get workspaceFolders() {
         return providerMock.workspaceFolders;
       },
@@ -158,6 +164,7 @@ function taskTerminal(task: vscode.Task): Promise<vscode.Pseudoterminal> {
 describe("Foundry task provider", () => {
   beforeEach(() => {
     providerMock.configuration.clear();
+    providerMock.isTrusted = true;
     providerMock.workspaceFolders.length = 0;
     providerMock.showErrorMessage.mockReset();
     providerMock.executeCommand.mockReset();
@@ -317,6 +324,36 @@ describe("Foundry task provider", () => {
     );
   });
 
+  it("reports an unsupported workspace without spawning Foundry", async () => {
+    providerMock.resolveProject.mockResolvedValue({
+      success: false,
+      failure: {
+        kind: "unsupported_workspace",
+        message:
+          'Workspace scheme "vscode-vfs" is unsupported because native Foundry tooling requires a local file workspace.',
+      },
+    });
+    const spawnProcess = vi.fn();
+    const provider = new FoundryTaskProvider({ spawnProcess });
+    const [task] = provider.provideTasks();
+    const terminal = await taskTerminal(task);
+    const writes: string[] = [];
+    const closes: Array<number | void> = [];
+    terminal.onDidWrite((text) => writes.push(text));
+    terminal.onDidClose?.((code) => closes.push(code));
+
+    terminal.open(undefined);
+    await vi.waitFor(() => expect(closes).toEqual([1]));
+
+    expect(writes.join("")).toContain(
+      'Error: Workspace scheme "vscode-vfs" is unsupported',
+    );
+    expect(providerMock.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Workspace scheme "vscode-vfs" is unsupported'),
+    );
+    expect(spawnProcess).not.toHaveBeenCalled();
+  });
+
   it("does not spawn after closing while project resolution is pending", async () => {
     let finishResolution: ((value: {
       success: true;
@@ -339,6 +376,42 @@ describe("Foundry task provider", () => {
     await Promise.resolve();
 
     expect(spawnProcess).not.toHaveBeenCalled();
+  });
+
+  it("does not spawn when the workspace becomes virtual during project resolution", async () => {
+    providerMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game", scheme: "file" },
+    });
+    let finishResolution: ((value: {
+      success: true;
+      project: string;
+    }) => void) | undefined;
+    providerMock.resolveProject.mockReturnValue(
+      new Promise((resolve) => {
+        finishResolution = resolve;
+      }),
+    );
+    const spawnProcess = vi.fn(() => new FakeChildProcess().asChildProcess());
+    const provider = new FoundryTaskProvider({ spawnProcess });
+    const [task] = provider.provideTasks();
+    const terminal = await taskTerminal(task);
+    const closes: Array<number | void> = [];
+    terminal.onDidClose?.((code) => closes.push(code));
+
+    terminal.open(undefined);
+    expect(providerMock.resolveProject).toHaveBeenCalledOnce();
+    providerMock.workspaceFolders.splice(0, 1, {
+      uri: { fsPath: "/workspace/game", scheme: "vscode-vfs" },
+    });
+    finishResolution?.({ success: true, project: "/workspace/game" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(spawnProcess).not.toHaveBeenCalled();
+    expect(closes).toEqual([1]);
+    expect(providerMock.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining("vscode-vfs"),
+    );
   });
 
   it.each([
