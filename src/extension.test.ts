@@ -1146,6 +1146,28 @@ describe("extension entry point", () => {
     expect(extensionMock.stop).toHaveBeenCalledTimes(6);
   });
 
+  it("returns diagnostic ownership to CLI when reconciliation turns LSP off", async () => {
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game", scheme: "file" },
+    });
+    await activate(createContext());
+    await vi.waitFor(() =>
+      expect(extensionMock.createConnectionManager).toHaveBeenCalledOnce(),
+    );
+    extensionMock.diagnosticsUnit.setLanguageServerConnected.mockClear();
+
+    extensionMock.configuration.set("lsp.mode", "off");
+    extensionMock.configurationChangeHandler?.({
+      affectsConfiguration: (section) =>
+        section === "foundryScript.lsp.mode",
+    });
+    await vi.waitFor(() =>
+      expect(
+        extensionMock.diagnosticsUnit.setLanguageServerConnected,
+      ).toHaveBeenLastCalledWith(false),
+    );
+  });
+
   it("routes reconnect and debug acquisition through the lifecycle's replacement resources", async () => {
     const firstReconnect = vi.fn().mockResolvedValue(undefined);
     const secondReconnect = vi.fn().mockResolvedValue(undefined);

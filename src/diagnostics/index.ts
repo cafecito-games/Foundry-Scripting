@@ -33,6 +33,7 @@ export function createDiagnosticsUnit(
   const visibleUris = new Map<string, vscode.Uri>();
   let languageServerConnected = initiallyConnected;
   let hasCompleteCliSnapshot = false;
+  let cliSnapshotUpdatedWhileConnected = false;
 
   const activeSource = (): DiagnosticSource =>
     languageServerConnected ? "lsp" : "cli";
@@ -89,6 +90,9 @@ export function createDiagnosticsUnit(
           cliDiagnostics.set(key, entry);
         }
         hasCompleteCliSnapshot = true;
+        if (languageServerConnected) {
+          cliSnapshotUpdatedWhileConnected = true;
+        }
       }
 
       if (snapshot.source === activeSource()) {
@@ -101,8 +105,12 @@ export function createDiagnosticsUnit(
       }
       languageServerConnected = connected;
       if (connected) {
+        cliSnapshotUpdatedWhileConnected = false;
         lspDiagnostics.clear();
-      } else if (hasCompleteCliSnapshot) {
+      } else if (
+        hasCompleteCliSnapshot &&
+        cliSnapshotUpdatedWhileConnected
+      ) {
         project(cliDiagnostics);
       }
     },

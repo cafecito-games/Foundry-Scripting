@@ -691,6 +691,7 @@ function startNativeRuntime(context: vscode.ExtensionContext): void {
       ),
     publishState: (state) => {
       statusController.update(state);
+      diagnostics.setLanguageServerConnected(state.kind === "connected");
       if (state.kind === "off") {
         writeLog(outputChannel, "info", "lsp.connection.off");
       }
