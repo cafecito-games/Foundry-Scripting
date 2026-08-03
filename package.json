@@ -17,6 +17,9 @@
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
+    "onLanguage:foundryscript",
+    "onCommand:foundryScript.connectionActions",
+    "onTaskType:foundryscript",
     "onDebugInitialConfigurations",
     "onDebugResolve:foundryscript"
   ],
