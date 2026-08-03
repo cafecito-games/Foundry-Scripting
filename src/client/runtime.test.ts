@@ -74,6 +74,7 @@ import type {
 function noopDiagnostics(): DiagnosticsUnit {
   return {
     accept: vi.fn(),
+    replace: vi.fn(),
     setLanguageServerConnected: vi.fn(),
     dispose: vi.fn(),
   };
@@ -158,6 +159,7 @@ describe("connection runtime", () => {
     const setLanguageServerConnected = vi.fn<(connected: boolean) => void>();
     const diagnostics: DiagnosticsUnit = {
       accept: (update) => accept(update),
+      replace: vi.fn(),
       setLanguageServerConnected: (connected) =>
         setLanguageServerConnected(connected),
       dispose: vi.fn(),
