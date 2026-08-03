@@ -258,6 +258,7 @@
     "test:live-foundry": "node scripts/verify-foundry-test-run.mjs",
     "test:dap-conformance": "node scripts/run-dap-conformance.mjs",
     "test:vscode-minimum": "node scripts/run-vscode-minimum.mjs",
+    "test:vscode-integration": "node scripts/run-vscode-integration.mjs",
     "sync-grammar": "node scripts/sync-grammar.mjs",
     "check:grammar-sync": "node scripts/sync-grammar.mjs --check",
     "check:package-files": "node scripts/check-package-files.mjs",

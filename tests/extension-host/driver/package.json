@@ -1,0 +1,10 @@
+{
+  "name": "foundryscript-e2e-driver",
+  "displayName": "FoundryScript E2E Driver",
+  "version": "1.0.0",
+  "publisher": "cafecito-games-test",
+  "engines": { "vscode": "^1.90.0" },
+  "main": "./extension.cjs",
+  "activationEvents": ["*"],
+  "extensionKind": ["workspace"]
+}
