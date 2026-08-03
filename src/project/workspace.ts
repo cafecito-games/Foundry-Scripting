@@ -19,22 +19,36 @@ export function createWorkspaceProjectResolver(
   options: WorkspaceProjectResolverOptions = {},
 ): ResolveWorkspaceProject {
   const manifestExists = options.manifestExists ?? defaultManifestExists;
+  const findManifests = async (workspace: string): Promise<readonly string[]> => {
+    const uris = await vscode.workspace.findFiles(
+      new vscode.RelativePattern(workspace, "**/project.foundry"),
+      PROJECT_SEARCH_EXCLUDE,
+    );
+    return uris.map((uri) => uri.fsPath);
+  };
   return async () => {
-    const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    const workspaceScheme = workspaceFolder?.uri.scheme;
+    if (workspaceScheme !== undefined && workspaceScheme !== "file") {
+      return resolveFoundryProject({
+        workspacePath: undefined,
+        workspaceScheme,
+        configuredPath: "",
+        manifestExists,
+        findManifests,
+      });
+    }
+
+    const workspacePath = workspaceFolder?.uri.fsPath;
     const configuredPath = vscode.workspace
       .getConfiguration("foundryScript")
       .get("projectPath", "");
     return resolveFoundryProject({
       workspacePath,
+      workspaceScheme,
       configuredPath,
       manifestExists,
-      findManifests: async (workspace) => {
-        const uris = await vscode.workspace.findFiles(
-          new vscode.RelativePattern(workspace, "**/project.foundry"),
-          PROJECT_SEARCH_EXCLUDE,
-        );
-        return uris.map((uri) => uri.fsPath);
-      },
+      findManifests,
     });
   };
 }

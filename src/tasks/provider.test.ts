@@ -317,6 +317,36 @@ describe("Foundry task provider", () => {
     );
   });
 
+  it("reports an unsupported workspace without spawning Foundry", async () => {
+    providerMock.resolveProject.mockResolvedValue({
+      success: false,
+      failure: {
+        kind: "unsupported_workspace",
+        message:
+          'Workspace scheme "vscode-vfs" is unsupported because native Foundry tooling requires a local file workspace.',
+      },
+    });
+    const spawnProcess = vi.fn();
+    const provider = new FoundryTaskProvider({ spawnProcess });
+    const [task] = provider.provideTasks();
+    const terminal = await taskTerminal(task);
+    const writes: string[] = [];
+    const closes: Array<number | void> = [];
+    terminal.onDidWrite((text) => writes.push(text));
+    terminal.onDidClose?.((code) => closes.push(code));
+
+    terminal.open(undefined);
+    await vi.waitFor(() => expect(closes).toEqual([1]));
+
+    expect(writes.join("")).toContain(
+      'Error: Workspace scheme "vscode-vfs" is unsupported',
+    );
+    expect(providerMock.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Workspace scheme "vscode-vfs" is unsupported'),
+    );
+    expect(spawnProcess).not.toHaveBeenCalled();
+  });
+
   it("does not spawn after closing while project resolution is pending", async () => {
     let finishResolution: ((value: {
       success: true;

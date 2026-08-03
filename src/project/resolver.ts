@@ -4,6 +4,7 @@ export const PROJECT_PATH_SETTING = "foundryScript.projectPath";
 
 export type ProjectResolutionFailureKind =
   | "missing_workspace"
+  | "unsupported_workspace"
   | "invalid_configured_project"
   | "project_not_found"
   | "ambiguous_projects"
@@ -23,6 +24,7 @@ export type ProjectResolution =
 
 export interface FoundryProjectResolutionRequest {
   readonly workspacePath: string | undefined;
+  readonly workspaceScheme?: string;
   readonly configuredPath: string;
   readonly manifestExists: (project: string) => Promise<boolean>;
   readonly findManifests: (workspace: string) => Promise<readonly string[]>;
@@ -31,6 +33,16 @@ export interface FoundryProjectResolutionRequest {
 export async function resolveFoundryProject(
   request: FoundryProjectResolutionRequest,
 ): Promise<ProjectResolution> {
+  if (
+    request.workspaceScheme !== undefined &&
+    request.workspaceScheme !== "file"
+  ) {
+    return failure(
+      "unsupported_workspace",
+      `Workspace scheme "${request.workspaceScheme}" is unsupported because native Foundry tooling requires a local file workspace.`,
+    );
+  }
+
   if (request.workspacePath === undefined) {
     return failure(
       "missing_workspace",
