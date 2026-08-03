@@ -45,7 +45,7 @@ export interface RetryScheduler {
   schedule(delayMs: number, callback: () => void): DisposableHandle;
 }
 
-export type ConnectionFailureKind = "tcp_refused";
+export type ConnectionFailureKind = "tcp_refused" | "initialization_timeout";
 
 export class ConnectionFailure extends Error {
   constructor(
@@ -53,10 +53,14 @@ export class ConnectionFailure extends Error {
     readonly project: string,
     readonly port: number,
     cause?: unknown,
+    readonly initializationTimeoutMs?: number,
   ) {
     super(
-      `Could not connect to the Foundry language server for "${project}" ` +
-        `on 127.0.0.1:${port} (connection refused).`,
+      kind === "tcp_refused"
+        ? `Could not connect to the Foundry language server for "${project}" ` +
+            `on 127.0.0.1:${port} (connection refused).`
+        : `Foundry language server initialization for "${project}" on ` +
+            `127.0.0.1:${port} did not complete within ${initializationTimeoutMs} ms.`,
       { cause },
     );
     this.name = "ConnectionFailure";
@@ -69,6 +73,7 @@ export interface ConnectionManagerOptions {
   scheduler?: RetryScheduler;
   onStateChange?: (state: ConnectionState) => void;
   output?: LogOutput;
+  initializationTimeoutMs?: number;
 }
 
 export interface StartConnectionOptions {
@@ -105,6 +110,12 @@ function throwIfAborted(signal: AbortSignal): void {
   throw error;
 }
 
+function startupCancelledError(): Error {
+  const error = new Error("Foundry language server startup was cancelled.");
+  error.name = "AbortError";
+  return error;
+}
+
 interface PendingStart {
   controller: AbortController;
   promise: Promise<void>;
@@ -117,6 +128,8 @@ const defaultScheduler: RetryScheduler = {
   },
 };
 
+const DEFAULT_INITIALIZATION_TIMEOUT_MS = 10_000;
+
 export class ConnectionManager {
   private activeClient: LanguageClientHandle | undefined;
   private activeClientStopSubscription: DisposableHandle | undefined;
@@ -126,9 +139,12 @@ export class ConnectionManager {
   private retryTimer: DisposableHandle | undefined;
   private pendingCleanup: Promise<void> = Promise.resolve();
   private readonly scheduler: RetryScheduler;
+  private readonly initializationTimeoutMs: number;
 
   constructor(private readonly options: ConnectionManagerOptions) {
     this.scheduler = options.scheduler ?? defaultScheduler;
+    this.initializationTimeoutMs =
+      options.initializationTimeoutMs ?? DEFAULT_INITIALIZATION_TIMEOUT_MS;
   }
 
   async start({ settings, project }: StartConnectionOptions): Promise<void> {
@@ -280,9 +296,40 @@ export class ConnectionManager {
     signal: AbortSignal,
   ): Promise<void> {
     throwIfAborted(signal);
-    const client = this.options.createClient({ host: "127.0.0.1", port }, signal);
+    const startupController = new AbortController();
+    const cancelStartup = () => startupController.abort(signal.reason);
+    const client = this.options.createClient(
+      { host: "127.0.0.1", port },
+      startupController.signal,
+    );
+    signal.addEventListener("abort", cancelStartup, { once: true });
+    if (signal.aborted) {
+      cancelStartup();
+    }
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let rejectCancellation: (() => void) | undefined;
+    const interrupted = new Promise<never>((_resolve, reject) => {
+      rejectCancellation = () => reject(startupCancelledError());
+      if (signal.aborted) {
+        rejectCancellation();
+        return;
+      }
+      signal.addEventListener("abort", rejectCancellation, { once: true });
+      timeout = setTimeout(() => {
+        reject(
+          new ConnectionFailure(
+            "initialization_timeout",
+            project,
+            port,
+            undefined,
+            this.initializationTimeoutMs,
+          ),
+        );
+        startupController.abort();
+      }, this.initializationTimeoutMs);
+    });
     try {
-      await client.start();
+      await Promise.race([client.start(), interrupted]);
       throwIfAborted(signal);
       this.activeClient = client;
       this.activeClientStopSubscription = client.onUnexpectedStop(() => {
@@ -294,6 +341,14 @@ export class ConnectionManager {
         throw new ConnectionFailure("tcp_refused", project, port, error);
       }
       throw error;
+    } finally {
+      if (timeout !== undefined) {
+        clearTimeout(timeout);
+      }
+      if (rejectCancellation !== undefined) {
+        signal.removeEventListener("abort", rejectCancellation);
+      }
+      signal.removeEventListener("abort", cancelStartup);
     }
   }
 

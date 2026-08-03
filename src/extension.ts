@@ -8,6 +8,7 @@ import {
   ConnectionStatusController,
 } from "./client/connection-status.js";
 import { HostStartupFailure } from "./client/host-launcher.js";
+import { ConnectionLifecycle } from "./client/lifecycle.js";
 import { writeLog } from "./client/logging.js";
 import {
   createConnectionManager,
@@ -51,8 +52,12 @@ import {
 } from "./testing/status.js";
 import type { ToolingHostCoordinator } from "./tooling/coordinator.js";
 
-let activeConnectionManager: ConnectionManager | undefined;
-let activeToolingHostCoordinator: ToolingHostCoordinator | undefined;
+type ActiveConnectionLifecycle = ConnectionLifecycle<
+  ConnectionManager,
+  ToolingHostCoordinator
+>;
+
+let activeConnectionLifecycle: ActiveConnectionLifecycle | undefined;
 let activeDebugRuntime: FoundryScriptDebugRuntime | undefined;
 interface ActiveTestingLifecycle {
   readonly stop: () => Promise<void>;
@@ -64,6 +69,14 @@ const TESTING_CONFIGURATION_SECTIONS = [
   "foundryScript.testing.enabled",
   "foundryScript.testing.runner",
   "foundryScript.testing.args",
+  "foundryScript.enginePath",
+  "foundryScript.projectPath",
+] as const;
+
+const CONNECTION_CONFIGURATION_SECTIONS = [
+  "foundryScript.lsp.mode",
+  "foundryScript.lsp.port",
+  "foundryScript.dap.port",
   "foundryScript.enginePath",
   "foundryScript.projectPath",
 ] as const;
@@ -131,10 +144,10 @@ async function readTestingConfiguration(
   };
 }
 
-async function registerTestingRuntime(
+function registerTestingRuntime(
   context: vscode.ExtensionContext,
   resolveProject: ResolveWorkspaceProject,
-): Promise<void> {
+): ActiveTestingLifecycle {
   const output = vscode.window.createOutputChannel("FoundryScript Testing");
   const controller = vscode.tests.createTestController(
     "foundryScript.tests",
@@ -231,7 +244,11 @@ async function registerTestingRuntime(
           return;
         }
         shownFailureFingerprint = fingerprint;
-        void showTestingFailure(state.failure, output);
+        void showTestingFailure(state.failure, output).catch((error: unknown) => {
+          output.appendLine(
+            `Unable to show testing failure action: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
       }
     },
   });
@@ -283,10 +300,12 @@ async function registerTestingRuntime(
     }
   };
   let configurationGeneration = 0;
+  let stopped = false;
   const configure = async (): Promise<void> => {
+    if (stopped) return;
     const generation = ++configurationGeneration;
     const configuration = await readTestingConfiguration(resolveProject);
-    if (generation !== configurationGeneration) return;
+    if (stopped || generation !== configurationGeneration) return;
     const key = JSON.stringify(configuration);
     if (key !== failureConfigurationKey) {
       failureConfigurationKey = key;
@@ -294,6 +313,13 @@ async function registerTestingRuntime(
     }
     updateWatchers(configuration);
     await runtime.configure(configuration);
+  };
+  const queueConfiguration = (): void => {
+    void configure().catch((error: unknown) => {
+      output.appendLine(
+        `Testing configuration failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
   };
   const runProfile = new FoundryTestRunProfile({
     controller,
@@ -353,11 +379,17 @@ async function registerTestingRuntime(
       if (stopPromise !== undefined) {
         return stopPromise;
       }
+      stopped = true;
+      configurationGeneration += 1;
       refresh.dispose();
       disposeWatchers();
-      stopPromise = Promise.all([runtime.stop(), process.stop()]).then(
-        () => undefined,
-      );
+      stopPromise = Promise.all([runtime.stop(), process.stop()])
+        .then(() => undefined)
+        .catch((error: unknown) => {
+          output.appendLine(
+            `Testing shutdown failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
       return stopPromise;
     },
   };
@@ -373,10 +405,10 @@ async function registerTestingRuntime(
           event.affectsConfiguration(section),
         )
       ) {
-        void configure();
+        queueConfiguration();
       }
     }),
-    vscode.workspace.onDidChangeWorkspaceFolders(() => void configure()),
+    vscode.workspace.onDidChangeWorkspaceFolders(queueConfiguration),
     {
       dispose: () => {
         if (activeTestingLifecycle === lifecycle) {
@@ -386,7 +418,8 @@ async function registerTestingRuntime(
       },
     },
   );
-  await configure();
+  queueConfiguration();
+  return lifecycle;
 }
 
 async function showProjectResolutionFailure(
@@ -531,15 +564,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(diagnostics);
   const resolveProject = createWorkspaceProjectResolver();
   registerFoundryTaskProvider(context, diagnostics, resolveProject);
-  const settings = readConnectionSettings();
   const debugOutput = vscode.window.createOutputChannel("FoundryScript Debug");
   context.subscriptions.push(debugOutput);
-  activeDebugRuntime = registerFoundryScriptDebugRuntime(context, {
-    resolveProject,
-    getCoordinator: () => activeToolingHostCoordinator,
-    getMode: () => readConnectionSettings().mode,
-    output: debugOutput,
-  });
   const outputChannel = vscode.window.createOutputChannel("FoundryScript LSP");
   context.subscriptions.push(outputChannel);
   const statusItem = vscode.window.createStatusBarItem(
@@ -550,8 +576,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     showQuickPick: (items, options) =>
       vscode.window.showQuickPick(items, options),
     reconnectNow: async () => {
-      if (activeConnectionManager !== undefined) {
-        await activeConnectionManager.reconnectNow();
+      const manager = activeConnectionLifecycle?.currentManager;
+      if (manager !== undefined) {
+        await manager.reconnectNow();
       } else {
         await vscode.commands.executeCommand("vscode.openFolder");
       }
@@ -571,74 +598,91 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       statusController.showActions(),
     ),
   );
-  await registerTestingRuntime(context, resolveProject);
-  if (settings.mode === "off") {
-    statusController.update({ kind: "off" });
-    writeLog(outputChannel, "info", "lsp.connection.off");
-    return;
-  }
-  statusController.update({ kind: "disconnected" });
-
-  const resolution = await resolveProject();
-  if (!resolution.success) {
-    writeLog(outputChannel, "error", "lsp.project.resolution_failed", {
-      kind: resolution.failure.kind,
-      message: resolution.failure.message,
-    });
-    await showProjectResolutionFailure(resolution.failure);
-    return;
-  }
-  const project = resolution.project;
-
-  const coordinator = createToolingHostCoordinator(outputChannel);
-  const manager = createConnectionManager(
-    outputChannel,
-    project,
-    (state) => statusController.update(state),
-    diagnostics,
-    coordinator,
-  );
-  activeToolingHostCoordinator = coordinator;
-  activeConnectionManager = manager;
-  context.subscriptions.push({
-    dispose: () => {
-      void manager.stop().finally(() => coordinator.dispose());
+  const lifecycle = new ConnectionLifecycle({
+    readSettings: readConnectionSettings,
+    resolveProject,
+    createCoordinator: () => createToolingHostCoordinator(outputChannel),
+    createManager: (project, coordinator) =>
+      createConnectionManager(
+        outputChannel,
+        project,
+        (state) => statusController.update(state),
+        diagnostics,
+        coordinator,
+      ),
+    publishState: (state) => {
+      statusController.update(state);
+      if (state.kind === "off") {
+        writeLog(outputChannel, "info", "lsp.connection.off");
+      }
+    },
+    reportProjectFailure: (failure) => {
+      writeLog(outputChannel, "error", "lsp.project.resolution_failed", {
+        kind: failure.kind,
+        message: failure.message,
+      });
+      return showProjectResolutionFailure(failure);
+    },
+    reportStartupFailure: (error, project) => {
+      writeLog(outputChannel, "error", "lsp.connection.failed", {
+        project,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return showStartupError(error);
+    },
+    logBackgroundFailure: (event, error) => {
+      writeLog(outputChannel, "error", event, {
+        message: error instanceof Error ? error.message : String(error),
+      });
     },
   });
-
-  try {
-    await manager.start({ settings, project });
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      statusController.update({ kind: "disconnected" });
-      if (activeConnectionManager === manager) {
-        activeConnectionManager = undefined;
+  activeConnectionLifecycle = lifecycle;
+  activeDebugRuntime = registerFoundryScriptDebugRuntime(context, {
+    resolveProject,
+    getCoordinator: () => activeConnectionLifecycle?.currentCoordinator,
+    getMode: () => readConnectionSettings().mode,
+    output: debugOutput,
+  });
+  registerTestingRuntime(context, resolveProject);
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (
+        CONNECTION_CONFIGURATION_SECTIONS.some((section) =>
+          event.affectsConfiguration(section),
+        )
+      ) {
+        void lifecycle.requestReconciliation();
       }
-      await manager.stop();
-      return;
-    }
-    writeLog(outputChannel, "error", "lsp.connection.failed", {
-      project,
-      message: error instanceof Error ? error.message : String(error),
-    });
-    statusController.update({ kind: "disconnected" });
-    await showStartupError(error);
-  }
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      void lifecycle.requestReconciliation();
+    }),
+    {
+      dispose: () => {
+        if (activeConnectionLifecycle === lifecycle) {
+          activeConnectionLifecycle = undefined;
+        }
+        void lifecycle.stop();
+      },
+    },
+  );
+  statusController.update(
+    readConnectionSettings().mode === "off"
+      ? { kind: "off" }
+      : { kind: "disconnected" },
+  );
+  void lifecycle.requestReconciliation();
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 export async function deactivate(): Promise<void> {
   const debugRuntime = activeDebugRuntime;
-  const manager = activeConnectionManager;
-  const coordinator = activeToolingHostCoordinator;
+  const connectionLifecycle = activeConnectionLifecycle;
   const testingLifecycle = activeTestingLifecycle;
   activeDebugRuntime = undefined;
-  activeConnectionManager = undefined;
-  activeToolingHostCoordinator = undefined;
+  activeConnectionLifecycle = undefined;
   activeTestingLifecycle = undefined;
-  try {
-    await debugRuntime?.shutdown();
-    await Promise.all([manager?.stop(), testingLifecycle?.stop()]);
-  } finally {
-    await coordinator?.dispose();
-  }
+  await debugRuntime?.shutdown();
+  await Promise.all([connectionLifecycle?.stop(), testingLifecycle?.stop()]);
 }

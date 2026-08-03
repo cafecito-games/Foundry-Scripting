@@ -184,7 +184,11 @@ const extensionMock = vi.hoisted(() => {
   configurationChangeHandler: undefined as
     | ((event: { affectsConfiguration(section: string): boolean }) => void)
     | undefined,
+  configurationChangeHandlers: [] as Array<
+    (event: { affectsConfiguration(section: string): boolean }) => void
+  >,
   workspaceFoldersChangeHandler: undefined as (() => void) | undefined,
+  workspaceFoldersChangeHandlers: [] as Array<() => void>,
   onDidChangeConfiguration: vi.fn(),
   onDidChangeWorkspaceFolders: vi.fn(),
   watchers: [] as Array<ReturnType<typeof createWatcher>>,
@@ -530,18 +534,30 @@ describe("extension entry point", () => {
       ),
     );
     extensionMock.configurationChangeHandler = undefined;
+    extensionMock.configurationChangeHandlers.length = 0;
     extensionMock.workspaceFoldersChangeHandler = undefined;
+    extensionMock.workspaceFoldersChangeHandlers.length = 0;
     extensionMock.onDidChangeConfiguration.mockReset();
     extensionMock.onDidChangeConfiguration.mockImplementation(
       (handler: (event: { affectsConfiguration(section: string): boolean }) => void) => {
-      extensionMock.configurationChangeHandler = handler;
+      extensionMock.configurationChangeHandlers.push(handler);
+      extensionMock.configurationChangeHandler = (event) => {
+        for (const registered of extensionMock.configurationChangeHandlers) {
+          registered(event);
+        }
+      };
       return { dispose: vi.fn() };
       },
     );
     extensionMock.onDidChangeWorkspaceFolders.mockReset();
     extensionMock.onDidChangeWorkspaceFolders.mockImplementation(
       (handler: () => void) => {
-        extensionMock.workspaceFoldersChangeHandler = handler;
+        extensionMock.workspaceFoldersChangeHandlers.push(handler);
+        extensionMock.workspaceFoldersChangeHandler = () => {
+          for (const registered of extensionMock.workspaceFoldersChangeHandlers) {
+            registered();
+          }
+        };
         return { dispose: vi.fn() };
       },
     );
@@ -650,6 +666,200 @@ describe("extension entry point", () => {
     });
     expect(context.subscriptions).toContain(extensionMock.outputChannel);
     expect(context.subscriptions).toContain(extensionMock.statusItem);
+  });
+
+  it("settles activation while testing configuration and LSP startup remain deferred", async () => {
+    const testing = deferred<void>();
+    const lsp = deferred<void>();
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game" },
+    });
+    extensionMock.testingConfigure.mockReturnValue(testing.promise);
+    extensionMock.start.mockReturnValue(lsp.promise);
+    let settled = false;
+    const activation = activate(createContext()).then(() => {
+      settled = true;
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(extensionMock.testingConfigure).toHaveBeenCalledOnce();
+        expect(extensionMock.start).toHaveBeenCalledOnce();
+      }, { timeout: 100 });
+      expect(settled).toBe(true);
+      expect(extensionMock.createTestController).toHaveBeenCalledOnce();
+    } finally {
+      testing.resolve(undefined);
+      lsp.resolve(undefined);
+      await activation;
+    }
+  });
+
+  it("does not await a deferred project-error notification choice", async () => {
+    const notification = deferred<string | undefined>();
+    extensionMock.showErrorMessage.mockReturnValue(notification.promise);
+    let settled = false;
+    const activation = activate(createContext()).then(() => {
+      settled = true;
+    });
+
+    try {
+      await vi.waitFor(() => expect(settled).toBe(true), { timeout: 100 });
+      expect(extensionMock.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining("Open a workspace folder"),
+        "Open Folder",
+      );
+    } finally {
+      notification.resolve(undefined);
+      await activation;
+    }
+  });
+
+  it("registers testing completely before initial project resolution settles", async () => {
+    const resolution = deferred<{
+      success: true;
+      project: string;
+    }>();
+    extensionMock.configuration.set("lsp.mode", "off");
+    extensionMock.configuration.set("testing.enabled", true);
+    extensionMock.resolveProject.mockReturnValue(resolution.promise);
+    let settled = false;
+    const context = createContext();
+    const activation = activate(context).then(() => {
+      settled = true;
+    });
+
+    try {
+      await vi.waitFor(() => expect(settled).toBe(true), { timeout: 100 });
+      expect(extensionMock.createTestController).toHaveBeenCalledOnce();
+      expect(extensionMock.testController.createRunProfile).toHaveBeenCalledTimes(2);
+      expect(extensionMock.configurationChangeHandlers.length).toBeGreaterThan(0);
+      expect(context.subscriptions).toContain(extensionMock.testController);
+      expect(extensionMock.testingConfigure).not.toHaveBeenCalled();
+    } finally {
+      resolution.resolve({ success: true, project: "/workspace/game" });
+      await activation;
+    }
+  });
+
+  it("invalidates a pending testing configuration read before deactivation cleanup", async () => {
+    const resolution = deferred<{
+      success: true;
+      project: string;
+    }>();
+    extensionMock.configuration.set("lsp.mode", "off");
+    extensionMock.configuration.set("testing.enabled", true);
+    extensionMock.resolveProject.mockReturnValue(resolution.promise);
+    const activation = activate(createContext());
+
+    await activation;
+    const deactivation = deactivate();
+    resolution.resolve({ success: true, project: "/workspace/late" });
+    await deactivation;
+    await Promise.resolve();
+
+    expect(extensionMock.createFileSystemWatcher).not.toHaveBeenCalled();
+    expect(extensionMock.testingConfigure).not.toHaveBeenCalled();
+    expect(extensionMock.testingStop).toHaveBeenCalledOnce();
+  });
+
+  it("reconciles every connection setting and workspace-folder change", async () => {
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game" },
+    });
+    await activate(createContext());
+    await vi.waitFor(() => expect(extensionMock.start).toHaveBeenCalledOnce());
+
+    const sections = [
+      "foundryScript.lsp.mode",
+      "foundryScript.lsp.port",
+      "foundryScript.dap.port",
+      "foundryScript.enginePath",
+      "foundryScript.projectPath",
+    ];
+    for (const [index, section] of sections.entries()) {
+      extensionMock.configuration.set("lsp.port", 7001 + index);
+      extensionMock.configurationChangeHandler?.({
+        affectsConfiguration: (candidate) => candidate === section,
+      });
+      await vi.waitFor(() =>
+        expect(extensionMock.start).toHaveBeenCalledTimes(index + 2),
+      );
+    }
+
+    extensionMock.workspaceFolders.splice(0, 1, {
+      uri: { fsPath: "/workspace/changed" },
+    });
+    extensionMock.workspaceFoldersChangeHandler?.();
+    await vi.waitFor(() => expect(extensionMock.start).toHaveBeenCalledTimes(7));
+    expect(extensionMock.start).toHaveBeenLastCalledWith(
+      expect.objectContaining({ project: "/workspace/changed" }),
+    );
+    expect(extensionMock.stop).toHaveBeenCalledTimes(6);
+  });
+
+  it("routes reconnect and debug acquisition through the lifecycle's replacement resources", async () => {
+    const firstReconnect = vi.fn().mockResolvedValue(undefined);
+    const secondReconnect = vi.fn().mockResolvedValue(undefined);
+    const firstStop = vi.fn().mockResolvedValue(undefined);
+    const secondStop = vi.fn().mockResolvedValue(undefined);
+    const firstAcquire = vi.fn();
+    const release = vi.fn();
+    const secondAcquire = vi.fn().mockResolvedValue({
+      endpoint: { host: "127.0.0.1", port: 7002 },
+      released: false,
+      release,
+      dispose: release,
+    });
+    const coordinators = [
+      {
+        dispose: vi.fn().mockResolvedValue(undefined),
+        acquireDapLease: firstAcquire,
+      },
+      {
+        dispose: vi.fn().mockResolvedValue(undefined),
+        acquireDapLease: secondAcquire,
+      },
+    ];
+    const managers = [
+      { start: vi.fn().mockResolvedValue(undefined), stop: firstStop, reconnectNow: firstReconnect },
+      { start: vi.fn().mockResolvedValue(undefined), stop: secondStop, reconnectNow: secondReconnect },
+    ];
+    extensionMock.createToolingHostCoordinator.mockImplementation(() =>
+      coordinators.shift());
+    extensionMock.createConnectionManager.mockImplementation(() =>
+      managers.shift());
+    extensionMock.workspaceFolders.push({
+      uri: { fsPath: "/workspace/game" },
+    });
+    extensionMock.showQuickPick.mockResolvedValue(RECONNECT_ACTION);
+    await activate(createContext());
+    await vi.waitFor(() => expect(extensionMock.createConnectionManager).toHaveBeenCalledOnce());
+
+    extensionMock.configuration.set("lsp.port", 7001);
+    extensionMock.configurationChangeHandler?.({
+      affectsConfiguration: (section) => section === "foundryScript.lsp.port",
+    });
+    await vi.waitFor(() => expect(extensionMock.createConnectionManager).toHaveBeenCalledTimes(2));
+
+    await extensionMock.registeredCommands.get(CONNECTION_ACTIONS_COMMAND)?.();
+    expect(firstReconnect).not.toHaveBeenCalled();
+    expect(secondReconnect).toHaveBeenCalledOnce();
+
+    const factory = extensionMock.registerDebugAdapterDescriptorFactory.mock
+      .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
+    await factory.createDebugAdapterDescriptor(
+      createDebugSession("replacement-debug", {
+        type: "foundryscript",
+        request: "launch",
+        name: "Replacement Debug",
+        scene: "main",
+        project: "/workspace/game",
+      }),
+      undefined,
+    );
+    expect(firstAcquire).not.toHaveBeenCalled();
+    expect(secondAcquire).toHaveBeenCalledOnce();
   });
 
   it("starts the language client with the resolved nested project", async () => {
@@ -836,6 +1046,7 @@ describe("extension entry point", () => {
       uri: { fsPath: "/workspace/game" },
     });
     await activate(createContext());
+    await waitForConnectionStart();
     const factory = extensionMock.registerDebugAdapterDescriptorFactory.mock
       .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
     const session = createDebugSession("lsp-loss-with-dap", {
@@ -919,6 +1130,7 @@ describe("extension entry point", () => {
       uri: { fsPath: "/workspace/game" },
     });
     await activate(createContext());
+    await waitForConnectionStart();
     const factory = extensionMock.registerDebugAdapterDescriptorFactory.mock
       .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
     const session = createDebugSession("extension-auto", {
@@ -978,9 +1190,11 @@ describe("extension entry point", () => {
     await activate(createContext());
 
     expect(extensionMock.createConnectionManager).not.toHaveBeenCalled();
-    expect(extensionMock.executeCommand).toHaveBeenCalledWith(
-      "workbench.action.openSettings",
-      "foundryScript.projectPath",
+    await vi.waitFor(() =>
+      expect(extensionMock.executeCommand).toHaveBeenCalledWith(
+        "workbench.action.openSettings",
+        "foundryScript.projectPath",
+      ),
     );
   });
 
@@ -988,9 +1202,11 @@ describe("extension entry point", () => {
     await activate(createContext());
 
     expect(extensionMock.createConnectionManager).not.toHaveBeenCalled();
-    expect(extensionMock.showErrorMessage).toHaveBeenCalledWith(
-      expect.stringContaining("Open a workspace folder"),
-      "Open Folder",
+    await vi.waitFor(() =>
+      expect(extensionMock.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining("Open a workspace folder"),
+        "Open Folder",
+      ),
     );
   });
 
@@ -1009,13 +1225,17 @@ describe("extension entry point", () => {
 
     await activate(createContext());
 
-    expect(extensionMock.showErrorMessage).toHaveBeenCalledWith(
-      expect.stringContaining("/missing/foundry"),
-      "Open Settings",
+    await vi.waitFor(() =>
+      expect(extensionMock.showErrorMessage).toHaveBeenCalledWith(
+        expect.stringContaining("/missing/foundry"),
+        "Open Settings",
+      ),
     );
-    expect(extensionMock.executeCommand).toHaveBeenCalledWith(
-      "workbench.action.openSettings",
-      "foundryScript.enginePath",
+    await vi.waitFor(() =>
+      expect(extensionMock.executeCommand).toHaveBeenCalledWith(
+        "workbench.action.openSettings",
+        "foundryScript.enginePath",
+      ),
     );
   });
 
@@ -1027,6 +1247,9 @@ describe("extension entry point", () => {
     extensionMock.showQuickPick.mockResolvedValue(RECONNECT_ACTION);
 
     await activate(createContext());
+    await vi.waitFor(() =>
+      expect(extensionMock.showErrorMessage).toHaveBeenCalledOnce(),
+    );
     await extensionMock.registeredCommands.get(CONNECTION_ACTIONS_COMMAND)?.();
 
     expect(extensionMock.statusItem.text).toContain("Disconnected");
@@ -1061,6 +1284,7 @@ describe("extension entry point", () => {
       uri: { fsPath: "/workspace/game" },
     });
     await activate(createContext());
+    await waitForConnectionStart();
     const factory = extensionMock.registerDebugAdapterDescriptorFactory.mock
       .calls[0][1] as vscode.DebugAdapterDescriptorFactory;
     const session = createDebugSession("deactivation-order", {
@@ -1747,6 +1971,20 @@ describe("extension entry point", () => {
     );
   });
 
+  it("catches and logs background testing shutdown failures", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    extensionMock.testingStop.mockRejectedValue(
+      new Error("testing shutdown exploded"),
+    );
+    await activate(createContext());
+
+    await expect(deactivate()).resolves.toBeUndefined();
+
+    expect(extensionMock.testingOutputChannel.appendLine).toHaveBeenCalledWith(
+      expect.stringContaining("testing shutdown exploded"),
+    );
+  });
+
   it("renders negotiated framework status and preserves process output", async () => {
     extensionMock.configuration.set("lsp.mode", "off");
     await activate(createContext());
@@ -1900,7 +2138,7 @@ describe("extension entry point", () => {
     extensionMock.start.mockRejectedValue(cancellation);
 
     await activate(createContext());
-    expect(extensionMock.stop).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(extensionMock.stop).toHaveBeenCalledOnce());
     await deactivate();
 
     expect(extensionMock.stop).toHaveBeenCalledOnce();
@@ -2014,6 +2252,12 @@ function deferred<T>() {
     reject = onReject;
   });
   return { promise, resolve, reject };
+}
+
+async function waitForConnectionStart(): Promise<void> {
+  await vi.waitFor(() => expect(extensionMock.start).toHaveBeenCalledOnce());
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 describe("package.json manifest", () => {

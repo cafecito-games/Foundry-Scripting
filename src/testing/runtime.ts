@@ -28,6 +28,7 @@ export interface TestingRuntimeOptions {
   readonly onClear: () => void;
   readonly onState: (state: TestingState) => void;
   readonly lifecycleTimeoutMs?: number;
+  readonly phaseTimeoutMs?: number;
 }
 
 export interface TestingReadyContext {
@@ -53,9 +54,11 @@ export class TestingRuntime {
   private currentStateKind: TestingState["kind"] | undefined;
   private ready: TestingReadyContext | undefined;
   private readonly lifecycleTimeoutMs: number;
+  private readonly phaseTimeoutMs: number;
 
   constructor(private readonly options: TestingRuntimeOptions) {
     this.lifecycleTimeoutMs = options.lifecycleTimeoutMs ?? 5_000;
+    this.phaseTimeoutMs = options.phaseTimeoutMs ?? 30_000;
   }
 
   configure(configuration: TestingRuntimeConfiguration): Promise<void> {
@@ -174,7 +177,11 @@ export class TestingRuntime {
     externalSignal: AbortSignal | undefined,
   ): Promise<void> {
     try {
-      const adapter = await this.options.negotiate(request, signal);
+      const adapter = await this.runPhase(
+        "capabilities",
+        signal,
+        (phaseSignal) => this.options.negotiate(request, phaseSignal),
+      );
       if (!this.isCurrent(generation) || signal.aborted) {
         this.publishExternalCancellation(generation, externalSignal);
         return;
@@ -186,13 +193,15 @@ export class TestingRuntime {
           "Open a Foundry project folder before starting test discovery.",
         );
       }
-      const model = await this.options.discover(
-        {
-          ...request,
-          project: request.project,
-          protocolVersion: adapter.protocolVersion,
-        },
+      const discoveryRequest = {
+        ...request,
+        project: request.project,
+        protocolVersion: adapter.protocolVersion,
+      };
+      const model = await this.runPhase(
+        "discovery",
         signal,
+        (phaseSignal) => this.options.discover(discoveryRequest, phaseSignal),
       );
       if (!this.isCurrent(generation) || signal.aborted) {
         this.publishExternalCancellation(generation, externalSignal);
@@ -231,6 +240,47 @@ export class TestingRuntime {
               { cause: error },
             );
       this.publish({ kind: "error", failure });
+    }
+  }
+
+  private async runPhase<T>(
+    phase: "capabilities" | "discovery",
+    parentSignal: AbortSignal,
+    operation: (signal: AbortSignal) => Promise<T>,
+  ): Promise<T> {
+    if (parentSignal.aborted) {
+      throw abortError();
+    }
+    const controller = new AbortController();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let cancelPhase: (() => void) | undefined;
+    const interrupted = new Promise<never>((_resolve, reject) => {
+      cancelPhase = () => {
+        controller.abort();
+        reject(abortError());
+      };
+      parentSignal.addEventListener("abort", cancelPhase, { once: true });
+      timeout = setTimeout(() => {
+        reject(
+          new TestAdapterFailure(
+            "readiness_timeout",
+            `Foundry test adapter ${phase} did not complete within ${this.phaseTimeoutMs} ms.`,
+            { phase },
+          ),
+        );
+        controller.abort();
+      }, this.phaseTimeoutMs);
+      timeout.unref?.();
+    });
+    try {
+      return await Promise.race([operation(controller.signal), interrupted]);
+    } finally {
+      if (timeout !== undefined) {
+        clearTimeout(timeout);
+      }
+      if (cancelPhase !== undefined) {
+        parentSignal.removeEventListener("abort", cancelPhase);
+      }
     }
   }
 
@@ -290,6 +340,12 @@ function configurationKey(configuration: TestingRuntimeConfiguration): string {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
+}
+
+function abortError(): Error {
+  const error = new Error("Foundry test adapter operation was cancelled.");
+  error.name = "AbortError";
+  return error;
 }
 
 function errorMessage(error: unknown): string {

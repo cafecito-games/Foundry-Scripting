@@ -90,6 +90,7 @@ function connectionRefused(): Error & { code: string } {
 
 describe("connection modes", () => {
   const endpoints: TcpEndpoint[] = [];
+  const signals: AbortSignal[] = [];
   const clients: LanguageClientHandle[] = [];
   const states: ConnectionState[] = [];
   const output = { appendLine: vi.fn() };
@@ -99,6 +100,7 @@ describe("connection modes", () => {
 
   beforeEach(() => {
     endpoints.length = 0;
+    signals.length = 0;
     clients.length = 0;
     states.length = 0;
     output.appendLine.mockClear();
@@ -111,10 +113,14 @@ describe("connection modes", () => {
     vi.useRealTimers();
   });
 
-  function managerWith(clientQueue: LanguageClientHandle[]): ConnectionManager {
+  function managerWith(
+    clientQueue: LanguageClientHandle[],
+    initializationTimeoutMs?: number,
+  ): ConnectionManager {
     return new ConnectionManager({
-      createClient: (endpoint) => {
+      createClient: (endpoint, signal) => {
         endpoints.push(endpoint);
+        signals.push(signal);
         const client = clientQueue.shift();
         if (client === undefined) {
           throw new Error("test did not provide enough clients");
@@ -125,6 +131,7 @@ describe("connection modes", () => {
       coordinator,
       onStateChange: (state) => states.push(state),
       output,
+      initializationTimeoutMs,
     });
   }
 
@@ -349,6 +356,147 @@ describe("connection modes", () => {
       }),
     ).rejects.toBe(protocolError);
     expect(launchHost).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { mode: "attach" as const, endpoint: 6100 },
+    { mode: "spawn" as const, endpoint: 49152 },
+  ])(
+    "$mode bounds language-client initialization and cleans up late settlement",
+    async ({ mode, endpoint }) => {
+      vi.useFakeTimers();
+      const pendingStart = deferred<void>();
+      const client = testClient(vi.fn().mockReturnValue(pendingStart.promise));
+      if (mode === "spawn") {
+        launchHost.mockResolvedValue(createHost(endpoint));
+      }
+      const manager = managerWith([client], 25);
+
+      const starting = manager
+        .start({
+          settings: { mode, port: 6100, enginePath: "foundry" },
+          project: "/workspace/game",
+        })
+        .catch((error: unknown) => error);
+      await vi.waitFor(() => expect(client.start).toHaveBeenCalledOnce());
+      await vi.advanceTimersByTimeAsync(25);
+
+      const failure = await starting;
+      expect(failure).toBeInstanceOf(ConnectionFailure);
+      expect(failure).toMatchObject({
+        kind: "initialization_timeout",
+        project: "/workspace/game",
+        port: endpoint,
+      });
+      expect((failure as Error).message).toContain("/workspace/game");
+      expect((failure as Error).message).toContain(`127.0.0.1:${endpoint}`);
+      expect((failure as Error).message).toContain("25 ms");
+      expect(signals).toHaveLength(1);
+      expect(signals[0]?.aborted).toBe(true);
+      expect(client.stop).toHaveBeenCalledOnce();
+
+      pendingStart.resolve(undefined);
+      await vi.runAllTimersAsync();
+      await manager.stop();
+      expect(client.stop).toHaveBeenCalledOnce();
+      expect(states.at(-1)).toEqual({ kind: "disconnected" });
+    },
+  );
+
+  it("auto does not reinterpret an initialization timeout as spawn fallback", async () => {
+    vi.useFakeTimers();
+    const pendingStart = deferred<void>();
+    const client = testClient(vi.fn().mockReturnValue(pendingStart.promise));
+    const manager = managerWith([client], 25);
+
+    const starting = manager
+      .start({
+        settings: { mode: "auto", port: 6005, enginePath: "foundry" },
+        project: "/workspace/game",
+      })
+      .catch((error: unknown) => error);
+    await vi.waitFor(() => expect(client.start).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(25);
+
+    await expect(starting).resolves.toMatchObject({
+      kind: "initialization_timeout",
+    });
+    expect(launchHost).not.toHaveBeenCalled();
+    expect(client.stop).toHaveBeenCalledOnce();
+    pendingStart.resolve(undefined);
+  });
+
+  it("reports timeout when abort makes the client reject synchronously", async () => {
+    vi.useFakeTimers();
+    const client = testClient(vi.fn(() =>
+      new Promise<void>((_resolve, reject) => {
+        const signal = signals[0];
+        if (signal === undefined) {
+          throw new Error("client startup signal was not captured");
+        }
+        signal.addEventListener("abort", () => {
+          const error = new Error("client startup aborted");
+          error.name = "AbortError";
+          reject(error);
+        }, { once: true });
+      })));
+    const manager = managerWith([client], 25);
+
+    const starting = manager
+      .start({
+        settings: { mode: "attach", port: 6005, enginePath: "foundry" },
+        project: "/workspace/game",
+      })
+      .catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(25);
+
+    await expect(starting).resolves.toMatchObject({
+      kind: "initialization_timeout",
+    });
+    expect(client.stop).toHaveBeenCalledOnce();
+  });
+
+  it("removes parent abort listeners when client creation throws synchronously", async () => {
+    const addEventListener = vi.spyOn(
+      AbortSignal.prototype,
+      "addEventListener",
+    );
+    const removeEventListener = vi.spyOn(
+      AbortSignal.prototype,
+      "removeEventListener",
+    );
+    const factoryFailure = new Error("client factory failed");
+    const manager = new ConnectionManager({
+      createClient: () => {
+        throw factoryFailure;
+      },
+      coordinator,
+      onStateChange: (state) => states.push(state),
+      output,
+    });
+
+    try {
+      await expect(
+        manager.start({
+          settings: { mode: "attach", port: 6005, enginePath: "foundry" },
+          project: "/workspace/game",
+        }),
+      ).rejects.toBe(factoryFailure);
+
+      const addedAbortListeners = addEventListener.mock.calls
+        .filter(([type]) => type === "abort")
+        .map(([, listener]) => listener);
+      const removedAbortListeners = removeEventListener.mock.calls
+        .filter(([type]) => type === "abort")
+        .map(([, listener]) => listener);
+      expect(addedAbortListeners.length).toBeGreaterThan(0);
+      expect(removedAbortListeners).toEqual(
+        expect.arrayContaining(addedAbortListeners),
+      );
+    } finally {
+      addEventListener.mockRestore();
+      removeEventListener.mockRestore();
+    }
   });
 
   it("reports attachment refusal with the project and port", async () => {
