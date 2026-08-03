@@ -1,7 +1,9 @@
-import { readFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 const repositoryRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -19,6 +21,15 @@ const expectedScenarios = [
   "restricted",
   "virtual-workspace",
 ];
+const temporaryDirectories = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories.splice(0).map((directory) =>
+      rm(directory, { recursive: true, force: true }),
+    ),
+  );
+});
 
 describe("packaged VS Code integration runner contract", () => {
   it("pins the complete order-independent scenario inventory to VS Code 1.90.0", async () => {
@@ -120,6 +131,65 @@ describe("packaged VS Code integration runner contract", () => {
     expect(virtual.launchArgs[0]).toBe(
       "--folder-uri=foundry-e2e:/tmp/fs-e2e/workspace",
     );
+  });
+
+  it("terminates recorded fake processes during failure cleanup", async () => {
+    const runner = await import("./run-vscode-integration.mjs");
+    const root = await mkdtemp(path.join(os.tmpdir(), "fse2e-contract-"));
+    temporaryDirectories.push(root);
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+    });
+    expect(child.pid).toBeTypeOf("number");
+    await writeFile(
+      path.join(root, "events.ndjson"),
+      `${JSON.stringify({ phase: "start", pid: child.pid })}\n`,
+    );
+
+    const closed = new Promise((resolve) => {
+      const timeout = setTimeout(() => resolve(false), 2_000);
+      child.once("close", () => {
+        clearTimeout(timeout);
+        resolve(true);
+      });
+    });
+    await runner.terminateRecordedProcesses(root);
+    expect(await closed).toBe(true);
+  });
+
+  it("fails postchecks on arbitrary Extension Host errors", async () => {
+    const runner = await import("./run-vscode-integration.mjs");
+    const root = await mkdtemp(path.join(os.tmpdir(), "fse2e-contract-"));
+    temporaryDirectories.push(root);
+    const paths = runner.createScenarioPaths(root, "language-tasks");
+    const extensionHostLogs = path.join(paths.logs, "window1", "exthost");
+    await Promise.all([
+      mkdir(paths.control, { recursive: true }),
+      mkdir(paths.workspace, { recursive: true }),
+      mkdir(extensionHostLogs, { recursive: true }),
+    ]);
+    await writeFile(
+      path.join(extensionHostLogs, "exthost.log"),
+      "2026-08-03 [error] arbitrary extension failure\n",
+    );
+    await writeFile(path.join(paths.logs, "vscode-stderr.log"), "");
+
+    await expect(runner.assertPostScenario(paths)).rejects.toThrow(
+      "asynchronous Extension Host failures",
+    );
+  });
+
+  it("rejects unexpected captured stderr while allowing virtual-provider startup noise", async () => {
+    const runner = await import("./run-vscode-integration.mjs");
+    expect(
+      runner.unexpectedVSCodeStderrLines(
+        "Ignoring the error while validating workspace folder foundry-e2e:/project - ENOPRO\n" +
+          "No search provider registered for scheme: foundry-e2e, waiting\n",
+      ),
+    ).toEqual([]);
+    expect(
+      runner.unexpectedVSCodeStderrLines("arbitrary extension stderr\n"),
+    ).toEqual(["arbitrary extension stderr"]);
   });
 
   it("exposes the suite and a required bounded CI job", async () => {

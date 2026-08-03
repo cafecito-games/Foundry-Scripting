@@ -7,6 +7,7 @@ const extensionId = "cafecito-games.foundryscript";
 const control = requiredEnvironment("FOUNDRY_E2E_CONTROL");
 const fakeFoundry = requiredEnvironment("FOUNDRY_E2E_FAKE_FOUNDRY");
 const workspaceRoot = requiredEnvironment("FOUNDRY_E2E_WORKSPACE");
+const logsRoot = requiredEnvironment("FOUNDRY_E2E_LOGS");
 const eventsPath = path.join(control, "events.ndjson");
 const statePath = path.join(control, "state.json");
 
@@ -104,9 +105,12 @@ async function waitForAdapterGeneration(count) {
     const capabilities = phaseEvents(events, "capabilities");
     const discoveries = phaseEvents(events, "discover");
     const exits = events.filter((event) => event.phase === "exit");
+    if (capabilities.length > count || discoveries.length > count) {
+      throw new Error(`Unexpected duplicate test adapter generation ${count + 1}.`);
+    }
     if (
-      capabilities.length < count ||
-      discoveries.length < count ||
+      capabilities.length !== count ||
+      discoveries.length !== count ||
       ![capabilities[count - 1], discoveries[count - 1]].every((start) =>
         exits.some((exit) => exit.invocationId === start.invocationId),
       )
@@ -121,8 +125,46 @@ async function waitForAdapterGeneration(count) {
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
+    const testingOutput = await readTestingOutput();
+    const readyCount = testingOutput.split("Test adapter ready:").length - 1;
+    if (readyCount > count) {
+      throw new Error(`Unexpected duplicate ready testing generation ${count + 1}.`);
+    }
+    if (readyCount !== count) return undefined;
+    const discoveryArtifact = events.find(
+      (event) =>
+        event.invocationId === discoveries[count - 1].invocationId &&
+        event.phase === "artifact",
+    );
+    assert.deepEqual(
+      {
+        testFile: discoveryArtifact?.testFile,
+        testId: discoveryArtifact?.testId,
+      },
+      { testFile: "res://smoke.fs", testId: "test-e2e" },
+    );
     return { events, capabilities, discoveries };
   });
+}
+
+async function readTestingOutput() {
+  const logs = await listFiles(logsRoot);
+  const testingLogs = logs.filter((file) =>
+    path.basename(file).includes("FoundryScript Testing"),
+  );
+  return (
+    await Promise.all(testingLogs.map((file) => fs.readFile(file, "utf8")))
+  ).join("\n");
+}
+
+async function listFiles(directory) {
+  const files = [];
+  for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+    const candidate = path.join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...(await listFiles(candidate)));
+    else if (entry.isFile()) files.push(candidate);
+  }
+  return files;
 }
 
 async function testExplorer() {
@@ -146,6 +188,12 @@ async function testExplorer() {
       .map((event) => event.invocationId),
   );
   assert.ok(starts.every((event) => exits.has(event.invocationId)));
+  assert.equal(second.capabilities.length, 2);
+  assert.equal(second.discoveries.length, 2);
+  assert.equal(
+    (await readTestingOutput()).split("Test adapter ready:").length - 1,
+    2,
+  );
 }
 
 async function runLintTask() {

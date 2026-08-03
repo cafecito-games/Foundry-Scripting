@@ -84,6 +84,7 @@ function adapter() {
       framework: { id: "foundry-e2e", name: "Foundry E2E", version: "1.0.0" },
       extensions: [],
     });
+    record("artifact", { operation, output });
   } else if (operation === "discover") {
     const records = [
       { protocol: "foundry-test-adapter", version: 1, event: "discovery_start", root: "res://tests" },
@@ -117,6 +118,12 @@ function adapter() {
       { protocol: "foundry-test-adapter", version: 1, event: "discovery_end", suite_count: 1, test_count: 1, error_count: 0 },
     ];
     writeFileSync(output, `${records.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+    record("artifact", {
+      operation,
+      output,
+      testFile: "res://smoke.fs",
+      testId: "test-e2e",
+    });
   } else {
     finish(64);
   }

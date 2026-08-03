@@ -16,7 +16,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   downloadAndUnzipVSCode,
   resolveCliArgsFromVSCodeExecutablePath,
-  runTests,
 } from "@vscode/test-electron";
 import { runBoundedCommand } from "./run-vscode-minimum.mjs";
 
@@ -108,50 +107,51 @@ async function prepareWorkspace(paths) {
     mkdir(paths.control, { recursive: true }),
     mkdir(paths.logs, { recursive: true }),
   ]);
-  const fixture = path.join(
-    repositoryRoot,
-    "tests/extension-host/fixtures",
-    paths.scenario === "reconfiguration" ? "multi-root" : "local",
-  );
-  await cp(fixture, paths.workspace, { recursive: true });
-  const settingsDirectory = path.join(paths.workspace, ".vscode");
-  await mkdir(settingsDirectory, { recursive: true });
-  const usesMissingExecutable = paths.scenario === "cold-start-failure";
-  const settings = {
-    "foundryScript.enginePath": usesMissingExecutable
-      ? path.join(paths.root, "missing-foundry")
-      : fakeFoundryPath,
-    "foundryScript.lsp.mode":
-      paths.scenario === "language-tasks" ||
-      paths.scenario === "test-explorer" ||
-      paths.scenario === "diagnostics"
-        ? "off"
-        : "spawn",
-    "foundryScript.testing.enabled":
-      paths.scenario === "test-explorer" ||
-      paths.scenario === "reconfiguration" ||
-      paths.scenario === "normal-shutdown" ||
-      paths.scenario === "restricted" ||
-      paths.scenario === "virtual-workspace",
-    "foundryScript.testing.runner": "res://tests/runner.fs",
-    "foundryScript.testing.args": [],
-  };
-  await writeFile(
-    path.join(settingsDirectory, "settings.json"),
-    `${JSON.stringify(settings, null, 2)}\n`,
-  );
-  if (paths.scenario === "reconfiguration") {
-    await writeFile(
-      path.join(paths.workspace, "e2e.code-workspace"),
-      `${JSON.stringify(
-        {
-          folders: [{ path: "first" }, { path: "second" }],
-          settings,
-        },
-        null,
-        2,
-      )}\n`,
+  if (paths.scenario !== "virtual-workspace") {
+    const fixture = path.join(
+      repositoryRoot,
+      "tests/extension-host/fixtures",
+      paths.scenario === "reconfiguration" ? "multi-root" : "local",
     );
+    await cp(fixture, paths.workspace, { recursive: true });
+    const settingsDirectory = path.join(paths.workspace, ".vscode");
+    await mkdir(settingsDirectory, { recursive: true });
+    const usesMissingExecutable = paths.scenario === "cold-start-failure";
+    const settings = {
+      "foundryScript.enginePath": usesMissingExecutable
+        ? path.join(paths.root, "missing-foundry")
+        : fakeFoundryPath,
+      "foundryScript.lsp.mode":
+        paths.scenario === "language-tasks" ||
+        paths.scenario === "test-explorer" ||
+        paths.scenario === "diagnostics"
+          ? "off"
+          : "spawn",
+      "foundryScript.testing.enabled":
+        paths.scenario === "test-explorer" ||
+        paths.scenario === "reconfiguration" ||
+        paths.scenario === "normal-shutdown" ||
+        paths.scenario === "restricted",
+      "foundryScript.testing.runner": "res://tests/runner.fs",
+      "foundryScript.testing.args": [],
+    };
+    await writeFile(
+      path.join(settingsDirectory, "settings.json"),
+      `${JSON.stringify(settings, null, 2)}\n`,
+    );
+    if (paths.scenario === "reconfiguration") {
+      await writeFile(
+        path.join(paths.workspace, "e2e.code-workspace"),
+        `${JSON.stringify(
+          {
+            folders: [{ path: "first" }, { path: "second" }],
+            settings,
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    }
   }
   if (paths.scenario === "restricted") {
     const userSettingsDirectory = path.join(paths.userData, "User");
@@ -210,36 +210,56 @@ async function installVsix(vscodeExecutablePath, vsix, paths) {
   );
 }
 
-async function runRestrictedScenario(vscodeExecutablePath, launch) {
+async function runVSCodeScenario(vscodeExecutablePath, launch, paths) {
+  const developmentPaths = Array.isArray(launch.extensionDevelopmentPath)
+    ? launch.extensionDevelopmentPath
+    : [launch.extensionDevelopmentPath];
   const args = [
     ...launch.launchArgs,
     "--no-sandbox",
     "--disable-gpu-sandbox",
     `--extensionTestsPath=${launch.extensionTestsPath}`,
-    `--extensionDevelopmentPath=${launch.extensionDevelopmentPath}`,
+    ...developmentPaths.map(
+      (developmentPath) => `--extensionDevelopmentPath=${developmentPath}`,
+    ),
   ];
-  await new Promise((resolve, reject) => {
+  const { stdout, stderr, code, signal } = await new Promise((resolve, reject) => {
     const child = spawn(vscodeExecutablePath, args, {
       env: { ...process.env, ...launch.extensionTestsEnv },
-      stdio: "inherit",
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      process.stdout.write(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+      process.stderr.write(chunk);
     });
     child.once("error", reject);
     child.once("close", (code, signal) => {
-      if (code === 0) resolve();
-      else reject(new Error(`Restricted VS Code exited with ${code ?? signal}.`));
+      resolve({ stdout, stderr, code, signal });
     });
   });
+  await Promise.all([
+    writeFile(path.join(paths.logs, "vscode-stdout.log"), stdout),
+    writeFile(path.join(paths.logs, "vscode-stderr.log"), stderr),
+  ]);
+  if (code !== 0) {
+    throw new Error(`VS Code exited with ${code ?? signal}.\n${stderr}`);
+  }
 }
 
 async function runScenario(vscodeExecutablePath, vsix, paths) {
   await prepareWorkspace(paths);
   await installVsix(vscodeExecutablePath, vsix, paths);
   const launch = buildScenarioLaunch(paths);
-  if (paths.scenario === "restricted") {
-    await runRestrictedScenario(vscodeExecutablePath, launch);
-  } else {
-    await runTests({ ...launch, vscodeExecutablePath });
-  }
+  await runVSCodeScenario(vscodeExecutablePath, launch, paths);
   await assertPostScenario(paths);
 }
 
@@ -266,7 +286,7 @@ function isProcessAlive(pid) {
   }
 }
 
-async function assertPostScenario(paths) {
+export async function assertPostScenario(paths) {
   const events = await readEvents(paths.control);
   if (
     [
@@ -312,6 +332,32 @@ async function assertPostScenario(paths) {
       if (error?.code !== "ENOENT") throw error;
     }
   }
+  if (paths.scenario === "pending-start-shutdown") {
+    const toolingStarts = starts.filter((event) =>
+      event.argv[0] === "tooling" && event.argv[1] === "serve",
+    );
+    if (
+      toolingStarts.length !== 1 ||
+      !events.some(
+        (event) =>
+          event.invocationId === toolingStarts[0].invocationId &&
+          event.phase === "signal" &&
+          event.signal === "SIGTERM",
+      )
+    ) {
+      throw new Error(
+        "pending-start-shutdown did not terminate its never-ready host with SIGTERM.",
+      );
+    }
+  }
+  if (paths.scenario === "virtual-workspace") {
+    const localEntries = await readdir(paths.workspace);
+    if (localEntries.length !== 0) {
+      throw new Error(
+        `virtual-workspace unexpectedly exposed local fixture entries: ${localEntries.join(", ")}`,
+      );
+    }
+  }
   await assertCleanExtensionHostLogs(paths);
 }
 
@@ -320,20 +366,50 @@ async function assertCleanExtensionHostLogs(paths) {
   const failures = [];
   for (const file of files) {
     const content = await readFile(file, "utf8");
-    for (const marker of [
+    const normalizedFile = file.replaceAll("\\", "/");
+    const markers = [
       "rejected promise not handled",
       "UnhandledPromiseRejection",
       "unhandled rejection",
       "Channel has been closed",
-    ]) {
+    ];
+    if (
+      normalizedFile.endsWith("/exthost/exthost.log") ||
+      normalizedFile.endsWith("/renderer.log")
+    ) {
+      markers.push("[error]");
+    }
+    for (const marker of markers) {
       if (content.includes(marker)) failures.push(`${file}: ${marker}`);
     }
   }
+  const stderrPath = path.join(paths.logs, "vscode-stderr.log");
+  const stderr = await readFile(stderrPath, "utf8");
+  failures.push(
+    ...unexpectedVSCodeStderrLines(stderr).map(
+      (line) => `${stderrPath}: unexpected stderr: ${line}`,
+    ),
+  );
   if (failures.length > 0) {
     throw new Error(
       `${paths.scenario} logged asynchronous Extension Host failures:\n${failures.join("\n")}`,
     );
   }
+}
+
+export function unexpectedVSCodeStderrLines(stderr) {
+  const allowed = [
+    /^Ignoring the error while validating workspace folder foundry-e2e:/,
+    /^No search provider registered for scheme: foundry-e2e, waiting$/,
+    /^Failed to fetch chat participant registry\b/,
+    /\b(?:libva|MESA-LOADER|D-Bus|dbus|ozone|X11)\b/i,
+  ];
+  return stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(
+      (line) => line !== "" && !allowed.some((pattern) => pattern.test(line)),
+    );
 }
 
 async function listFiles(root) {
@@ -346,7 +422,7 @@ async function listFiles(root) {
   return files;
 }
 
-async function terminateRecordedProcesses(control) {
+export async function terminateRecordedProcesses(control) {
   const starts = (await readEvents(control)).filter(
     (event) => event.phase === "start" && Number.isSafeInteger(event.pid),
   );
