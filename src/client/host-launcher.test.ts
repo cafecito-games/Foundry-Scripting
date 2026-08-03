@@ -118,6 +118,11 @@ describe("host launch abstraction", () => {
   it.each([
     ["wrong marker", `OTHER ${JSON.stringify(validReadiness)}`],
     ["malformed JSON", "FOUNDRY_TOOLING {"],
+    ["null JSON", "FOUNDRY_TOOLING null"],
+    ["boolean JSON", "FOUNDRY_TOOLING true"],
+    ["number JSON", "FOUNDRY_TOOLING 42"],
+    ["string JSON", 'FOUNDRY_TOOLING "readiness"'],
+    ["array JSON", "FOUNDRY_TOOLING []"],
     [
       "wrong project",
       `FOUNDRY_TOOLING ${JSON.stringify({ ...validReadiness, project: "/workspace/other" })}`,
@@ -154,6 +159,30 @@ describe("host launch abstraction", () => {
     expect(
       parseToolingReadinessLine(line, "/workspace/game"),
     ).toBeUndefined();
+  });
+
+  it("ignores malformed stdout readiness before accepting a later valid record", async () => {
+    const child = new FakeChildProcess();
+    const launcher = new FoundryHostLauncher({
+      spawnProcess: () => {
+        queueMicrotask(() => {
+          child.stdout.write("FOUNDRY_TOOLING null\n");
+          child.stdout.write(`FOUNDRY_TOOLING ${JSON.stringify(validReadiness)}\n`);
+        });
+        return child.asChildProcess();
+      },
+      inactivityTimeoutMs: 100,
+      absoluteTimeoutMs: 200,
+      pollIntervalMs: 5,
+    });
+
+    const host = await launcher.launch({
+      enginePath: "/opt/foundry",
+      project: "/workspace/game",
+    });
+
+    expect(host.readiness.lspPort).toBe(49152);
+    await host.stop();
   });
 
   it.each(["complete", "split"] as const)(
