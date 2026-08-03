@@ -423,7 +423,10 @@ async function listFiles(root) {
   return files;
 }
 
-export async function terminateRecordedProcesses(control) {
+export async function terminateRecordedProcesses(
+  control,
+  { terminationGraceMs = 2_000 } = {},
+) {
   const starts = (await readEvents(control)).filter(
     (event) => event.phase === "start" && Number.isSafeInteger(event.pid),
   );
@@ -437,7 +440,7 @@ export async function terminateRecordedProcesses(control) {
       if (error?.code !== "ESRCH") throw error;
     }
   }
-  const deadline = Date.now() + 2_000;
+  const deadline = Date.now() + terminationGraceMs;
   let remaining = live.filter(isProcessAlive);
   while (remaining.length > 0 && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 25));
@@ -449,6 +452,17 @@ export async function terminateRecordedProcesses(control) {
     } catch (error) {
       if (error?.code !== "ESRCH") throw error;
     }
+  }
+  const forceDeadline = Date.now() + terminationGraceMs;
+  remaining = remaining.filter(isProcessAlive);
+  while (remaining.length > 0 && Date.now() < forceDeadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    remaining = remaining.filter(isProcessAlive);
+  }
+  if (remaining.length > 0) {
+    throw new Error(
+      `Failure cleanup left fake Foundry PIDs alive: ${remaining.join(", ")}.`,
+    );
   }
   const adapterDirectories = starts
     .map((event) => {
@@ -474,21 +488,23 @@ export async function terminateRecordedProcesses(control) {
 export async function runIntegrationSuite({
   scenarios = INTEGRATION_SCENARIOS,
   keepArtifacts = process.env.FOUNDRY_E2E_KEEP_ARTIFACTS === "1",
+  packageSuite = packageOnce,
+  downloadVSCode = () =>
+    downloadAndUnzipVSCode({ version: VSCODE_VERSION }),
+  runScenarioCommand = runBoundedCommand,
 } = {}) {
   const suiteRoot = await mkdtemp(path.join(shortRootParent(), "fse2e-"));
   const failures = [];
   try {
-    const vsix = await packageOnce();
-    const vscodeExecutablePath = await downloadAndUnzipVSCode({
-      version: VSCODE_VERSION,
-    });
+    const vsix = await packageSuite();
+    const vscodeExecutablePath = await downloadVSCode();
     for (const scenario of scenarios) {
       if (!INTEGRATION_SCENARIOS.includes(scenario)) {
         throw new Error(`Unknown integration scenario: ${scenario}`);
       }
       const paths = createScenarioPaths(suiteRoot, scenario);
       try {
-        await runBoundedCommand({
+        await runScenarioCommand({
           command: process.execPath,
           args: [
             fileURLToPath(import.meta.url),

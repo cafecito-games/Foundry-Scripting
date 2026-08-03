@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const fakePath = fileURLToPath(new URL("./foundry.mjs", import.meta.url));
 const temporaryDirectories = [];
+const temporaryChildren = [];
 
 async function controlDirectory(state = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "foundry-fake-test-"));
@@ -26,7 +27,45 @@ async function spawnFake(args, control) {
   });
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
+  temporaryChildren.push(child);
   return child;
+}
+
+async function readiness(child) {
+  let buffered = "";
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error("readiness timeout")),
+      2_000,
+    );
+    child.stdout.on("data", (chunk) => {
+      buffered += chunk;
+      const line = buffered
+        .split("\n")
+        .find((candidate) => candidate.startsWith("FOUNDRY_TOOLING "));
+      if (line) {
+        clearTimeout(timeout);
+        resolve(JSON.parse(line.slice("FOUNDRY_TOOLING ".length)));
+      }
+    });
+  });
+}
+
+async function terminateChild(child) {
+  if (child.exitCode !== null) return;
+  await new Promise((resolve) => {
+    let forceTimeout;
+    const settleTimeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      forceTimeout = setTimeout(resolve, 1_000);
+    }, 1_000);
+    child.once("close", () => {
+      clearTimeout(settleTimeout);
+      clearTimeout(forceTimeout);
+      resolve();
+    });
+    child.kill("SIGTERM");
+  });
 }
 
 async function output(child) {
@@ -49,6 +88,7 @@ async function records(control) {
 }
 
 afterEach(async () => {
+  await Promise.all(temporaryChildren.splice(0).map(terminateChild));
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) =>
       rm(directory, { recursive: true, force: true }),
@@ -119,27 +159,16 @@ describe("fake Foundry executable", () => {
       ["tooling", "serve", "--project", project, "--lsp-port", "0", "--dap-port", "0"],
       control,
     );
-    let buffered = "";
-    const readiness = await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("readiness timeout")), 2_000);
-      child.stdout.on("data", (chunk) => {
-        buffered += chunk;
-        const line = buffered.split("\n").find((candidate) => candidate.startsWith("FOUNDRY_TOOLING "));
-        if (line) {
-          clearTimeout(timeout);
-          resolve(JSON.parse(line.slice("FOUNDRY_TOOLING ".length)));
-        }
-      });
-    });
-    expect(readiness).toMatchObject({
+    const ready = await readiness(child);
+    expect(ready).toMatchObject({
       project,
       pid: child.pid,
       local_only: true,
       services: expect.arrayContaining(["lsp", "dap"]),
     });
-    expect(readiness.lsp_port).not.toBe(readiness.dap_port);
+    expect(ready.lsp_port).not.toBe(ready.dap_port);
 
-    const socket = net.createConnection({ host: "127.0.0.1", port: readiness.lsp_port });
+    const socket = net.createConnection({ host: "127.0.0.1", port: ready.lsp_port });
     await new Promise((resolve, reject) => {
       socket.once("connect", resolve);
       socket.once("error", reject);
@@ -195,10 +224,72 @@ describe("fake Foundry executable", () => {
     );
     await expect(
       new Promise((resolve, reject) => {
-        const probe = net.createConnection({ host: "127.0.0.1", port: readiness.lsp_port });
-        probe.once("connect", () => resolve("connected"));
+        const probe = net.createConnection({ host: "127.0.0.1", port: ready.lsp_port });
+        probe.once("connect", () => {
+          probe.destroy();
+          resolve("connected");
+        });
         probe.once("error", reject);
       }),
     ).rejects.toMatchObject({ code: "ECONNREFUSED" });
+  });
+
+  it("supports a clean LSP disconnect control mode", async () => {
+    const control = await controlDirectory({ mode: "clean-disconnect" });
+    const child = await spawnFake(
+      ["tooling", "serve", "--project", control, "--lsp-port", "0", "--dap-port", "0"],
+      control,
+    );
+    const ready = await readiness(child);
+    const socket = net.createConnection({
+      host: "127.0.0.1",
+      port: ready.lsp_port,
+    });
+    await new Promise((resolve, reject) => {
+      socket.once("connect", resolve);
+      socket.once("error", reject);
+    });
+    const initialize = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {},
+    });
+    socket.write(
+      `Content-Length: ${Buffer.byteLength(initialize)}\r\n\r\n${initialize}`,
+    );
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("initialize response timeout")),
+        2_000,
+      );
+      socket.on("data", (chunk) => {
+        if (chunk.toString().includes('"id":1')) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+    });
+    const disconnected = new Promise((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("clean disconnect timeout")),
+        2_000,
+      );
+      socket.once("end", () => {
+        clearTimeout(timeout);
+        resolve(true);
+      });
+    });
+    const initialized = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "initialized",
+      params: {},
+    });
+    socket.write(
+      `Content-Length: ${Buffer.byteLength(initialized)}\r\n\r\n${initialized}`,
+    );
+    expect(await disconnected).toBe(true);
+    child.kill("SIGTERM");
+    expect((await output(child)).code).toBe(0);
   });
 });

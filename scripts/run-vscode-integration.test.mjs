@@ -144,10 +144,19 @@ describe("packaged VS Code integration runner contract", () => {
     const runner = await import("./run-vscode-integration.mjs");
     const root = await mkdtemp(path.join(os.tmpdir(), "fse2e-contract-"));
     temporaryDirectories.push(root);
-    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-      stdio: "ignore",
-    });
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000)",
+      ],
+      { stdio: ["ignore", "pipe", "ignore"] },
+    );
     expect(child.pid).toBeTypeOf("number");
+    await new Promise((resolve, reject) => {
+      child.stdout.once("data", resolve);
+      child.once("error", reject);
+    });
     const adapterDirectory = await mkdtemp(
       path.join(os.tmpdir(), "foundryscript-test-adapter-"),
     );
@@ -170,7 +179,7 @@ describe("packaged VS Code integration runner contract", () => {
         resolve(true);
       });
     });
-    await runner.terminateRecordedProcesses(root);
+    await runner.terminateRecordedProcesses(root, { terminationGraceMs: 100 });
     expect(await closed).toBe(true);
     await expect(access(adapterDirectory)).rejects.toMatchObject({
       code: "ENOENT",
@@ -211,6 +220,34 @@ describe("packaged VS Code integration runner contract", () => {
     expect(
       runner.unexpectedVSCodeStderrLines("arbitrary extension stderr\n"),
     ).toEqual(["arbitrary extension stderr"]);
+  });
+
+  it("retains scenario logs when an isolated worker fails", async () => {
+    const runner = await import("./run-vscode-integration.mjs");
+    let suiteRoot;
+    await expect(
+      runner.runIntegrationSuite({
+        scenarios: ["language-tasks"],
+        keepArtifacts: false,
+        packageSuite: async () => "/tmp/fake.vsix",
+        downloadVSCode: async () => "/tmp/fake-code",
+        runScenarioCommand: async ({ args }) => {
+          suiteRoot = args[3];
+          const logs = path.join(suiteRoot, "language-tasks", "logs");
+          await mkdir(logs, { recursive: true });
+          await writeFile(path.join(logs, "failure.log"), "retained\n");
+          throw new Error("intentional worker failure");
+        },
+      }),
+    ).rejects.toThrow("1 Extension Host scenario(s) failed");
+    expect(suiteRoot).toBeTypeOf("string");
+    temporaryDirectories.push(suiteRoot);
+    await expect(
+      readFile(
+        path.join(suiteRoot, "language-tasks", "logs", "failure.log"),
+        "utf8",
+      ),
+    ).resolves.toBe("retained\n");
   });
 
   it("exposes the suite and a required bounded CI job", async () => {
