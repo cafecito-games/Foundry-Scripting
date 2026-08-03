@@ -18,7 +18,6 @@ interface DiagnosticBatch {
 
 export class FoundryLintDiagnosticsPublisher {
   private generation = 0;
-  private previousUris = new Map<string, vscode.Uri>();
 
   constructor(private readonly diagnostics: DiagnosticsUnit) {}
 
@@ -61,17 +60,7 @@ export class FoundryLintDiagnosticsPublisher {
       batch.diagnostics.push(toVscodeDiagnostic(parsed));
     }
 
-    for (const batch of batches.values()) {
-      this.diagnostics.accept({ source: "cli", ...batch });
-    }
-    for (const [key, uri] of this.previousUris) {
-      if (!batches.has(key)) {
-        this.diagnostics.accept({ source: "cli", uri, diagnostics: [] });
-      }
-    }
-    this.previousUris = new Map(
-      [...batches].map(([key, batch]) => [key, batch.uri]),
-    );
+    this.diagnostics.replace({ source: "cli", entries: [...batches.values()] });
   }
 }
 

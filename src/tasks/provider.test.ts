@@ -7,6 +7,7 @@ import capturedFixtureJson from "./fixtures/lint-report.json";
 import type {
   DiagnosticsUnit,
   SourcedDiagnostics,
+  SourcedDiagnosticsSnapshot,
 } from "../diagnostics/index.js";
 
 const providerMock = vi.hoisted(() => ({
@@ -137,12 +138,14 @@ const capturedFixture = JSON.stringify(capturedFixtureJson);
 
 function createDiagnosticsHarness() {
   const accept = vi.fn<(update: SourcedDiagnostics) => void>();
+  const replace = vi.fn<(snapshot: SourcedDiagnosticsSnapshot) => void>();
   const diagnostics: DiagnosticsUnit = {
     accept: (update) => accept(update),
+    replace: (snapshot) => replace(snapshot),
     setLanguageServerConnected: vi.fn(),
     dispose: vi.fn(),
   };
-  return { diagnostics, accept };
+  return { diagnostics, accept, replace };
 }
 
 function taskTerminal(task: vscode.Task): Promise<vscode.Pseudoterminal> {
@@ -425,7 +428,7 @@ describe("Foundry task provider", () => {
       uri: { fsPath: "/workspace/game" },
     });
     const child = new FakeChildProcess();
-    const { diagnostics, accept } = createDiagnosticsHarness();
+    const { diagnostics, accept, replace } = createDiagnosticsHarness();
     const provider = new FoundryTaskProvider({
       diagnostics,
       spawnProcess: () => child.asChildProcess(),
@@ -449,11 +452,15 @@ describe("Foundry task provider", () => {
     expect(writes.join("")).toBe(
       `${capturedFixture.slice(0, split)}ordinary stderr\r\n${capturedFixture.slice(split)}`,
     );
-    expect(accept).toHaveBeenCalledTimes(2);
-    expect(accept.mock.calls.map(([update]) => update.source)).toEqual([
-      "cli",
-      "cli",
-    ]);
+    expect(accept).not.toHaveBeenCalled();
+    expect(replace).toHaveBeenCalledOnce();
+    expect(replace.mock.calls[0]?.[0]).toMatchObject({
+      source: "cli",
+      entries: [
+        { uri: { fsPath: "/workspace/game/tests/grammar/annotations.fs" } },
+        { uri: { fsPath: "/workspace/game/tests/grammar/comments.fs" } },
+      ],
+    });
   });
 
   it.each([

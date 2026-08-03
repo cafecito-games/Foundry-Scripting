@@ -195,6 +195,86 @@ describe("diagnostics arbitration", () => {
     expect(collection.has(uri)).toBe(false);
   });
 
+  it("clears LSP-only output after a clean complete CLI snapshot arrives while connected", () => {
+    const { collection, unit } = createHarness(true);
+    const uri = fakeUri("file:///player.fs");
+
+    unit.accept({ source: "lsp", uri, diagnostics: [fakeDiagnostic("lsp")] });
+    unit.replace({ source: "cli", entries: [] });
+    unit.setLanguageServerConnected(false);
+
+    expect(collection.has(uri)).toBe(false);
+  });
+
+  it("retains last-known LSP output on disconnect until a complete CLI snapshot arrives", () => {
+    const { collection, unit } = createHarness(true);
+    const uri = fakeUri("file:///player.fs");
+
+    unit.accept({ source: "lsp", uri, diagnostics: [fakeDiagnostic("lsp")] });
+    unit.setLanguageServerConnected(false);
+    expect(labelsAt(collection, uri)).toEqual(["lsp"]);
+
+    unit.replace({ source: "cli", entries: [] });
+
+    expect(collection.has(uri)).toBe(false);
+  });
+
+  it("keeps active LSP output through a clean CLI snapshot then projects it when disconnected", () => {
+    const { collection, unit } = createHarness(true);
+    const uri = fakeUri("file:///player.fs");
+
+    unit.accept({ source: "lsp", uri, diagnostics: [fakeDiagnostic("lsp")] });
+    unit.replace({ source: "cli", entries: [] });
+
+    expect(labelsAt(collection, uri)).toEqual(["lsp"]);
+    unit.setLanguageServerConnected(false);
+    expect(collection.has(uri)).toBe(false);
+  });
+
+  it("replaces a nonempty CLI snapshot with a clean one without disturbing active LSP output", () => {
+    const { collection, unit } = createHarness(true);
+    const uri = fakeUri("file:///player.fs");
+
+    unit.accept({ source: "lsp", uri, diagnostics: [fakeDiagnostic("lsp")] });
+    unit.replace({
+      source: "cli",
+      entries: [{ uri, diagnostics: [fakeDiagnostic("cli")] }],
+    });
+    unit.replace({ source: "cli", entries: [] });
+
+    expect(labelsAt(collection, uri)).toEqual(["lsp"]);
+    unit.setLanguageServerConnected(false);
+    expect(collection.has(uri)).toBe(false);
+  });
+
+  it("keeps CLI output on reconnect until LSP covers a URI and restores the complete CLI snapshot on disconnect", () => {
+    const { collection, unit } = createHarness();
+    const coveredUri = fakeUri("file:///covered.fs");
+    const waitingUri = fakeUri("file:///waiting.fs");
+
+    unit.replace({
+      source: "cli",
+      entries: [
+        { uri: coveredUri, diagnostics: [fakeDiagnostic("cli-covered")] },
+        { uri: waitingUri, diagnostics: [fakeDiagnostic("cli-waiting")] },
+      ],
+    });
+    unit.setLanguageServerConnected(true);
+    unit.accept({
+      source: "lsp",
+      uri: coveredUri,
+      diagnostics: [fakeDiagnostic("lsp-covered")],
+    });
+
+    expect(labelsAt(collection, coveredUri)).toEqual(["lsp-covered"]);
+    expect(labelsAt(collection, waitingUri)).toEqual(["cli-waiting"]);
+
+    unit.setLanguageServerConnected(false);
+
+    expect(labelsAt(collection, coveredUri)).toEqual(["cli-covered"]);
+    expect(labelsAt(collection, waitingUri)).toEqual(["cli-waiting"]);
+  });
+
   it("creates and disposes exactly one diagnostic collection", () => {
     const { collection, createCollection, unit } = createHarness();
 

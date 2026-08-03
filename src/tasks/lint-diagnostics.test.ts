@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import capturedFixtureJson from "./fixtures/lint-report.json";
-import type { DiagnosticsUnit, SourcedDiagnostics } from "../diagnostics/index.js";
+import type {
+  DiagnosticsUnit,
+  SourcedDiagnostics,
+  SourcedDiagnosticsSnapshot,
+} from "../diagnostics/index.js";
 
 const vscodeMock = vi.hoisted(() => ({
   DiagnosticSeverity: {
@@ -57,12 +61,14 @@ const capturedFixture = JSON.stringify(capturedFixtureJson);
 
 function createHarness() {
   const accept = vi.fn<(update: SourcedDiagnostics) => void>();
+  const replace = vi.fn<(snapshot: SourcedDiagnosticsSnapshot) => void>();
   const unit: DiagnosticsUnit = {
     accept: (update) => accept(update),
+    replace: (snapshot) => replace(snapshot),
     setLanguageServerConnected: vi.fn(),
     dispose: vi.fn(),
   };
-  return { unit, accept };
+  return { unit, accept, replace };
 }
 
 describe("Foundry lint diagnostics publisher", () => {
@@ -70,17 +76,19 @@ describe("Foundry lint diagnostics publisher", () => {
     vi.clearAllMocks();
   });
 
-  it("publishes captured diagnostics in per-file CLI batches", () => {
-    const { unit, accept } = createHarness();
+  it("replaces CLI diagnostics with one per-file snapshot", () => {
+    const { unit, accept, replace } = createHarness();
     const publisher = new FoundryLintDiagnosticsPublisher(unit);
     const run = publisher.beginRun("/workspace/game");
 
     run.appendStdout(capturedFixture);
     run.complete(1);
 
-    expect(accept).toHaveBeenCalledTimes(2);
-    const first = accept.mock.calls[0]?.[0];
-    expect(first?.source).toBe("cli");
+    expect(accept).not.toHaveBeenCalled();
+    expect(replace).toHaveBeenCalledOnce();
+    const snapshot = replace.mock.calls[0]?.[0];
+    expect(snapshot?.source).toBe("cli");
+    const first = snapshot?.entries[0];
     expect(first?.uri.fsPath).toBe(
       "/workspace/game/tests/grammar/annotations.fs",
     );
@@ -95,8 +103,7 @@ describe("Foundry lint diagnostics publisher", () => {
         end: { line: 8, character: 16 },
       },
     });
-    const second = accept.mock.calls[1]?.[0];
-    expect(second?.source).toBe("cli");
+    const second = snapshot?.entries[1];
     expect(second?.uri.fsPath).toBe(
       "/workspace/game/tests/grammar/comments.fs",
     );
@@ -107,7 +114,7 @@ describe("Foundry lint diagnostics publisher", () => {
   });
 
   it("groups diagnostics for the same file and maps note to information", () => {
-    const { unit, accept } = createHarness();
+    const { unit, replace } = createHarness();
     const run = new FoundryLintDiagnosticsPublisher(unit).beginRun("/game");
     run.appendStdout(report([
       diagnostic({ message: "first" }),
@@ -116,49 +123,38 @@ describe("Foundry lint diagnostics publisher", () => {
 
     run.complete(0);
 
-    expect(accept).toHaveBeenCalledOnce();
-    const update = accept.mock.calls[0]?.[0];
+    expect(replace).toHaveBeenCalledOnce();
+    const update = replace.mock.calls[0]?.[0]?.entries[0];
     expect(update?.diagnostics).toHaveLength(2);
     expect(update?.diagnostics[1]?.severity).toBe(
       vscodeMock.DiagnosticSeverity.Information,
     );
   });
 
-  it("clears every prior file absent from a successful rerun", () => {
-    const { unit, accept } = createHarness();
+  it("replaces a prior report with an empty clean snapshot", () => {
+    const { unit, accept, replace } = createHarness();
     const publisher = new FoundryLintDiagnosticsPublisher(unit);
     const first = publisher.beginRun("/workspace/game");
     first.appendStdout(capturedFixture);
     first.complete(1);
-    accept.mockClear();
+    replace.mockClear();
 
     const clean = publisher.beginRun("/workspace/game");
     clean.appendStdout(report([]));
     clean.complete(0);
 
-    expect(accept).toHaveBeenCalledTimes(2);
-    expect(accept.mock.calls.map(([update]) => ({
-      file: update.uri.fsPath,
-      diagnostics: update.diagnostics,
-    }))).toEqual([
-      {
-        file: "/workspace/game/tests/grammar/annotations.fs",
-        diagnostics: [],
-      },
-      {
-        file: "/workspace/game/tests/grammar/comments.fs",
-        diagnostics: [],
-      },
-    ]);
+    expect(accept).not.toHaveBeenCalled();
+    expect(replace).toHaveBeenCalledOnce();
+    expect(replace).toHaveBeenCalledWith({ source: "cli", entries: [] });
   });
 
   it("preserves prior diagnostics after exit 2, cancellation, or malformed JSON", () => {
-    const { unit, accept } = createHarness();
+    const { unit, accept, replace } = createHarness();
     const publisher = new FoundryLintDiagnosticsPublisher(unit);
     const first = publisher.beginRun("/workspace/game");
     first.appendStdout(capturedFixture);
     first.complete(1);
-    accept.mockClear();
+    replace.mockClear();
 
     const failed = publisher.beginRun("/workspace/game");
     failed.appendStdout(report([]));
@@ -171,15 +167,16 @@ describe("Foundry lint diagnostics publisher", () => {
 
     expect(() => malformed.complete(1)).toThrow(LintReportError);
     expect(accept).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
 
     const clean = publisher.beginRun("/workspace/game");
     clean.appendStdout(report([]));
     clean.complete(0);
-    expect(accept).toHaveBeenCalledTimes(2);
+    expect(replace).toHaveBeenCalledOnce();
   });
 
   it("ignores an older run after a newer lint run starts", () => {
-    const { unit, accept } = createHarness();
+    const { unit, accept, replace } = createHarness();
     const publisher = new FoundryLintDiagnosticsPublisher(unit);
     const older = publisher.beginRun("/workspace/game");
     older.appendStdout(capturedFixture);
@@ -190,6 +187,8 @@ describe("Foundry lint diagnostics publisher", () => {
     older.complete(1);
 
     expect(accept).not.toHaveBeenCalled();
+    expect(replace).toHaveBeenCalledOnce();
+    expect(replace).toHaveBeenCalledWith({ source: "cli", entries: [] });
   });
 });
 
