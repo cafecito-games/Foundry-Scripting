@@ -9,6 +9,7 @@ describe("FoundryScript debugger activation", () => {
       "onTaskType:foundryscript",
       "onDebugInitialConfigurations",
       "onDebugResolve:foundryscript",
+      "workspaceContains:**/project.foundry",
     ]);
   });
 });

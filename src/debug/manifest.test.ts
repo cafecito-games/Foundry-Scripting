@@ -13,6 +13,69 @@ function acceptsStringSchema(schema: StringSchema, value: string): boolean {
 }
 
 describe("FoundryScript debugger manifest", () => {
+  it("declares limited support for untrusted and virtual workspaces", () => {
+    expect(packageManifest.capabilities).toEqual({
+      untrustedWorkspaces: {
+        supported: "limited",
+        description:
+          "Syntax highlighting remains available. Foundry processes, tasks, tests, and debugging require workspace trust.",
+        restrictedConfigurations: [
+          "foundryScript.lsp.mode",
+          "foundryScript.lsp.port",
+          "foundryScript.dap.port",
+          "foundryScript.enginePath",
+          "foundryScript.projectPath",
+          "foundryScript.test.runner",
+          "foundryScript.testing.enabled",
+          "foundryScript.testing.runner",
+          "foundryScript.testing.args",
+        ],
+      },
+      virtualWorkspaces: {
+        supported: "limited",
+        description:
+          "Syntax highlighting and language configuration remain available. Native Foundry tooling requires a local file workspace.",
+      },
+    });
+  });
+
+  it("activates for Foundry projects without wildcard or startup activation", () => {
+    expect(packageManifest.activationEvents).toEqual([
+      "onLanguage:foundryscript",
+      "onCommand:foundryScript.connectionActions",
+      "onTaskType:foundryscript",
+      "onDebugInitialConfigurations",
+      "onDebugResolve:foundryscript",
+      "workspaceContains:**/project.foundry",
+    ]);
+  });
+
+  it("gates connection actions on a trusted local workspace", () => {
+    expect(
+      packageManifest.contributes.commands.find(
+        ({ command }) => command === "foundryScript.connectionActions",
+      ),
+    ).toEqual({
+      command: "foundryScript.connectionActions",
+      title: "Show Language Server Connection Actions",
+      category: "FoundryScript",
+      enablement: "isWorkspaceTrusted && !virtualWorkspace",
+    });
+  });
+
+  it("describes testing integration as current functionality", () => {
+    expect(
+      packageManifest.contributes.configuration.properties[
+        "foundryScript.testing.enabled"
+      ],
+    ).toMatchObject({
+      type: "boolean",
+      default: false,
+      description:
+        "Enable Foundry Test Explorer discovery, run, and debug integration.",
+    });
+  });
+
   it("contributes the debugger and FoundryScript line breakpoints", () => {
     expect(packageManifest.contributes.breakpoints).toEqual([
       { language: "foundryscript" },

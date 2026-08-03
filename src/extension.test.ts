@@ -2380,6 +2380,7 @@ describe("package.json manifest", () => {
       command: CONNECTION_ACTIONS_COMMAND,
       title: "Show Language Server Connection Actions",
       category: "FoundryScript",
+      enablement: "isWorkspaceTrusted && !virtualWorkspace",
     });
   });
 });
