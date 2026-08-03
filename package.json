@@ -203,7 +203,7 @@
         "foundryScript.testing.enabled": {
           "type": "boolean",
           "default": false,
-          "description": "Enable Foundry Test Adapter Protocol negotiation for future Test Explorer integration."
+          "description": "Enable Foundry Test Explorer discovery, run, and debug integration."
         },
         "foundryScript.testing.runner": {
           "type": "string",

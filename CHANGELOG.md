@@ -12,29 +12,28 @@ All notable changes to the FoundryScript VS Code extension are documented here.
 - Run Without Debugging and string play arguments.
 - Owned and external combined-tooling-host workflows, with a single debug session per
   VS Code window and actionable startup errors.
+- Test Explorer debugging for selected tests and suites, including exclusions,
+  cancellation, restart, and projects without a configured main scene.
 - A required real-engine DAP conformance CI job pinned to the verified engine commit.
 
 ### Fixed
 
 - Activate the extension before VS Code requests initial FoundryScript debug
   configurations or resolves a FoundryScript debug session.
+- Suppress the expected late transport-close callback after a session has already
+  stopped or exited, while continuing to report genuine adapter transport failures.
 
-### Compatibility and release gate
+### Compatibility
 
-- Debugger validation uses Foundry commit
-  `a2d9f6df06fb545c8106f24c7445466d6355085b`
-  (`0.1.dev.custom_build.a2d9f6df0`).
-- No published engine release contains the required fixes yet.
-  `v0.1.0-alpha.20` predates them and is not debugger-compatible.
-- Replace the pending compatibility note with the first containing engine release
-  before publishing this extension release.
+- Scene and selected-test debugging require Foundry `v0.1.0-alpha.21` or later.
+  `v0.1.0-alpha.21` is the first verified compatible release and resolves to commit
+  `c11e3a080959af4ca8fbdd9b1a3d97a889b351b4`.
+- `v0.1.0-alpha.20` and earlier prereleases predate the required debugger fixes and
+  are not compatible.
 
-### Pre-release validation finding
+### Initial limitations
 
-- A normally stopped or naturally completed session currently raises a false
-  `connection closed` adapter-failure notification after the DAP lease is released.
-  The debuggee does stop, and an external tooling host remains alive, but release
-  validation is not clean until the pending sibling runtime fix is integrated and the
-  matrix is rerun. This is not an accepted release limitation.
-- Selected-test debugging is a later integration phase; this release covers scene
-  debugging only.
+- Debugging is loopback-only and permits one scene or selected-test debug session per
+  VS Code window.
+- DAP `attach`, concurrent sessions, remote devices, conditional breakpoints, hit
+  counts, logpoints, and editing variable values are not supported.

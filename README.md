@@ -15,6 +15,8 @@ the gradually-typed scripting language of the Foundry engine.
 - Scene debugging through VS Code's Run and Debug view, including line breakpoints,
   stack frames, variables, Watch expressions, Debug Console evaluation, stepping,
   pause, continue, restart, and stop.
+- Test Explorer debugging for an individual test, a suite, or the complete discovered
+  test tree, with selection, exclusion, cancellation, and restart support.
 
 By default the extension starts Foundry's canonical combined tooling host for the open
 workspace:
@@ -69,12 +71,12 @@ connects to Foundry; click it to open connection settings or the log.
 
 ## Engine compatibility
 
-Scene debugging requires the Foundry tooling fixes present in engine commit
-`a2d9f6df06fb545c8106f24c7445466d6355085b`. No published engine release contains
-that commit yet. The latest prerelease, `v0.1.0-alpha.20`, predates the required fixes
-and is not compatible with this debugger. This section will name the first compatible
-release after it is published; until then, use a development editor build from the
-verified commit only for extension development and validation.
+Scene and selected-test debugging require **Foundry `v0.1.0-alpha.21` or later**.
+`v0.1.0-alpha.21` is the first verified compatible release; its tag resolves to engine
+commit `c11e3a080959af4ca8fbdd9b1a3d97a889b351b4`, which contains the required scene
+debugger fixes from `a2d9f6df06fb545c8106f24c7445466d6355085b` and the structured selected-test
+debug launch contract. Earlier prereleases, including `v0.1.0-alpha.20`, are not
+debugger-compatible.
 
 Point the extension at the compatible editor binary:
 
@@ -84,9 +86,11 @@ Point the extension at the compatible editor binary:
 }
 ```
 
-The release-validation matrix was run with VS Code 1.131.0 on macOS 26.5.2 against
-the development build `0.1.dev.custom_build.a2d9f6df0`. The immutable engine commit is
-also pinned by CI's required `dap-conformance` job.
+The automated release-validation matrix was run on macOS 26.5.2 (Apple silicon)
+against the published `v0.1.0-alpha.21` macOS universal binary, which reports
+`0.1.alpha21.gh.c11e3a080`. The same immutable engine commit is pinned by CI's required
+`dap-conformance` job. The hands-on Extension Development Host record names the exact
+VS Code build used for its UI matrix.
 
 ## Scene debugging
 
@@ -135,10 +139,12 @@ trust prompt before debugging or extension-host development can execute project 
 | `auto` | Tries the configured external host first, then starts an owned host if the LSP port refuses the connection. |
 | `off` | Keeps offline language support but rejects debug startup with an actionable error. |
 
-All tooling connections are loopback-only. One FoundryScript debug session may be active
-per VS Code window. Stop and in-session restart affect the debuggee, not the combined
-tooling host, so language features stay connected. Extension deactivation stops active
-debugging and an extension-owned host. The extension never terminates an external host.
+All tooling connections are loopback-only. One FoundryScript debug session—scene or
+selected-test—may be active per VS Code window. Stop and in-session restart affect the
+debuggee, not the combined tooling host, so language features stay connected. Extension
+deactivation stops active debugging and an extension-owned host. The extension never
+terminates an external host. A normal Stop or natural exit does not report the expected
+late transport close as an adapter failure.
 
 ### Supported debugger features
 
@@ -150,8 +156,34 @@ debugging and an extension-owned host. The extension never terminates an externa
 
 The current adapter does not support conditional breakpoints, hit counts, logpoints,
 editing variable values, remote-device debugging, or concurrent sessions. Values that
-the engine cannot expand are shown as scalar representations. Selected-test debugging
-is a later integration phase and is not part of scene debugging.
+the engine cannot expand are shown as scalar representations.
+
+### Debugging selected tests
+
+Enable Test Explorer integration and configure the canonical runner resource for your
+project:
+
+```json
+{
+  "foundryScript.testing.enabled": true,
+  "foundryScript.testing.runner": "res://tests/test_runner.fs",
+  "foundryScript.testing.args": []
+}
+```
+
+Open VS Code's **Testing** view, select the **Debug** run profile, then use the debug
+action on the Foundry controller, a suite, or an individual test. Controller and suite
+selections expand to their runnable descendant tests; explicitly excluded tests and
+suites are removed from that selection. The engine receives only the resulting test
+IDs. Selected-test debugging uses an internal structured launch, so the project does not
+need to define a main scene.
+
+Cancelling the Test Run or stopping its debug session terminates the DAP-owned test
+process. Results already reported remain visible and uncompleted selected tests are
+marked skipped. **Restart** reruns the same selection, resets the temporary test report,
+and does not duplicate results already published to Test Explorer. The global
+one-session rule also applies here: stop any active scene or test debug session before
+starting another. Test debugging requires Foundry `v0.1.0-alpha.21` or later.
 
 ### Troubleshooting
 

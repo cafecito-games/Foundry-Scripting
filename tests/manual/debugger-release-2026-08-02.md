@@ -3,6 +3,10 @@
 This is the hands-on release record for issue #50. It complements the automated DAP
 conformance suite; it does not replace the engine-release compatibility gate.
 
+This record captures the pre-publication development-build run. The published-engine
+release record is `debugger-release-2026-08-03.md`; the pre-release findings below were
+subsequently resolved by Foundry `v0.1.0-alpha.21` and the merged runtime lifecycle fix.
+
 ## Environment
 
 - Extension branch: `run-epics/44-50-debugger-release`
