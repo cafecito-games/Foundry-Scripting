@@ -176,6 +176,82 @@ describe("FoundryScript debug configuration provider", () => {
     },
   );
 
+  it("accepts an internal structured project_test launch without a scene", async () => {
+    const module = await loadConfigurationModule();
+    expect(module).toBeDefined();
+    const provider = new module!.FoundryScriptDebugConfigurationProvider({
+      resolveProject,
+      reportError,
+    });
+    const configuration = {
+      type: "foundryscript",
+      request: "launch",
+      name: "Debug Foundry Tests",
+      project: "/workspace/game",
+      noDebug: false,
+      "foundry/launch": {
+        kind: "project_test",
+        runner: "res://tests/runner.fs",
+        adapter: {
+          protocolVersion: 1,
+          report: "/tmp/foundryscript-test-debug/report.tap",
+          testIds: ["test-a", "test-b"],
+        },
+      },
+    };
+
+    await expect(
+      provider.resolveDebugConfigurationWithSubstitutedVariables(
+        undefined,
+        configuration as vscode.DebugConfiguration,
+      ),
+    ).resolves.toEqual(configuration);
+    expect(resolveProject).not.toHaveBeenCalled();
+    expect(reportError).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: "unsupported protocol",
+      mutate: (configuration: Record<string, unknown>) => {
+        projectTestAdapter(configuration).protocolVersion = 2;
+      },
+      message: "protocol version 1",
+    },
+    {
+      name: "relative report",
+      mutate: (configuration: Record<string, unknown>) => {
+        projectTestAdapter(configuration).report = "relative/report.tap";
+      },
+      message: "absolute TAP report",
+    },
+    {
+      name: "duplicate selections",
+      mutate: (configuration: Record<string, unknown>) => {
+        projectTestAdapter(configuration).testIds = ["test-a", "test-a"];
+      },
+      message: "unique non-empty",
+    },
+  ])("rejects an internal project_test launch with $name", async ({ mutate, message }) => {
+    const module = await loadConfigurationModule();
+    expect(module).toBeDefined();
+    const provider = new module!.FoundryScriptDebugConfigurationProvider({
+      resolveProject,
+      reportError,
+    });
+    const configuration = projectTestConfiguration();
+    mutate(configuration);
+
+    await expect(
+      provider.resolveDebugConfigurationWithSubstitutedVariables(
+        undefined,
+        configuration as vscode.DebugConfiguration,
+      ),
+    ).resolves.toBeUndefined();
+    expect(reportError).toHaveBeenCalledWith(expect.stringContaining(message));
+    expect(resolveProject).not.toHaveBeenCalled();
+  });
+
   it.each([
     undefined,
     "current",
@@ -297,3 +373,29 @@ describe("FoundryScript debug configuration provider", () => {
     );
   });
 });
+
+function projectTestConfiguration(): Record<string, unknown> {
+  return {
+    type: "foundryscript",
+    request: "launch",
+    name: "Debug Foundry Tests",
+    project: "/workspace/game",
+    noDebug: false,
+    "foundry/launch": {
+      kind: "project_test",
+      runner: "res://tests/runner.fs",
+      adapter: {
+        protocolVersion: 1,
+        report: "/tmp/foundryscript-test-debug/report.tap",
+        testIds: ["test-a", "test-b"],
+      },
+    },
+  };
+}
+
+function projectTestAdapter(
+  configuration: Record<string, unknown>,
+): Record<string, unknown> {
+  const launch = configuration["foundry/launch"] as Record<string, unknown>;
+  return launch.adapter as Record<string, unknown>;
+}

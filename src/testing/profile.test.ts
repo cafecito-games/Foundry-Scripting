@@ -26,6 +26,7 @@ describe("Foundry VS Code run profile", () => {
     await execution;
 
     expect(harness.executed?.leaves.map((leaf) => leaf.id)).toEqual(["test-a"]);
+    expect(harness.execute.mock.calls[0]?.[3]).toBe(harness.run);
     expect(harness.run.calls).toEqual([
       "enqueued:test-a",
       "started:test-a",

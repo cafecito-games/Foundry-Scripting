@@ -218,6 +218,7 @@ const extensionMock = vi.hoisted(() => {
       }
     | undefined,
   testingExecute: vi.fn(),
+  testingDebugExecute: vi.fn(),
   testingRuntimeOptions: undefined as
     | {
         negotiate: (request: unknown, signal: AbortSignal) => Promise<unknown>;
@@ -394,6 +395,12 @@ vi.mock("./testing/executor.js", () => ({
   },
 }));
 
+vi.mock("./testing/debug-executor.js", () => ({
+  FoundryTestDebugExecutor: class {
+    readonly execute = extensionMock.testingDebugExecute;
+  },
+}));
+
 vi.mock("./testing/runtime.js", () => ({
   TestingRuntime: class {
     readonly configure = extensionMock.testingConfigure;
@@ -532,6 +539,7 @@ describe("extension entry point", () => {
     extensionMock.testingDiscover.mockReset();
     extensionMock.testingExecutorOptions = undefined;
     extensionMock.testingExecute.mockReset();
+    extensionMock.testingDebugExecute.mockReset();
     extensionMock.testingRuntimeOptions = undefined;
     extensionMock.testingConfigure.mockReset();
     extensionMock.testingConfigure.mockResolvedValue(undefined);
@@ -1076,7 +1084,7 @@ describe("extension entry point", () => {
     expect(extensionMock.registerFoundryTaskProvider).toHaveBeenCalledOnce();
   });
 
-  it("creates exactly one TestController with one default Run profile", async () => {
+  it("creates exactly one TestController with one Run and one Debug profile", async () => {
     extensionMock.configuration.set("lsp.mode", "off");
     const context = createContext();
 
@@ -1087,10 +1095,18 @@ describe("extension entry point", () => {
       "foundryScript.tests",
       "FoundryScript",
     );
-    expect(extensionMock.testController.createRunProfile).toHaveBeenCalledOnce();
-    expect(extensionMock.testController.createRunProfile).toHaveBeenCalledWith(
+    expect(extensionMock.testController.createRunProfile).toHaveBeenCalledTimes(2);
+    expect(extensionMock.testController.createRunProfile).toHaveBeenNthCalledWith(
+      1,
       "Run",
       1,
+      expect.any(Function),
+      true,
+    );
+    expect(extensionMock.testController.createRunProfile).toHaveBeenNthCalledWith(
+      2,
+      "Debug",
+      2,
       expect.any(Function),
       true,
     );
@@ -1139,7 +1155,7 @@ describe("extension entry point", () => {
       label: "works",
       uri: { fsPath: "/workspace/game/tests/example.fs" },
     });
-    expect(extensionMock.testController.createRunProfile).toHaveBeenCalledOnce();
+    expect(extensionMock.testController.createRunProfile).toHaveBeenCalledTimes(2);
   });
 
   it("runs the registered profile through current runtime and explorer state", async () => {
@@ -1199,6 +1215,98 @@ describe("extension entry point", () => {
 
     expect(extensionMock.testingReadyContext).toHaveBeenCalled();
     expect(extensionMock.testingExecute).toHaveBeenCalledOnce();
+    expect(run.end).toHaveBeenCalledOnce();
+  });
+
+  it("passes the original Debug request to one DAP execution without the ordinary executor", async () => {
+    extensionMock.configuration.set("lsp.mode", "off");
+    const model = nestedDiscoveryModel();
+    const run = {
+      enqueued: vi.fn(),
+      started: vi.fn(),
+      passed: vi.fn(),
+      skipped: vi.fn(),
+      failed: vi.fn(),
+      errored: vi.fn(),
+      appendOutput: vi.fn(),
+      end: vi.fn(),
+    };
+    extensionMock.testController.createTestRun.mockReturnValue(run);
+    extensionMock.testingDebugExecute.mockImplementation(
+      async (
+        _request: unknown,
+        _signal: AbortSignal,
+        observer: { onPoint(point: Record<string, unknown>): void },
+      ) => {
+        await Promise.resolve();
+        observer.onPoint({
+          number: 1,
+          ok: true,
+          label: "works",
+          testId: "test-a",
+          durationMs: 3,
+          statusDetail: "",
+        });
+        return {
+          kind: "completed",
+          completion: {
+            valid: true,
+            complete: true,
+            classification: "conforming",
+            codes: [],
+            diagnostics: [],
+          },
+          processResult: {
+            kind: "exited",
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+          },
+        };
+      },
+    );
+
+    await activate(createContext());
+    extensionMock.testingRuntimeOptions?.onDiscovery("/workspace/game", model);
+    extensionMock.testingReadyContext.mockReturnValue({
+      configuration: {
+        enabled: true,
+        enginePath: "/opt/foundry",
+        project: "/workspace/game",
+        runner: "res://tests/runner.fs",
+        frameworkArgs: [],
+      },
+      adapter: {
+        protocolVersion: 1,
+        framework: { id: "neutral", name: "Neutral", version: "1" },
+        extensions: [],
+      },
+      model,
+    });
+    const originalRequest = {
+      include: [extensionMock.testController.items.get("suite-a")],
+      exclude: [],
+    };
+    const handler = extensionMock.testController.createRunProfile.mock.calls[1]?.[2] as
+      | ((request: unknown, token: unknown) => Promise<void>)
+      | undefined;
+    await handler?.(originalRequest, {
+      isCancellationRequested: false,
+      onCancellationRequested: () => ({ dispose: vi.fn() }),
+    });
+
+    expect(extensionMock.testController.createTestRun).toHaveBeenCalledWith(
+      originalRequest,
+    );
+    expect(extensionMock.testingDebugExecute).toHaveBeenCalledOnce();
+    expect(extensionMock.testingDebugExecute.mock.calls[0]?.[0]).toMatchObject({
+      project: "/workspace/game",
+      runner: "res://tests/runner.fs",
+      protocolVersion: 1,
+      leaves: [{ id: "test-a" }],
+    });
+    expect(extensionMock.testingDebugExecute.mock.calls[0]?.[3]).toBe(run);
+    expect(extensionMock.testingExecute).not.toHaveBeenCalled();
     expect(run.end).toHaveBeenCalledOnce();
   });
 

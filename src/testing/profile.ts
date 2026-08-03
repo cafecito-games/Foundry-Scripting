@@ -24,6 +24,7 @@ export interface FoundryTestRunProfileOptions {
     request: TestExecutionRequest,
     signal: AbortSignal,
     observer: TestExecutionObserver,
+    run: vscode.TestRun,
   ) => Promise<TestExecutionResult>;
   readonly createMessage: (message: string) => TestMessageValue;
   readonly createLocation: (
@@ -121,6 +122,7 @@ export class FoundryTestRunProfile {
         },
         abortController.signal,
         observer,
+        run,
       );
 
       if (routingFailure !== undefined) {
