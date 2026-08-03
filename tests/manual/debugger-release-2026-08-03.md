@@ -22,6 +22,9 @@ Host gate without treating terminal automation as a substitute.
 - Published Linux asset: `Foundry_v0.1.0-alpha.24_linux.x86_64.zip`
 - Linux asset SHA-256:
   `5499f49a9aa298d97d98a025bb002c70816179e5fcf8a2104a622cfbf1e9e076`
+- Published grammar asset: `foundryscript-tmlanguage-0.1.0-alpha.24.json`
+- Grammar asset SHA-256:
+  `6e70e5e4e7dd675fa019e056f2485d0a498fe204d489cc2962921ab13e321332`
 - Binary identity: `0.1.alpha24.gh.e91ab07e6`
 - Engine release workflow:
   [run 30833539143](https://github.com/cafecito-games/Foundry/actions/runs/30833539143),
@@ -40,6 +43,8 @@ The following commands completed successfully in the issue worktree:
 - `npm run lint`
 - `npm test`: 771 tests passed, 6 opt-in live-process tests skipped by the normal unit
   invocation, and all grammar scope assertions passed.
+- `npm run check:grammar-sync`: the committed fallback grammar matched the alpha.24
+  release asset byte-for-byte.
 - `npm run package`: the VSIX packaged successfully.
 - `FOUNDRY_ENGINE_PATH=<published-alpha.24-binary> npm run test:dap-conformance`:
   both required live tests passed with no skips:

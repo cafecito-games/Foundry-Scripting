@@ -15,6 +15,7 @@ All notable changes to the FoundryScript VS Code extension are documented here.
 - Test Explorer debugging for selected tests and suites, including exclusions,
   cancellation, restart, and projects without a configured main scene.
 - A required real-engine DAP conformance CI job pinned to the verified engine commit.
+- The alpha.24 release TextMate grammar as the offline syntax-highlighting fallback.
 
 ### Fixed
 

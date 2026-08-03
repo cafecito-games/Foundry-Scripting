@@ -62,7 +62,7 @@ extended = 1
 #   ^^^ storage.type.accessor.foundryscript
 
     get():
-#   ^^^ entity.name.function.call.foundryscript
+#   ^^^ storage.type.accessor.foundryscript
 
     set(value):
 #   ^^^ storage.type.accessor.foundryscript
