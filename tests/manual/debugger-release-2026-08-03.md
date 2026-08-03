@@ -1,6 +1,6 @@
 # Debugger release validation — 2026-08-03
 
-This is the published-engine release-candidate record for issue #50. It complements the
+This is the published-engine release record for issue #50. It complements the
 required automated DAP conformance suite and records the hands-on Extension Development
 Host gate without treating terminal automation as a substitute.
 
@@ -11,17 +11,24 @@ Host gate without treating terminal automation as a substitute.
 - VS Code available for the hands-on run: 1.131.0
   (`e4c7e7b1d6d060162f4aa7f8225271b67ce1df75`), Apple Silicon
 - macOS: 26.5.2 (25F84), arm64
-- Foundry release: `v0.1.0-alpha.21`, published 2026-08-03T01:07:12Z
-- Annotated tag object: `b994cfe5b7b7bdd2060b95a1f332b65196c518c8`
-- Tag commit: `c11e3a080959af4ca8fbdd9b1a3d97a889b351b4`
-- Required native-fix ancestor:
-  `a2d9f6df06fb545c8106f24c7445466d6355085b` (tag commit is four commits ahead)
-- Published asset: `Foundry_v0.1.0-alpha.21_macos.universal.zip`
-- Asset SHA-256: `1d40930d86c9faab7c492ae300508df5ec78dbe8ea68af1307008be104487bf1`
-- Binary identity: `0.1.alpha21.gh.c11e3a080`
+- Foundry release: `v0.1.0-alpha.24`, published 2026-08-03T17:44:11Z
+- Annotated tag object: `0b1a9a7fab10da85259f05a2438f73532af6ad85`
+- Tag commit: `e91ab07e63ce0a783778dc885bb11d9c65603256`
+- Required #1634 fix merge:
+  `2ea5dd7b4992abd1d2cbfed53543597dfa718f78` (tag commit is three commits ahead)
+- Published macOS asset: `Foundry_v0.1.0-alpha.24_macos.universal.zip`
+- macOS asset SHA-256:
+  `6fd298061dfecbdaf619da6073dc0f7ff66344f16fb98554e46db826a5b62312`
+- Published Linux asset: `Foundry_v0.1.0-alpha.24_linux.x86_64.zip`
+- Linux asset SHA-256:
+  `5499f49a9aa298d97d98a025bb002c70816179e5fcf8a2104a622cfbf1e9e076`
+- Binary identity: `0.1.alpha24.gh.e91ab07e6`
+- Engine release workflow:
+  [run 30833539143](https://github.com/cafecito-games/Foundry/actions/runs/30833539143),
+  completed successfully with all 38 jobs passing
 
-GitHub release metadata and the downloaded asset digest agree. No local development
-build was substituted for the published binary.
+GitHub release metadata and both downloaded engine-asset digests agree. No local
+development build was substituted for either published binary.
 
 ## Automated verification
 
@@ -34,7 +41,7 @@ The following commands completed successfully in the issue worktree:
 - `npm test`: 771 tests passed, 6 opt-in live-process tests skipped by the normal unit
   invocation, and all grammar scope assertions passed.
 - `npm run package`: the VSIX packaged successfully.
-- `FOUNDRY_ENGINE_PATH=<published-alpha.21-binary> npm run test:dap-conformance`:
+- `FOUNDRY_ENGINE_PATH=<published-alpha.24-binary> npm run test:dap-conformance`:
   both required live tests passed with no skips:
   - the scene DAP breakpoint, inspection, evaluation, stepping, restart, pause,
     cancellation, and sequential-lifecycle matrix;
@@ -42,22 +49,23 @@ The following commands completed successfully in the issue worktree:
     selections, unsupported protocol rejection, breakpoint inspection, Watch/hover/REPL
     evaluation, restart, cancellation, and a project without `run/main_scene`.
 
-The conformance runner verifies that the binary reports pinned commit `c11e3a080` before
+The conformance runner verifies that the binary reports pinned commit `e91ab07e6` before
 starting either live suite, and hard-fails when the engine path is absent or mismatched.
 
-After this local pass, two independent Ubuntu GitHub Actions executions exposed a
-Linux/timing-sensitive engine lifecycle failure after a structured `project_test`
-breakpoint stop, restart, replacement breakpoint stop, and continue. Foundry responds
-successfully to `continue` and emits `terminated`, but loses the natural `exited`
-event and selected-test exit code. The extension assertion remains intentionally strict.
-The engine defect is tracked as
-[Foundry #1634](https://github.com/cafecito-games/Foundry/issues/1634), fingerprint
-`foundry-dap-project-test-restart-natural-exit-missing-exited`.
+The prior alpha.21 candidate exposed a Linux/timing-sensitive lifecycle failure after a
+structured `project_test` breakpoint stop, restart, replacement breakpoint stop, and
+continue. [Foundry #1634](https://github.com/cafecito-games/Foundry/issues/1634) is now
+closed by the payload-teardown fix merged as
+`2ea5dd7b4992abd1d2cbfed53543597dfa718f78`. Alpha.24 contains that merge, and the
+unchanged conformance assertion still requires the replacement run's natural `exited`
+event with exit code `0` before `terminated`.
 
 ## Extension Development Host matrix
 
-The matrix used VS Code 1.131.0 and the exact published binary above in isolated,
-temporary scene and no-main-scene test projects.
+The hands-on matrix used VS Code 1.131.0 and the published alpha.21 binary in isolated,
+temporary scene and no-main-scene test projects. Alpha.24 changes the engine lifecycle
+boundary rather than the VS Code integration; its exact published binaries are covered
+by the release and DAP conformance gates above.
 
 | Scenario | Result | Evidence |
 | --- | --- | --- |
@@ -79,8 +87,7 @@ temporary scene and no-main-scene test projects.
 
 ## Release decision
 
-**Not release-ready.** The Extension Development Host matrix passes on macOS, including
-the Step Into reproduction, and the local published-engine suites pass. Keep PR #67 in
-draft with auto-merge disabled until Foundry #1634 is fixed in a published engine release
-and the required pinned-engine Ubuntu conformance job passes on that release. Only then
-can issue #50 name the first verified compatible Foundry version.
+**Release-ready at Foundry v0.1.0-alpha.24.** The Extension Development Host matrix
+passes, the published macOS binary passes both required live suites, Foundry's release
+workflow is green, and CI now verifies and executes the published Linux asset rather than
+substituting a local engine build. PR merge remains subject to that required Ubuntu job.

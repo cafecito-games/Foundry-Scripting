@@ -25,12 +25,12 @@ All notable changes to the FoundryScript VS Code extension are documented here.
 
 ### Compatibility
 
-- Foundry `v0.1.0-alpha.21` is the current debugger release candidate and resolves to
-  commit `c11e3a080959af4ca8fbdd9b1a3d97a889b351b4`. The first compatible release
-  declaration remains blocked on the Linux structured-test restart lifecycle fix in
-  Foundry #1634 and a green pinned-engine conformance run.
-- `v0.1.0-alpha.20` and earlier prereleases predate the required debugger fixes and
-  are not compatible.
+- Scene and selected-test debugging require Foundry `v0.1.0-alpha.24` or later.
+  `v0.1.0-alpha.24` is the first verified compatible release and resolves to commit
+  `e91ab07e63ce0a783778dc885bb11d9c65603256`, including the natural-exit lifecycle
+  fix from Foundry #1634.
+- `v0.1.0-alpha.23` and earlier prereleases predate at least one required debugger
+  lifecycle fix and are not declared compatible.
 
 ### Initial limitations
 

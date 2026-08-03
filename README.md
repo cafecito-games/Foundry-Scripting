@@ -71,15 +71,16 @@ connects to Foundry; click it to open connection settings or the log.
 
 ## Engine compatibility
 
-Foundry `v0.1.0-alpha.21` is the current debugger release candidate. Its tag resolves
-to engine commit `c11e3a080959af4ca8fbdd9b1a3d97a889b351b4`, which contains the required
-scene-debugger fixes from `a2d9f6df06fb545c8106f24c7445466d6355085b` and the structured
-selected-test debug launch contract. It is not yet declared the first compatible
-release: a Linux/timing-sensitive structured-test restart can lose the natural DAP
-`exited` event ([Foundry #1634](https://github.com/cafecito-games/Foundry/issues/1634)).
-Earlier prereleases, including `v0.1.0-alpha.20`, are not debugger-compatible.
+Scene and selected-test debugging require **Foundry `v0.1.0-alpha.24` or later**.
+`v0.1.0-alpha.24` is the first verified compatible release; its tag resolves to engine
+commit `e91ab07e63ce0a783778dc885bb11d9c65603256`. It contains the required
+scene-debugger work, the structured selected-test launch contract, and the natural-exit
+lifecycle fix from
+[Foundry #1634](https://github.com/cafecito-games/Foundry/issues/1634). Earlier
+prereleases, including `v0.1.0-alpha.21` through `v0.1.0-alpha.23`, are not declared
+debugger-compatible.
 
-Point the extension at the candidate editor binary:
+Point the extension at the compatible editor binary:
 
 ```json
 {
@@ -87,13 +88,13 @@ Point the extension at the candidate editor binary:
 }
 ```
 
-The local release-validation matrix was run on macOS 26.5.2 (Apple silicon)
-against the published `v0.1.0-alpha.21` macOS universal binary, which reports
-`0.1.alpha21.gh.c11e3a080`. The same immutable engine commit is pinned by CI's required
-`dap-conformance` job. The hands-on Extension Development Host matrix is complete, but
-the Ubuntu conformance gate must pass on an engine release containing the #1634 fix
-before this compatibility declaration can be finalized. Published-engine evidence and
-the exact VS Code build are tracked in
+The published `v0.1.0-alpha.24` macOS universal binary reports
+`0.1.alpha24.gh.e91ab07e6` and passes the complete scene and no-main-scene selected-test
+DAP conformance matrix on macOS 26.5.2 (Apple silicon). CI downloads the published Linux
+asset, verifies its GitHub-provided SHA-256 digest, verifies the same engine identity,
+and runs the unchanged required lifecycle suite. The prior hands-on Extension
+Development Host matrix and the exact VS Code build are tracked alongside the
+alpha.24 artifact evidence in
 [`tests/manual/debugger-release-2026-08-03.md`](tests/manual/debugger-release-2026-08-03.md).
 
 ## Scene debugging
@@ -187,8 +188,7 @@ process. Results already reported remain visible and uncompleted selected tests 
 marked skipped. **Restart** reruns the same selection, resets the temporary test report,
 and does not duplicate results already published to Test Explorer. The global
 one-session rule also applies here: stop any active scene or test debug session before
-starting another. Test debugging currently requires the `v0.1.0-alpha.21` feature set;
-the first release declared compatible will also include the Foundry #1634 lifecycle fix.
+starting another. Test debugging requires Foundry `v0.1.0-alpha.24` or later.
 
 ### Troubleshooting
 
