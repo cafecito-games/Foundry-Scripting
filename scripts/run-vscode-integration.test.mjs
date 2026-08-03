@@ -83,7 +83,42 @@ describe("packaged VS Code integration runner contract", () => {
         "--disable-updates",
         "--skip-welcome",
         "--skip-release-notes",
+        "--user-data-dir=/tmp/fs-e2e/language-tasks/user-data",
+        "--extensions-dir=/tmp/fs-e2e/language-tasks/extensions",
+        "--logsPath=/tmp/fs-e2e/language-tasks/logs",
       ]),
+    );
+    expect(launch.extensionTestsEnv).toMatchObject({
+      FOUNDRY_E2E_SCENARIO: "language-tasks",
+      FOUNDRY_E2E_CONTROL: "/tmp/fs-e2e/language-tasks/control",
+    });
+  });
+
+  it("preserves genuine Restricted Mode and supplies only the virtual provider when required", async () => {
+    const runner = await import("./run-vscode-integration.mjs");
+    const base = {
+      workspace: "/tmp/fs-e2e/workspace",
+      userData: "/tmp/fs-e2e/user-data",
+      extensions: "/tmp/fs-e2e/extensions",
+      control: "/tmp/fs-e2e/control",
+      logs: "/tmp/fs-e2e/logs",
+    };
+    const restricted = runner.buildScenarioLaunch({
+      ...base,
+      scenario: "restricted",
+    });
+    expect(restricted.launchArgs).not.toContain("--disable-workspace-trust");
+
+    const virtual = runner.buildScenarioLaunch({
+      ...base,
+      scenario: "virtual-workspace",
+    });
+    expect(virtual.extensionDevelopmentPath).toEqual([
+      path.join(repositoryRoot, "tests/extension-host/driver"),
+      path.join(repositoryRoot, "tests/extension-host/virtual-provider"),
+    ]);
+    expect(virtual.launchArgs[0]).toBe(
+      "--folder-uri=foundry-e2e:/tmp/fs-e2e/workspace",
     );
   });
 

@@ -114,6 +114,8 @@ jobs:
       - run: npm run build
       - run: npm run package
       - run: xvfb-run -a npm run test:vscode-integration
+        env:
+          FOUNDRY_E2E_VSIX: foundryscript-0.1.0.vsix
       - name: Upload Extension Host failure logs
         if: failure()
         uses: actions/upload-artifact@v4

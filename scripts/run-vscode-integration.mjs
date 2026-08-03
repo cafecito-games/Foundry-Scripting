@@ -5,6 +5,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -63,7 +64,9 @@ export function createScenarioPaths(root, scenario) {
 export function buildScenarioLaunch(paths) {
   const workspaceTarget =
     paths.scenario === "virtual-workspace"
-      ? "--folder-uri=foundry-e2e:/project"
+      ? `--folder-uri=foundry-e2e:${paths.workspace}`
+      : paths.scenario === "reconfiguration"
+        ? path.join(paths.workspace, "e2e.code-workspace")
       : paths.workspace;
   const launchArgs = [
     workspaceTarget,
@@ -71,6 +74,7 @@ export function buildScenarioLaunch(paths) {
     "--skip-welcome",
     "--skip-release-notes",
     "--disable-telemetry",
+    `--logsPath=${paths.logs}`,
     `--user-data-dir=${paths.userData}`,
     `--extensions-dir=${paths.extensions}`,
   ];
@@ -91,6 +95,7 @@ export function buildScenarioLaunch(paths) {
       FOUNDRY_E2E_LOGS: paths.logs,
       FOUNDRY_E2E_WORKSPACE: paths.workspace,
       FOUNDRY_E2E_FAKE_FOUNDRY: fakeFoundryPath,
+      FOUNDRY_E2E_VIRTUAL_URI: `foundry-e2e:${paths.workspace}`,
     },
   };
 }
@@ -135,6 +140,31 @@ async function prepareWorkspace(paths) {
     path.join(settingsDirectory, "settings.json"),
     `${JSON.stringify(settings, null, 2)}\n`,
   );
+  if (paths.scenario === "reconfiguration") {
+    await writeFile(
+      path.join(paths.workspace, "e2e.code-workspace"),
+      `${JSON.stringify(
+        {
+          folders: [{ path: "first" }, { path: "second" }],
+          settings,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  }
+  if (paths.scenario === "restricted") {
+    const userSettingsDirectory = path.join(paths.userData, "User");
+    await mkdir(userSettingsDirectory, { recursive: true });
+    await writeFile(
+      path.join(userSettingsDirectory, "settings.json"),
+      `${JSON.stringify({
+        "security.workspace.trust.enabled": true,
+        "security.workspace.trust.startupPrompt": "never",
+        "security.workspace.trust.banner": "never",
+      })}\n`,
+    );
+  }
   await writeFile(
     path.join(paths.control, "state.json"),
     `${JSON.stringify({ mode: paths.scenario === "pending-start-shutdown" ? "never-ready" : "normal", generation: 1, lintMessage: "CLI diagnostic generation 1", lspMessage: "LSP diagnostic generation 1" })}\n`,
@@ -148,6 +178,11 @@ async function findVsix() {
 
 async function packageOnce() {
   const vsix = await findVsix();
+  if (process.env.FOUNDRY_E2E_VSIX !== undefined) {
+    const suppliedVsix = path.resolve(process.env.FOUNDRY_E2E_VSIX);
+    await access(suppliedVsix);
+    return suppliedVsix;
+  }
   await execFileAsync("npm", ["run", "package"], { cwd: repositoryRoot });
   await access(vsix);
   return vsix;
@@ -205,6 +240,139 @@ async function runScenario(vscodeExecutablePath, vsix, paths) {
   } else {
     await runTests({ ...launch, vscodeExecutablePath });
   }
+  await assertPostScenario(paths);
+}
+
+async function readEvents(control) {
+  try {
+    return (await readFile(path.join(control, "events.ndjson"), "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+async function assertPostScenario(paths) {
+  const events = await readEvents(paths.control);
+  if (
+    [
+      "language-tasks",
+      "restricted",
+      "virtual-workspace",
+      "cold-start-failure",
+    ].includes(paths.scenario)
+  ) {
+    if (events.length !== 0) {
+      throw new Error(`${paths.scenario} unexpectedly invoked fake Foundry.`);
+    }
+  }
+  const starts = events.filter((event) => event.phase === "start");
+  for (const start of starts) {
+    if (
+      !events.some(
+        (event) =>
+          event.invocationId === start.invocationId && event.phase === "exit",
+      )
+    ) {
+      throw new Error(
+        `${paths.scenario} left invocation ${start.invocationId} unsettled.`,
+      );
+    }
+    if (isProcessAlive(start.pid)) {
+      throw new Error(`${paths.scenario} left PID ${start.pid} alive.`);
+    }
+  }
+  const artifactPaths = starts
+    .map((event) => {
+      const outputIndex = event.argv.indexOf("--output");
+      return outputIndex < 0 ? undefined : event.argv[outputIndex + 1];
+    })
+    .filter((value) => typeof value === "string");
+  for (const artifact of artifactPaths) {
+    try {
+      await access(path.dirname(artifact));
+      throw new Error(
+        `${paths.scenario} retained adapter directory ${path.dirname(artifact)}.`,
+      );
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+  await assertCleanExtensionHostLogs(paths);
+}
+
+async function assertCleanExtensionHostLogs(paths) {
+  const files = await listFiles(paths.logs);
+  const failures = [];
+  for (const file of files) {
+    const content = await readFile(file, "utf8");
+    for (const marker of [
+      "rejected promise not handled",
+      "UnhandledPromiseRejection",
+      "unhandled rejection",
+      "Channel has been closed",
+    ]) {
+      if (content.includes(marker)) failures.push(`${file}: ${marker}`);
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(
+      `${paths.scenario} logged asynchronous Extension Host failures:\n${failures.join("\n")}`,
+    );
+  }
+}
+
+async function listFiles(root) {
+  const files = [];
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const candidate = path.join(root, entry.name);
+    if (entry.isDirectory()) files.push(...(await listFiles(candidate)));
+    else if (entry.isFile() && candidate.endsWith(".log")) files.push(candidate);
+  }
+  return files;
+}
+
+async function terminateRecordedProcesses(control) {
+  const starts = (await readEvents(control)).filter(
+    (event) => event.phase === "start" && Number.isSafeInteger(event.pid),
+  );
+  const live = [...new Set(starts.map((event) => event.pid))].filter(
+    isProcessAlive,
+  );
+  for (const pid of live) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch (error) {
+      if (error?.code !== "ESRCH") throw error;
+    }
+  }
+  const deadline = Date.now() + 2_000;
+  let remaining = live.filter(isProcessAlive);
+  while (remaining.length > 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    remaining = remaining.filter(isProcessAlive);
+  }
+  for (const pid of remaining) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch (error) {
+      if (error?.code !== "ESRCH") throw error;
+    }
+  }
 }
 
 export async function runIntegrationSuite({
@@ -241,7 +409,16 @@ export async function runIntegrationSuite({
           await rm(paths.root, { recursive: true, force: true });
         }
       } catch (error) {
-        failures.push({ scenario, error });
+        let failure = error;
+        try {
+          await terminateRecordedProcesses(paths.control);
+        } catch (cleanupError) {
+          failure = new AggregateError(
+            [error, cleanupError],
+            `${scenario} failed and process cleanup also failed.`,
+          );
+        }
+        failures.push({ scenario, error: failure });
         console.error(`Scenario ${scenario} artifacts retained at ${paths.root}`);
       }
     }
