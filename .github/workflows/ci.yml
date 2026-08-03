@@ -111,7 +111,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: cafecito-games/Foundry
-          ref: a2d9f6df06fb545c8106f24c7445466d6355085b
+          ref: c11e3a080959af4ca8fbdd9b1a3d97a889b351b4
           path: .foundry-engine
           submodules: recursive
       - name: Install Foundry build dependencies
@@ -123,7 +123,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .foundry-engine/.scons_cache
-          key: dap-conformance-foundry-a2d9f6df0-${{ runner.os }}-${{ runner.arch }}
+          key: dap-conformance-foundry-c11e3a080-${{ runner.os }}-${{ runner.arch }}
       - name: Build pinned Foundry editor
         working-directory: .foundry-engine
         run: >-

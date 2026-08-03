@@ -1,0 +1,12 @@
+; Selected-test DAP fixture intentionally has no application main scene.
+
+config_version=5
+
+[application]
+
+config/name="FoundryScript Selected Test Debugging"
+config/features=PackedStringArray("0.1")
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"

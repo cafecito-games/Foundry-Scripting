@@ -76,6 +76,22 @@ export function registerFoundryScriptDebugRuntime(
     if (loggedLaunches.has(session.id)) return;
     loggedLaunches.add(session.id);
     const configuration = session.configuration;
+    const structuredLaunch: unknown = configuration["foundry/launch"];
+    if (
+      isRecord(structuredLaunch) &&
+      structuredLaunch.kind === "project_test" &&
+      isRecord(structuredLaunch.adapter)
+    ) {
+      const testIds = structuredLaunch.adapter.testIds;
+      const selectedCount = Array.isArray(testIds) ? testIds.length : 0;
+      options.output.appendLine(
+        `[${session.id}] Launching ${String(selectedCount)} selected tests ` +
+          `with runner ${String(structuredLaunch.runner)} for project ` +
+          `${String(configuration.project)}, TAP report ` +
+          `${String(structuredLaunch.adapter.report)}, and noDebug=${String(configuration.noDebug === true)}.`,
+      );
+      return;
+    }
     const playArgumentCount = Array.isArray(configuration.playArgs)
       ? configuration.playArgs.length
       : 0;
@@ -116,6 +132,10 @@ export function registerFoundryScriptDebugRuntime(
     return true;
   };
   const failSession = (session: vscode.DebugSession, error: Error): void => {
+    // VS Code may report the transport's normal "connection closed" after the
+    // tracker has already stopped or exited. The acquisition is the authority:
+    // once it has ended, a trailing transport callback is not a session failure.
+    if (!sessions.has(session.id)) return;
     if (!reportSessionFailure(session, error)) return;
     endSession(session, "debug adapter failure");
   };
@@ -363,4 +383,8 @@ export function registerFoundryScriptDebugRuntime(
   };
   context.subscriptions.push(runtime);
   return runtime;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
