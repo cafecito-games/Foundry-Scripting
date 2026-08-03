@@ -298,14 +298,14 @@ export class ConnectionManager {
     throwIfAborted(signal);
     const startupController = new AbortController();
     const cancelStartup = () => startupController.abort(signal.reason);
-    signal.addEventListener("abort", cancelStartup, { once: true });
-    if (signal.aborted) {
-      cancelStartup();
-    }
     const client = this.options.createClient(
       { host: "127.0.0.1", port },
       startupController.signal,
     );
+    signal.addEventListener("abort", cancelStartup, { once: true });
+    if (signal.aborted) {
+      cancelStartup();
+    }
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let rejectCancellation: (() => void) | undefined;
     const interrupted = new Promise<never>((_resolve, reject) => {

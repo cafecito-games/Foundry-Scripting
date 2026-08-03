@@ -456,6 +456,49 @@ describe("connection modes", () => {
     expect(client.stop).toHaveBeenCalledOnce();
   });
 
+  it("removes parent abort listeners when client creation throws synchronously", async () => {
+    const addEventListener = vi.spyOn(
+      AbortSignal.prototype,
+      "addEventListener",
+    );
+    const removeEventListener = vi.spyOn(
+      AbortSignal.prototype,
+      "removeEventListener",
+    );
+    const factoryFailure = new Error("client factory failed");
+    const manager = new ConnectionManager({
+      createClient: () => {
+        throw factoryFailure;
+      },
+      coordinator,
+      onStateChange: (state) => states.push(state),
+      output,
+    });
+
+    try {
+      await expect(
+        manager.start({
+          settings: { mode: "attach", port: 6005, enginePath: "foundry" },
+          project: "/workspace/game",
+        }),
+      ).rejects.toBe(factoryFailure);
+
+      const addedAbortListeners = addEventListener.mock.calls
+        .filter(([type]) => type === "abort")
+        .map(([, listener]) => listener);
+      const removedAbortListeners = removeEventListener.mock.calls
+        .filter(([type]) => type === "abort")
+        .map(([, listener]) => listener);
+      expect(addedAbortListeners.length).toBeGreaterThan(0);
+      expect(removedAbortListeners).toEqual(
+        expect.arrayContaining(addedAbortListeners),
+      );
+    } finally {
+      addEventListener.mockRestore();
+      removeEventListener.mockRestore();
+    }
+  });
+
   it("reports attachment refusal with the project and port", async () => {
     const refusal = Object.assign(new Error("connect ECONNREFUSED"), {
       code: "ECONNREFUSED",
