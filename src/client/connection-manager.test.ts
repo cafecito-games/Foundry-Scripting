@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Mock } from "vitest";
 import {
   ConnectionFailure,
   ConnectionManager,
@@ -14,16 +15,16 @@ import {
 } from "../tooling/coordinator.js";
 
 interface TestClient extends LanguageClientHandle {
-  start: ReturnType<typeof vi.fn>;
-  stop: ReturnType<typeof vi.fn>;
+  start: Mock<() => Promise<void>>;
+  stop: Mock<() => Promise<void>>;
   fireUnexpectedStop: () => void;
 }
 
-function testClient(start: ReturnType<typeof vi.fn>): TestClient {
+function testClient(start: Mock<() => Promise<void>>): TestClient {
   const stopListeners = new Set<() => void>();
   return {
     start,
-    stop: vi.fn().mockResolvedValue(undefined),
+    stop: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     onUnexpectedStop: (listener: () => void) => {
       stopListeners.add(listener);
       return { dispose: () => stopListeners.delete(listener) };
@@ -36,16 +37,20 @@ function testClient(start: ReturnType<typeof vi.fn>): TestClient {
 
 function createClient(startError?: unknown): TestClient {
   return testClient(
-    vi.fn().mockRejectedValueOnce(startError).mockResolvedValue(undefined),
+    vi.fn<() => Promise<void>>()
+      .mockRejectedValueOnce(startError)
+      .mockResolvedValue(undefined),
   );
 }
 
 function createSuccessfulClient(): TestClient {
-  return testClient(vi.fn().mockResolvedValue(undefined));
+  return testClient(
+    vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+  );
 }
 
 function createHost(lspPort = 49152): OwnedToolingHost & {
-  stop: ReturnType<typeof vi.fn>;
+  stop: Mock<() => Promise<void>>;
   exit: (code?: number | null) => void;
 } {
   const exitListeners = new Set<(code: number | null) => void>();
@@ -58,7 +63,7 @@ function createHost(lspPort = 49152): OwnedToolingHost & {
       lspPort,
       dapPort: lspPort + 1,
     },
-    stop: vi.fn().mockResolvedValue(undefined),
+    stop: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     onExit: (listener) => {
       exitListeners.add(listener);
       return { dispose: () => exitListeners.delete(listener) };
@@ -95,7 +100,7 @@ describe("connection modes", () => {
   const clients: LanguageClientHandle[] = [];
   const states: ConnectionState[] = [];
   const output = { appendLine: vi.fn() };
-  let launchHost: ReturnType<typeof vi.fn>;
+  let launchHost: Mock<ToolingHostLauncher["launch"]>;
   let launcher: ToolingHostLauncher;
   let coordinator: ToolingHostCoordinator;
 
@@ -105,7 +110,7 @@ describe("connection modes", () => {
     clients.length = 0;
     states.length = 0;
     output.appendLine.mockClear();
-    launchHost = vi.fn();
+    launchHost = vi.fn<ToolingHostLauncher["launch"]>();
     launcher = { launch: launchHost };
     coordinator = new ToolingHostCoordinator({ launcher });
   });
@@ -386,7 +391,9 @@ describe("connection modes", () => {
     async ({ mode, endpoint }) => {
       vi.useFakeTimers();
       const pendingStart = deferred<void>();
-      const client = testClient(vi.fn().mockReturnValue(pendingStart.promise));
+      const client = testClient(
+        vi.fn<() => Promise<void>>().mockReturnValue(pendingStart.promise),
+      );
       if (mode === "spawn") {
         launchHost.mockResolvedValue(createHost(endpoint));
       }
@@ -426,7 +433,9 @@ describe("connection modes", () => {
   it("auto does not reinterpret an initialization timeout as spawn fallback", async () => {
     vi.useFakeTimers();
     const pendingStart = deferred<void>();
-    const client = testClient(vi.fn().mockReturnValue(pendingStart.promise));
+    const client = testClient(
+      vi.fn<() => Promise<void>>().mockReturnValue(pendingStart.promise),
+    );
     const manager = managerWith([client], 25);
 
     const starting = manager

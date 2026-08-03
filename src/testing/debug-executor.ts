@@ -25,10 +25,14 @@ interface DisposableHandle {
   dispose(): void;
 }
 
+interface TestDebugSessionOptions extends vscode.DebugSessionOptions {
+  readonly testRun: vscode.TestRun;
+}
+
 export interface FoundryTestDebugExecutorOptions {
   readonly startDebugging: (
     configuration: vscode.DebugConfiguration,
-    options: vscode.DebugSessionOptions,
+    options: TestDebugSessionOptions,
   ) => PromiseLike<boolean>;
   readonly stopDebugging: (session: FoundryTestDebugSession) => PromiseLike<void>;
   readonly onDidStartDebugSession: (
