@@ -19,7 +19,7 @@ import {
 } from "@vscode/test-electron";
 import { runBoundedCommand } from "./run-vscode-minimum.mjs";
 
-export const VSCODE_VERSION = "1.90.0";
+export const VSCODE_VERSION = "1.125.0";
 export const INTEGRATION_SCENARIOS = Object.freeze([
   "language-tasks",
   "test-explorer",
@@ -99,6 +99,28 @@ export function buildScenarioLaunch(paths) {
   };
 }
 
+export function buildVSCodeEnvironment(
+  extensionTestsEnv,
+  parentEnvironment = process.env,
+) {
+  const environment = { ...parentEnvironment, ...extensionTestsEnv };
+  delete environment.NODE_OPTIONS;
+  return environment;
+}
+
+export function buildVSCodeUserSettings(scenario) {
+  return {
+    "chat.disableAIFeatures": true,
+    ...(scenario === "restricted"
+      ? {
+          "security.workspace.trust.enabled": true,
+          "security.workspace.trust.startupPrompt": "never",
+          "security.workspace.trust.banner": "never",
+        }
+      : {}),
+  };
+}
+
 async function prepareWorkspace(paths) {
   await Promise.all([
     mkdir(paths.userData, { recursive: true }),
@@ -153,18 +175,12 @@ async function prepareWorkspace(paths) {
       );
     }
   }
-  if (paths.scenario === "restricted") {
-    const userSettingsDirectory = path.join(paths.userData, "User");
-    await mkdir(userSettingsDirectory, { recursive: true });
-    await writeFile(
-      path.join(userSettingsDirectory, "settings.json"),
-      `${JSON.stringify({
-        "security.workspace.trust.enabled": true,
-        "security.workspace.trust.startupPrompt": "never",
-        "security.workspace.trust.banner": "never",
-      })}\n`,
-    );
-  }
+  const userSettingsDirectory = path.join(paths.userData, "User");
+  await mkdir(userSettingsDirectory, { recursive: true });
+  await writeFile(
+    path.join(userSettingsDirectory, "settings.json"),
+    `${JSON.stringify(buildVSCodeUserSettings(paths.scenario))}\n`,
+  );
   await writeFile(
     path.join(paths.control, "state.json"),
     `${JSON.stringify({ mode: paths.scenario === "pending-start-shutdown" ? "never-ready" : "normal", generation: 1, lintMessage: "CLI diagnostic generation 1", lspMessage: "LSP diagnostic generation 1" })}\n`,
@@ -225,7 +241,7 @@ async function runVSCodeScenario(vscodeExecutablePath, launch, paths) {
   ];
   const { stdout, stderr, code, signal } = await new Promise((resolve, reject) => {
     const child = spawn(vscodeExecutablePath, args, {
-      env: { ...process.env, ...launch.extensionTestsEnv },
+      env: buildVSCodeEnvironment(launch.extensionTestsEnv),
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
@@ -367,20 +383,14 @@ async function assertCleanExtensionHostLogs(paths) {
   for (const file of files) {
     const content = await readFile(file, "utf8");
     const normalizedFile = file.replaceAll("\\", "/");
-    const markers = [
-      "rejected promise not handled",
-      "UnhandledPromiseRejection",
-      "unhandled rejection",
-      "Channel has been closed",
-    ];
-    if (
+    const checksErrorMarker =
       normalizedFile.endsWith("/exthost/exthost.log") ||
-      normalizedFile.endsWith("/renderer.log")
-    ) {
-      markers.push("[error]");
-    }
-    for (const marker of markers) {
-      if (content.includes(marker)) failures.push(`${file}: ${marker}`);
+      normalizedFile.endsWith("/renderer.log");
+    for (const marker of unexpectedExtensionHostLogMarkers(
+      content,
+      checksErrorMarker,
+    )) {
+      failures.push(`${file}: ${marker}`);
     }
   }
   const stderrPath = path.join(paths.logs, "vscode-stderr.log");
@@ -397,15 +407,43 @@ async function assertCleanExtensionHostLogs(paths) {
   }
 }
 
+export function unexpectedExtensionHostLogMarkers(content, checksErrorMarker) {
+  const inspectedContent = content
+    .split(/(?=^\d{4}-\d{2}-\d{2} .*? \[(?:error|info|warning)\])/m)
+    .filter(
+      (entry) =>
+        !(
+          entry.includes("[error] Error: Channel has been closed") &&
+          entry.includes(
+            "/extensions/json-language-features/client/dist/node/jsonClientMain.js",
+          )
+        ),
+    )
+    .join("");
+  const markers = [
+    "rejected promise not handled",
+    "UnhandledPromiseRejection",
+    "unhandled rejection",
+    "Channel has been closed",
+  ];
+  if (checksErrorMarker) markers.push("[error]");
+  return markers.filter((marker) => inspectedContent.includes(marker));
+}
+
 export function unexpectedVSCodeStderrLines(stderr) {
   const allowed = [
     /^Ignoring the error while validating workspace folder foundry-e2e:/,
     /^No search provider registered for scheme: foundry-e2e, waiting$/,
     /^Failed to fetch chat participant registry\b/,
     /Blocked vscode-file request\b/,
+    /^Unable to revert mtime: \/usr\/share\/fonts(?:\/truetype(?:\/(?:dejavu|lato|liberation|noto))?)?$/,
     /^\[\d+:\d{4}\/\d{6}\.\d{6}:ERROR:bus\.cc\(407\)\] Failed to connect to the bus: Could not parse server address: Unknown address type \(examples of valid types are "tcp" and on UNIX "unix"\)$/,
+    /^\[\d+:\d{4}\/\d{6}\.\d{6}:ERROR:dbus\/bus\.cc:405\] Failed to connect to the bus: Could not parse server address: Unknown address type \(examples of valid types are "tcp" and on UNIX "unix"\)$/,
+    /^\[\d+:\d{4}\/\d{6}\.\d{6}:ERROR:dbus\/object_proxy\.cc:572\] Failed to call method: org\.freedesktop\.DBus\.NameHasOwner: object_path= \/org\/freedesktop\/DBus: unknown error type:$/,
     /^\[\d+:\d{4}\/\d{6}\.\d{6}:ERROR:viz_main_impl\.cc\(196\)\] Exiting GPU process due to errors during initialization$/,
     /^\[\d+:\d{4}\/\d{6}\.\d{6}:ERROR:command_buffer_proxy_impl\.cc\(131\)\] ContextResult::kTransientFailure: Failed to send GpuControl\.CreateCommandBuffer\.$/,
+    /^\[\d+:\d{4}\/\d{6}\.\d{6}:ERROR:gpu\/ipc\/client\/command_buffer_proxy_impl\.cc:285\] ContextResult::kTransientFailure: Failed to send GpuControl\.CreateCommandBuffer\.$/,
+    /^\[\d+:\d{4}\/\d{6}\.\d{6}:ERROR:gpu\/command_buffer\/service\/context_group\.cc:146\] ContextResult::kFatalFailure: WebGL2 blocklisted$/,
   ];
   return stderr
     .split(/\r?\n/)
@@ -579,7 +617,7 @@ if (
     await main();
   } catch (error) {
     console.error(
-      "VS Code 1.90.0 integration suite failed:",
+      "VS Code 1.125.0 integration suite failed:",
       error instanceof Error ? error.stack ?? error.message : String(error),
     );
     process.exitCode = 1;

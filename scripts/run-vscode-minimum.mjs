@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -25,9 +25,18 @@ export async function runMinimumVSCodeSmoke({
 } = {}) {
   const ownsProfile = profileRoot === undefined;
   const resolvedProfileRoot = profileRoot ?? (await createProfileRoot());
+  const userDataRoot = path.join(resolvedProfileRoot, "user-data");
+  const inheritedNodeOptions = process.env.NODE_OPTIONS;
   try {
+    const userSettingsDirectory = path.join(userDataRoot, "User");
+    await mkdir(userSettingsDirectory, { recursive: true });
+    await writeFile(
+      path.join(userSettingsDirectory, "settings.json"),
+      `${JSON.stringify({ "chat.disableAIFeatures": true })}\n`,
+    );
+    delete process.env.NODE_OPTIONS;
     await runTests({
-      version: "1.90.0",
+      version: "1.125.0",
       extensionDevelopmentPath: repositoryRoot,
       extensionTestsPath: path.join(
         repositoryRoot,
@@ -38,11 +47,13 @@ export async function runMinimumVSCodeSmoke({
         "--disable-extensions",
         "--disable-updates",
         "--disable-workspace-trust",
-        `--user-data-dir=${path.join(resolvedProfileRoot, "user-data")}`,
+        `--user-data-dir=${userDataRoot}`,
         `--extensions-dir=${path.join(resolvedProfileRoot, "extensions")}`,
       ],
     });
   } finally {
+    if (inheritedNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+    else process.env.NODE_OPTIONS = inheritedNodeOptions;
     if (ownsProfile) {
       await rm(resolvedProfileRoot, { recursive: true, force: true });
     }
@@ -190,7 +201,7 @@ if (
     await runMain();
   } catch (error) {
     console.error(
-      "VS Code 1.90.0 Extension Host smoke failed:",
+      "VS Code 1.125.0 Extension Host smoke failed:",
       error instanceof Error ? error.stack ?? error.message : String(error),
     );
     process.exitCode = 1;

@@ -39,13 +39,13 @@ afterEach(async () => {
 });
 
 describe("packaged VS Code integration runner contract", () => {
-  it("pins the complete order-independent scenario inventory to VS Code 1.90.0", async () => {
+  it("pins the complete order-independent scenario inventory to VS Code 1.125.0", async () => {
     const runner = await import("./run-vscode-integration.mjs").catch(
       () => undefined,
     );
 
     expect(runner).toBeDefined();
-    expect(runner?.VSCODE_VERSION).toBe("1.90.0");
+    expect(runner?.VSCODE_VERSION).toBe("1.125.0");
     expect(runner?.INTEGRATION_SCENARIOS).toEqual(expectedScenarios);
     expect([...runner.INTEGRATION_SCENARIOS].reverse()).toEqual(
       [...expectedScenarios].reverse(),
@@ -73,6 +73,29 @@ describe("packaged VS Code integration runner contract", () => {
     }
   });
 
+  it("isolates the VS Code process from Node flags and unrelated AI features", async () => {
+    const runner = await import("./run-vscode-integration.mjs");
+
+    expect(
+      runner.buildVSCodeEnvironment(
+        { FOUNDRY_E2E_SCENARIO: "diagnostics", SHARED: "scenario" },
+        { NODE_OPTIONS: "--dns-result-order=ipv4first", SHARED: "parent" },
+      ),
+    ).toEqual({
+      FOUNDRY_E2E_SCENARIO: "diagnostics",
+      SHARED: "scenario",
+    });
+    expect(runner.buildVSCodeUserSettings("language-tasks")).toEqual({
+      "chat.disableAIFeatures": true,
+    });
+    expect(runner.buildVSCodeUserSettings("restricted")).toMatchObject({
+      "chat.disableAIFeatures": true,
+      "security.workspace.trust.enabled": true,
+      "security.workspace.trust.startupPrompt": "never",
+      "security.workspace.trust.banner": "never",
+    });
+  });
+
   it("runs a packaged product with only the driver as a development extension", async () => {
     const runner = await import("./run-vscode-integration.mjs").catch(
       () => undefined,
@@ -88,7 +111,7 @@ describe("packaged VS Code integration runner contract", () => {
       control: "/tmp/fs-e2e/language-tasks/control",
       logs: "/tmp/fs-e2e/language-tasks/logs",
     });
-    expect(launch.version).toBe("1.90.0");
+    expect(launch.version).toBe("1.125.0");
     expect(launch.extensionDevelopmentPath).toBe(
       path.join(repositoryRoot, "tests/extension-host/driver"),
     );
@@ -228,7 +251,13 @@ describe("packaged VS Code integration runner contract", () => {
       runner.unexpectedVSCodeStderrLines(
         '[2433:0803/234809.391641:ERROR:bus.cc(407)] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")\n' +
           "[2457:0803/234809.503860:ERROR:viz_main_impl.cc(196)] Exiting GPU process due to errors during initialization\n" +
-          "[2513:0803/234809.902556:ERROR:command_buffer_proxy_impl.cc(131)] ContextResult::kTransientFailure: Failed to send GpuControl.CreateCommandBuffer.\n",
+          "[2513:0803/234809.902556:ERROR:command_buffer_proxy_impl.cc(131)] ContextResult::kTransientFailure: Failed to send GpuControl.CreateCommandBuffer.\n" +
+          '[5996:0804/010203.681716:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")\n' +
+          "[5996:0804/010203.696240:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type:\n" +
+          "[6063:0804/010203.958204:ERROR:gpu/ipc/client/command_buffer_proxy_impl.cc:285] ContextResult::kTransientFailure: Failed to send GpuControl.CreateCommandBuffer.\n" +
+          "[3244:0804/010138.163134:ERROR:gpu/command_buffer/service/context_group.cc:146] ContextResult::kFatalFailure: WebGL2 blocklisted\n" +
+          "Unable to revert mtime: /usr/share/fonts\n" +
+          "Unable to revert mtime: /usr/share/fonts/truetype/noto\n",
       ),
     ).toEqual([]);
   });
@@ -239,14 +268,42 @@ describe("packaged VS Code integration runner contract", () => {
       "[2433:0803/234809.391641:ERROR:bus.cc(407)] Failed to connect to the bus: Permission denied\n" +
       "[2457:0803/234809.503860:ERROR:viz_main_impl.cc(196)] GPU process crashed unexpectedly\n" +
       "[2513:0803/234809.902556:ERROR:command_buffer_proxy_impl.cc(131)] ContextResult::kFatalFailure: Failed to send GpuControl.CreateCommandBuffer.\n" +
+      "[5996:0804/010203.696240:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: Permission denied\n" +
+      "[3244:0804/010138.163134:ERROR:gpu/command_buffer/service/context_group.cc:146] ContextResult::kFatalFailure: WebGL2 crashed\n" +
+      "Unable to revert mtime: /home/runner/work\n" +
       "arbitrary extension D-Bus failure\n";
 
     expect(runner.unexpectedVSCodeStderrLines(stderr)).toEqual([
       "[2433:0803/234809.391641:ERROR:bus.cc(407)] Failed to connect to the bus: Permission denied",
       "[2457:0803/234809.503860:ERROR:viz_main_impl.cc(196)] GPU process crashed unexpectedly",
       "[2513:0803/234809.902556:ERROR:command_buffer_proxy_impl.cc(131)] ContextResult::kFatalFailure: Failed to send GpuControl.CreateCommandBuffer.",
+      "[5996:0804/010203.696240:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: Permission denied",
+      "[3244:0804/010138.163134:ERROR:gpu/command_buffer/service/context_group.cc:146] ContextResult::kFatalFailure: WebGL2 crashed",
+      "Unable to revert mtime: /home/runner/work",
       "arbitrary extension D-Bus failure",
     ]);
+  });
+
+  it("allows the VS Code JSON extension shutdown race but rejects near misses", async () => {
+    const runner = await import("./run-vscode-integration.mjs");
+    const builtInShutdownRace =
+      "2026-08-03 20:52:54.382 [error] Error: Channel has been closed\n" +
+      "  at Object.info (extensionHostProcess.js:541:4305)\n" +
+      "  at QT.info (/app/extensions/json-language-features/client/dist/node/jsonClientMain.js:14:709)\n" +
+      "2026-08-03 20:52:54.382 [info] Extension host exiting\n";
+
+    expect(
+      runner.unexpectedExtensionHostLogMarkers(builtInShutdownRace, true),
+    ).toEqual([]);
+    expect(
+      runner.unexpectedExtensionHostLogMarkers(
+        builtInShutdownRace.replace(
+          "/extensions/json-language-features/",
+          "/extensions/foundryscript/",
+        ),
+        true,
+      ),
+    ).toEqual(["Channel has been closed", "[error]"]);
   });
 
   it("retains scenario logs when an isolated worker fails", async () => {
@@ -289,7 +346,7 @@ describe("packaged VS Code integration runner contract", () => {
     const job = workflow.slice(workflow.indexOf("  vscode-integration:"));
     expect(job).toContain("runs-on: ubuntu-22.04");
     expect(job).toContain("timeout-minutes:");
-    expect(job).toContain('node-version: "20.9.0"');
+    expect(job).toContain('node-version: "24"');
     expect(job).toContain("xvfb-run -a npm run test:vscode-integration");
     expect(job).toContain("actions/upload-artifact@v7");
   });

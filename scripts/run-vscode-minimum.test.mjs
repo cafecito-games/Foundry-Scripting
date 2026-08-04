@@ -14,40 +14,58 @@ async function loadRunner() {
 }
 
 describe("minimum VS Code runner", () => {
-  it("launches exact VS Code 1.90.0 from the repository root and committed fixture", async () => {
+  it("launches exact VS Code 1.125.0 from the repository root and committed fixture", async () => {
     const runner = await loadRunner();
     expect(runner).toBeDefined();
     if (runner === undefined) return;
 
-    const runTests = vi.fn(async () => 0);
-    const profileRoot = path.join(
-      path.parse(repositoryRoot).root,
-      "tmp",
-      "foundryscript-vscode-minimum-profile",
+    const observedNodeOptions = [];
+    const runTests = vi.fn(async () => {
+      observedNodeOptions.push(process.env.NODE_OPTIONS);
+      return 0;
+    });
+    const originalNodeOptions = process.env.NODE_OPTIONS;
+    process.env.NODE_OPTIONS = "--dns-result-order=ipv4first";
+    const profileRoot = await mkdtemp(
+      path.join(os.tmpdir(), "foundryscript-vscode-minimum-profile-"),
     );
-    await runner.runMinimumVSCodeSmoke({
-      runTests,
-      timeoutMs: 1_000,
-      profileRoot,
-    });
+    try {
+      await runner.runMinimumVSCodeSmoke({
+        runTests,
+        timeoutMs: 1_000,
+        profileRoot,
+      });
 
-    expect(runTests).toHaveBeenCalledOnce();
-    expect(runTests).toHaveBeenCalledWith({
-      version: "1.90.0",
-      extensionDevelopmentPath: repositoryRoot,
-      extensionTestsPath: path.join(
-        repositoryRoot,
-        "tests/vscode-minimum/suite/index.cjs",
-      ),
-      launchArgs: [
-        path.join(repositoryRoot, "tests/vscode-minimum/fixture"),
-        "--disable-extensions",
-        "--disable-updates",
-        "--disable-workspace-trust",
-        `--user-data-dir=${path.join(profileRoot, "user-data")}`,
-        `--extensions-dir=${path.join(profileRoot, "extensions")}`,
-      ],
-    });
+      expect(runTests).toHaveBeenCalledOnce();
+      expect(runTests).toHaveBeenCalledWith({
+        version: "1.125.0",
+        extensionDevelopmentPath: repositoryRoot,
+        extensionTestsPath: path.join(
+          repositoryRoot,
+          "tests/vscode-minimum/suite/index.cjs",
+        ),
+        launchArgs: [
+          path.join(repositoryRoot, "tests/vscode-minimum/fixture"),
+          "--disable-extensions",
+          "--disable-updates",
+          "--disable-workspace-trust",
+          `--user-data-dir=${path.join(profileRoot, "user-data")}`,
+          `--extensions-dir=${path.join(profileRoot, "extensions")}`,
+        ],
+      });
+      await expect(
+        readFile(
+          path.join(profileRoot, "user-data/User/settings.json"),
+          "utf8",
+        ),
+      ).resolves.toBe('{"chat.disableAIFeatures":true}\n');
+      expect(observedNodeOptions).toEqual([undefined]);
+      expect(process.env.NODE_OPTIONS).toBe("--dns-result-order=ipv4first");
+    } finally {
+      if (originalNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+      else process.env.NODE_OPTIONS = originalNodeOptions;
+      await rm(profileRoot, { recursive: true, force: true });
+    }
   });
 
   it("propagates a failed Extension Host exit", async () => {
@@ -81,9 +99,9 @@ describe("minimum VS Code runner", () => {
       expect(userDataArgument).toBeDefined();
       if (userDataArgument === undefined) return;
       const userDataPath = userDataArgument.slice("--user-data-dir=".length);
-      expect(path.join(userDataPath, "1.90-main.sock").length).toBeLessThanOrEqual(
-        103,
-      );
+      expect(
+        path.join(userDataPath, "1.125-main.sock").length,
+      ).toBeLessThanOrEqual(103);
     },
   );
 

@@ -22,30 +22,53 @@ describe("supported runtime dependency contract", () => {
   it("pins the minimum platform declarations and compatible toolchain exactly", async () => {
     const manifest = await readJson("package.json");
 
-    expect(manifest.engines.vscode).toBe("^1.90.0");
+    expect(manifest.engines).toMatchObject({
+      node: ">=24",
+      vscode: "^1.125.0",
+    });
+    expect(manifest.dependencies).toMatchObject({
+      "vscode-jsonrpc": "9.0.1",
+      "vscode-languageclient": "10.1.0",
+    });
     expect(manifest.devDependencies).toMatchObject({
-      "@types/node": "20.9.0",
-      "@types/vscode": "1.90.0",
-      "@vscode/test-electron": "2.5.2",
+      "@types/node": "24.13.3",
+      "@types/vscode": "1.125.0",
+      "@typescript-eslint/eslint-plugin": "8.66.0",
+      "@typescript-eslint/parser": "8.66.0",
+      "@vscode/test-electron": "3.1.0",
       esbuild: "0.28.1",
-      vite: "6.4.3",
+      typescript: "6.0.3",
+      vite: "8.2.0",
       vitest: "4.1.10",
     });
   });
 
   it("locks each direct runtime-alignment dependency to the declared version", async () => {
     const lock = await readJson("package-lock.json");
-    const expected = {
-      "@types/node": "20.9.0",
-      "@types/vscode": "1.90.0",
-      "@vscode/test-electron": "2.5.2",
+    const expectedDependencies = {
+      "vscode-jsonrpc": "9.0.1",
+      "vscode-languageclient": "10.1.0",
+    };
+    const expectedDevDependencies = {
+      "@types/node": "24.13.3",
+      "@types/vscode": "1.125.0",
+      "@typescript-eslint/eslint-plugin": "8.66.0",
+      "@typescript-eslint/parser": "8.66.0",
+      "@vscode/test-electron": "3.1.0",
       esbuild: "0.28.1",
-      vite: "6.4.3",
+      typescript: "6.0.3",
+      vite: "8.2.0",
       vitest: "4.1.10",
     };
 
-    expect(lock.packages[""].devDependencies).toMatchObject(expected);
-    for (const [name, version] of Object.entries(expected)) {
+    expect(lock.packages[""].dependencies).toMatchObject(expectedDependencies);
+    expect(lock.packages[""].devDependencies).toMatchObject(
+      expectedDevDependencies,
+    );
+    for (const [name, version] of Object.entries({
+      ...expectedDependencies,
+      ...expectedDevDependencies,
+    })) {
       expect(lock.packages[`node_modules/${name}`]?.version).toBe(version);
     }
   });
@@ -81,7 +104,7 @@ describe("production compiler hardening contract", () => {
 });
 
 describe("maintenance and minimum-host automation contract", () => {
-  it("exposes exact audit and VS Code 1.90 smoke commands", async () => {
+  it("exposes exact audit and VS Code 1.125 smoke commands", async () => {
     const manifest = await readJson("package.json");
 
     expect(manifest.scripts["audit:production"]).toBe("npm audit --omit=dev");
@@ -115,7 +138,7 @@ describe("maintenance and minimum-host automation contract", () => {
       expect.arrayContaining([
         expect.objectContaining({
           uses: "actions/setup-node@v7",
-          with: expect.objectContaining({ "node-version": "20.9.0" }),
+          with: expect.objectContaining({ "node-version": "24" }),
         }),
         expect.objectContaining({ run: "npm run build" }),
         expect.objectContaining({ run: "xvfb-run -a npm run test:vscode-minimum" }),
