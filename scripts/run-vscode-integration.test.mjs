@@ -291,6 +291,6 @@ describe("packaged VS Code integration runner contract", () => {
     expect(job).toContain("timeout-minutes:");
     expect(job).toContain('node-version: "20.9.0"');
     expect(job).toContain("xvfb-run -a npm run test:vscode-integration");
-    expect(job).toContain("actions/upload-artifact@v4");
+    expect(job).toContain("actions/upload-artifact@v7");
   });
 });
