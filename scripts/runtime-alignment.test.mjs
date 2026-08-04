@@ -114,7 +114,7 @@ describe("maintenance and minimum-host automation contract", () => {
     expect(minimumJob.steps).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          uses: "actions/setup-node@v4",
+          uses: "actions/setup-node@v7",
           with: expect.objectContaining({ "node-version": "20.9.0" }),
         }),
         expect.objectContaining({ run: "npm run build" }),
