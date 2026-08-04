@@ -16,7 +16,8 @@ Key `contributes` sections:
 | `taskDefinitions` | `foundryscript` tasks: build, lint, test, format, run |
 | `configuration` | `foundryScript.*` settings |
 
-`engines.vscode`: `^1.90.0`. Main entry: `./dist/extension.js` (esbuild CJS bundle).
+`engines.vscode`: `^1.125.0`. Contributor tooling requires Node.js 24 or newer.
+Main entry: `./dist/extension.js` (esbuild CJS bundle).
 
 `activationEvents` is empty — the extension uses workspaceContains or default activation
 via language/id (verify against current `package.json` when changing activation).

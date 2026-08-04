@@ -20,34 +20,43 @@ describe("minimum VS Code runner", () => {
     if (runner === undefined) return;
 
     const runTests = vi.fn(async () => 0);
-    const profileRoot = path.join(
-      path.parse(repositoryRoot).root,
-      "tmp",
-      "foundryscript-vscode-minimum-profile",
+    const profileRoot = await mkdtemp(
+      path.join(os.tmpdir(), "foundryscript-vscode-minimum-profile-"),
     );
-    await runner.runMinimumVSCodeSmoke({
-      runTests,
-      timeoutMs: 1_000,
-      profileRoot,
-    });
+    try {
+      await runner.runMinimumVSCodeSmoke({
+        runTests,
+        timeoutMs: 1_000,
+        profileRoot,
+      });
 
-    expect(runTests).toHaveBeenCalledOnce();
-    expect(runTests).toHaveBeenCalledWith({
-      version: "1.125.0",
-      extensionDevelopmentPath: repositoryRoot,
-      extensionTestsPath: path.join(
-        repositoryRoot,
-        "tests/vscode-minimum/suite/index.cjs",
-      ),
-      launchArgs: [
-        path.join(repositoryRoot, "tests/vscode-minimum/fixture"),
-        "--disable-extensions",
-        "--disable-updates",
-        "--disable-workspace-trust",
-        `--user-data-dir=${path.join(profileRoot, "user-data")}`,
-        `--extensions-dir=${path.join(profileRoot, "extensions")}`,
-      ],
-    });
+      expect(runTests).toHaveBeenCalledOnce();
+      expect(runTests).toHaveBeenCalledWith({
+        version: "1.125.0",
+        extensionDevelopmentPath: repositoryRoot,
+        extensionTestsPath: path.join(
+          repositoryRoot,
+          "tests/vscode-minimum/suite/index.cjs",
+        ),
+        extensionTestsEnv: { NODE_OPTIONS: "" },
+        launchArgs: [
+          path.join(repositoryRoot, "tests/vscode-minimum/fixture"),
+          "--disable-extensions",
+          "--disable-updates",
+          "--disable-workspace-trust",
+          `--user-data-dir=${path.join(profileRoot, "user-data")}`,
+          `--extensions-dir=${path.join(profileRoot, "extensions")}`,
+        ],
+      });
+      await expect(
+        readFile(
+          path.join(profileRoot, "user-data/User/settings.json"),
+          "utf8",
+        ),
+      ).resolves.toBe('{"chat.disableAIFeatures":true}\n');
+    } finally {
+      await rm(profileRoot, { recursive: true, force: true });
+    }
   });
 
   it("propagates a failed Extension Host exit", async () => {

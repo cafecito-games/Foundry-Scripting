@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -25,7 +25,14 @@ export async function runMinimumVSCodeSmoke({
 } = {}) {
   const ownsProfile = profileRoot === undefined;
   const resolvedProfileRoot = profileRoot ?? (await createProfileRoot());
+  const userDataRoot = path.join(resolvedProfileRoot, "user-data");
   try {
+    const userSettingsDirectory = path.join(userDataRoot, "User");
+    await mkdir(userSettingsDirectory, { recursive: true });
+    await writeFile(
+      path.join(userSettingsDirectory, "settings.json"),
+      `${JSON.stringify({ "chat.disableAIFeatures": true })}\n`,
+    );
     await runTests({
       version: "1.125.0",
       extensionDevelopmentPath: repositoryRoot,
@@ -33,12 +40,13 @@ export async function runMinimumVSCodeSmoke({
         repositoryRoot,
         "tests/vscode-minimum/suite/index.cjs",
       ),
+      extensionTestsEnv: { NODE_OPTIONS: "" },
       launchArgs: [
         path.join(repositoryRoot, "tests/vscode-minimum/fixture"),
         "--disable-extensions",
         "--disable-updates",
         "--disable-workspace-trust",
-        `--user-data-dir=${path.join(resolvedProfileRoot, "user-data")}`,
+        `--user-data-dir=${userDataRoot}`,
         `--extensions-dir=${path.join(resolvedProfileRoot, "extensions")}`,
       ],
     });
