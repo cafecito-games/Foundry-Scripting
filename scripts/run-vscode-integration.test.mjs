@@ -251,7 +251,13 @@ describe("packaged VS Code integration runner contract", () => {
       runner.unexpectedVSCodeStderrLines(
         '[2433:0803/234809.391641:ERROR:bus.cc(407)] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")\n' +
           "[2457:0803/234809.503860:ERROR:viz_main_impl.cc(196)] Exiting GPU process due to errors during initialization\n" +
-          "[2513:0803/234809.902556:ERROR:command_buffer_proxy_impl.cc(131)] ContextResult::kTransientFailure: Failed to send GpuControl.CreateCommandBuffer.\n",
+          "[2513:0803/234809.902556:ERROR:command_buffer_proxy_impl.cc(131)] ContextResult::kTransientFailure: Failed to send GpuControl.CreateCommandBuffer.\n" +
+          '[5996:0804/010203.681716:ERROR:dbus/bus.cc:405] Failed to connect to the bus: Could not parse server address: Unknown address type (examples of valid types are "tcp" and on UNIX "unix")\n' +
+          "[5996:0804/010203.696240:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: object_path= /org/freedesktop/DBus: unknown error type:\n" +
+          "[6063:0804/010203.958204:ERROR:gpu/ipc/client/command_buffer_proxy_impl.cc:285] ContextResult::kTransientFailure: Failed to send GpuControl.CreateCommandBuffer.\n" +
+          "[3244:0804/010138.163134:ERROR:gpu/command_buffer/service/context_group.cc:146] ContextResult::kFatalFailure: WebGL2 blocklisted\n" +
+          "Unable to revert mtime: /usr/share/fonts\n" +
+          "Unable to revert mtime: /usr/share/fonts/truetype/noto\n",
       ),
     ).toEqual([]);
   });
@@ -262,12 +268,18 @@ describe("packaged VS Code integration runner contract", () => {
       "[2433:0803/234809.391641:ERROR:bus.cc(407)] Failed to connect to the bus: Permission denied\n" +
       "[2457:0803/234809.503860:ERROR:viz_main_impl.cc(196)] GPU process crashed unexpectedly\n" +
       "[2513:0803/234809.902556:ERROR:command_buffer_proxy_impl.cc(131)] ContextResult::kFatalFailure: Failed to send GpuControl.CreateCommandBuffer.\n" +
+      "[5996:0804/010203.696240:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: Permission denied\n" +
+      "[3244:0804/010138.163134:ERROR:gpu/command_buffer/service/context_group.cc:146] ContextResult::kFatalFailure: WebGL2 crashed\n" +
+      "Unable to revert mtime: /home/runner/work\n" +
       "arbitrary extension D-Bus failure\n";
 
     expect(runner.unexpectedVSCodeStderrLines(stderr)).toEqual([
       "[2433:0803/234809.391641:ERROR:bus.cc(407)] Failed to connect to the bus: Permission denied",
       "[2457:0803/234809.503860:ERROR:viz_main_impl.cc(196)] GPU process crashed unexpectedly",
       "[2513:0803/234809.902556:ERROR:command_buffer_proxy_impl.cc(131)] ContextResult::kFatalFailure: Failed to send GpuControl.CreateCommandBuffer.",
+      "[5996:0804/010203.696240:ERROR:dbus/object_proxy.cc:572] Failed to call method: org.freedesktop.DBus.NameHasOwner: Permission denied",
+      "[3244:0804/010138.163134:ERROR:gpu/command_buffer/service/context_group.cc:146] ContextResult::kFatalFailure: WebGL2 crashed",
+      "Unable to revert mtime: /home/runner/work",
       "arbitrary extension D-Bus failure",
     ]);
   });

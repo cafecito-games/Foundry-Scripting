@@ -436,9 +436,14 @@ export function unexpectedVSCodeStderrLines(stderr) {
     /^No search provider registered for scheme: foundry-e2e, waiting$/,
     /^Failed to fetch chat participant registry\b/,
     /Blocked vscode-file request\b/,
+    /^Unable to revert mtime: \/usr\/share\/fonts(?:\/truetype(?:\/(?:dejavu|lato|liberation|noto))?)?$/,
     /^\[\d+:\d{4}\/\d{6}\.\d{6}:ERROR:bus\.cc\(407\)\] Failed to connect to the bus: Could not parse server address: Unknown address type \(examples of valid types are "tcp" and on UNIX "unix"\)$/,
+    /^\[\d+:\d{4}\/\d{6}\.\d{6}:ERROR:dbus\/bus\.cc:405\] Failed to connect to the bus: Could not parse server address: Unknown address type \(examples of valid types are "tcp" and on UNIX "unix"\)$/,
+    /^\[\d+:\d{4}\/\d{6}\.\d{6}:ERROR:dbus\/object_proxy\.cc:572\] Failed to call method: org\.freedesktop\.DBus\.NameHasOwner: object_path= \/org\/freedesktop\/DBus: unknown error type:$/,
     /^\[\d+:\d{4}\/\d{6}\.\d{6}:ERROR:viz_main_impl\.cc\(196\)\] Exiting GPU process due to errors during initialization$/,
     /^\[\d+:\d{4}\/\d{6}\.\d{6}:ERROR:command_buffer_proxy_impl\.cc\(131\)\] ContextResult::kTransientFailure: Failed to send GpuControl\.CreateCommandBuffer\.$/,
+    /^\[\d+:\d{4}\/\d{6}\.\d{6}:ERROR:gpu\/ipc\/client\/command_buffer_proxy_impl\.cc:285\] ContextResult::kTransientFailure: Failed to send GpuControl\.CreateCommandBuffer\.$/,
+    /^\[\d+:\d{4}\/\d{6}\.\d{6}:ERROR:gpu\/command_buffer\/service\/context_group\.cc:146\] ContextResult::kFatalFailure: WebGL2 blocklisted$/,
   ];
   return stderr
     .split(/\r?\n/)
