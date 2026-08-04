@@ -3,6 +3,12 @@
 Language support for [FoundryScript](https://github.com/cafecito-games/Foundry) (`.fs`),
 the gradually-typed scripting language of the Foundry engine.
 
+## Requirements
+
+FoundryScript requires Visual Studio Code 1.125.0 or newer. Engine requirements for
+debugging and selected-test support are documented under
+[Engine compatibility](#engine-compatibility).
+
 ## Features
 
 - Semantic highlighting from the Foundry language server, including contextual keywords,

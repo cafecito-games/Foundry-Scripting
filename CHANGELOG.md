@@ -27,6 +27,7 @@ All notable changes to the FoundryScript VS Code extension are documented here.
 
 ### Compatibility
 
+- Raise the minimum supported Visual Studio Code version to `1.125.0`.
 - Scene and selected-test debugging require Foundry `v0.1.0-alpha.24` or later.
   `v0.1.0-alpha.24` is the first verified compatible release and resolves to commit
   `e91ab07e63ce0a783778dc885bb11d9c65603256`, including the natural-exit lifecycle

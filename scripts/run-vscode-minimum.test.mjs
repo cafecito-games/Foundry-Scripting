@@ -19,7 +19,13 @@ describe("minimum VS Code runner", () => {
     expect(runner).toBeDefined();
     if (runner === undefined) return;
 
-    const runTests = vi.fn(async () => 0);
+    const observedNodeOptions = [];
+    const runTests = vi.fn(async () => {
+      observedNodeOptions.push(process.env.NODE_OPTIONS);
+      return 0;
+    });
+    const originalNodeOptions = process.env.NODE_OPTIONS;
+    process.env.NODE_OPTIONS = "--dns-result-order=ipv4first";
     const profileRoot = await mkdtemp(
       path.join(os.tmpdir(), "foundryscript-vscode-minimum-profile-"),
     );
@@ -38,7 +44,6 @@ describe("minimum VS Code runner", () => {
           repositoryRoot,
           "tests/vscode-minimum/suite/index.cjs",
         ),
-        extensionTestsEnv: { NODE_OPTIONS: "" },
         launchArgs: [
           path.join(repositoryRoot, "tests/vscode-minimum/fixture"),
           "--disable-extensions",
@@ -54,7 +59,11 @@ describe("minimum VS Code runner", () => {
           "utf8",
         ),
       ).resolves.toBe('{"chat.disableAIFeatures":true}\n');
+      expect(observedNodeOptions).toEqual([undefined]);
+      expect(process.env.NODE_OPTIONS).toBe("--dns-result-order=ipv4first");
     } finally {
+      if (originalNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+      else process.env.NODE_OPTIONS = originalNodeOptions;
       await rm(profileRoot, { recursive: true, force: true });
     }
   });

@@ -26,6 +26,7 @@ export async function runMinimumVSCodeSmoke({
   const ownsProfile = profileRoot === undefined;
   const resolvedProfileRoot = profileRoot ?? (await createProfileRoot());
   const userDataRoot = path.join(resolvedProfileRoot, "user-data");
+  const inheritedNodeOptions = process.env.NODE_OPTIONS;
   try {
     const userSettingsDirectory = path.join(userDataRoot, "User");
     await mkdir(userSettingsDirectory, { recursive: true });
@@ -33,6 +34,7 @@ export async function runMinimumVSCodeSmoke({
       path.join(userSettingsDirectory, "settings.json"),
       `${JSON.stringify({ "chat.disableAIFeatures": true })}\n`,
     );
+    delete process.env.NODE_OPTIONS;
     await runTests({
       version: "1.125.0",
       extensionDevelopmentPath: repositoryRoot,
@@ -40,7 +42,6 @@ export async function runMinimumVSCodeSmoke({
         repositoryRoot,
         "tests/vscode-minimum/suite/index.cjs",
       ),
-      extensionTestsEnv: { NODE_OPTIONS: "" },
       launchArgs: [
         path.join(repositoryRoot, "tests/vscode-minimum/fixture"),
         "--disable-extensions",
@@ -51,6 +52,8 @@ export async function runMinimumVSCodeSmoke({
       ],
     });
   } finally {
+    if (inheritedNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+    else process.env.NODE_OPTIONS = inheritedNodeOptions;
     if (ownsProfile) {
       await rm(resolvedProfileRoot, { recursive: true, force: true });
     }
