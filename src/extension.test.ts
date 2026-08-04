@@ -262,7 +262,7 @@ const extensionMock = vi.hoisted(() => {
 });
 
 vi.mock("vscode", () => ({
-  version: "1.90.0",
+  version: "1.125.0",
   tests: {
     createTestController: extensionMock.createTestController,
   },
@@ -2842,6 +2842,10 @@ async function expectNativeRuntimeStartedOnce(): Promise<void> {
   expect(extensionMock.createDiagnosticCollection).toHaveBeenCalledOnce();
   expect(extensionMock.registerFoundryTaskProvider).toHaveBeenCalledOnce();
   expect(extensionMock.createOutputChannel).toHaveBeenCalledTimes(3);
+  expect(extensionMock.createOutputChannel).toHaveBeenCalledWith(
+    "FoundryScript LSP",
+    { log: true },
+  );
   expect(extensionMock.createStatusBarItem).toHaveBeenCalledOnce();
   expect(extensionMock.registerCommand).toHaveBeenCalledOnce();
   expect(extensionMock.registerDebugConfigurationProvider).toHaveBeenCalledOnce();

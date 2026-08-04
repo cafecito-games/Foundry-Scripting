@@ -82,7 +82,7 @@ describe("FoundryScript language client", () => {
   it("registers standard language features for FoundryScript documents", () => {
     const outputChannel = {
       appendLine: vi.fn(),
-    } as unknown as vscode.OutputChannel;
+    } as unknown as vscode.LogOutputChannel;
 
     new FoundryScriptLanguageClient({
       endpoint: { host: "127.0.0.1", port: 6005 },
@@ -108,7 +108,7 @@ describe("FoundryScript language client", () => {
     const onDiagnostics = vi.fn();
     new FoundryScriptLanguageClient({
       endpoint: { host: "127.0.0.1", port: 6005 },
-      outputChannel: { appendLine: vi.fn() } as unknown as vscode.OutputChannel,
+      outputChannel: { appendLine: vi.fn() } as unknown as vscode.LogOutputChannel,
       onDiagnostics,
     });
     const clientOptions = languageClientMock.constructorCalls[0]?.[3] as
@@ -138,7 +138,7 @@ describe("FoundryScript language client", () => {
   it("registers the Foundry semantic token contract feature", () => {
     new FoundryScriptLanguageClient({
       endpoint: { host: "127.0.0.1", port: 6005 },
-      outputChannel: { appendLine: vi.fn() } as unknown as vscode.OutputChannel,
+      outputChannel: { appendLine: vi.fn() } as unknown as vscode.LogOutputChannel,
     });
 
     expect(languageClientMock.registeredFeatures).toHaveLength(1);
@@ -151,7 +151,7 @@ describe("FoundryScript language client", () => {
     const onDiagnostics = vi.fn();
     new FoundryScriptLanguageClient({
       endpoint: { host: "127.0.0.1", port: 6005 },
-      outputChannel: { appendLine: vi.fn() } as unknown as vscode.OutputChannel,
+      outputChannel: { appendLine: vi.fn() } as unknown as vscode.LogOutputChannel,
       onDiagnostics,
     });
     const clientOptions = languageClientMock.constructorCalls[0]?.[3] as
@@ -215,7 +215,7 @@ describe("FoundryScript language client", () => {
   it("records native class capabilities and forwards the notification", () => {
     const outputChannel = {
       appendLine: vi.fn(),
-    } as unknown as vscode.OutputChannel;
+    } as unknown as vscode.LogOutputChannel;
     const onCapabilities = vi.fn();
     const client = new FoundryScriptLanguageClient({
       endpoint: { host: "127.0.0.1", port: 6005 },
@@ -240,7 +240,7 @@ describe("FoundryScript language client", () => {
   it("does not expose mutable native class state to consumers", () => {
     const outputChannel = {
       appendLine: vi.fn(),
-    } as unknown as vscode.OutputChannel;
+    } as unknown as vscode.LogOutputChannel;
     const client = new FoundryScriptLanguageClient({
       endpoint: { host: "127.0.0.1", port: 6005 },
       outputChannel,
@@ -262,7 +262,7 @@ describe("FoundryScript language client", () => {
   it("isolates capability state from notification and callback aliases", () => {
     const outputChannel = {
       appendLine: vi.fn(),
-    } as unknown as vscode.OutputChannel;
+    } as unknown as vscode.LogOutputChannel;
     const onCapabilities = vi.fn();
     const client = new FoundryScriptLanguageClient({
       endpoint: { host: "127.0.0.1", port: 6005 },
@@ -312,7 +312,7 @@ describe("FoundryScript language client", () => {
     const appendLine = vi.fn();
     const outputChannel = {
       appendLine,
-    } as unknown as vscode.OutputChannel;
+    } as unknown as vscode.LogOutputChannel;
     const onCapabilities = vi.fn();
     const client = new FoundryScriptLanguageClient({
       endpoint: { host: "127.0.0.1", port: 6005 },
@@ -357,7 +357,7 @@ describe("FoundryScript language client", () => {
   it("recovers from malformed capabilities with an isolated valid snapshot", () => {
     const outputChannel = {
       appendLine: vi.fn(),
-    } as unknown as vscode.OutputChannel;
+    } as unknown as vscode.LogOutputChannel;
     const onCapabilities = vi.fn();
     const client = new FoundryScriptLanguageClient({
       endpoint: { host: "127.0.0.1", port: 6005 },
@@ -389,7 +389,7 @@ describe("FoundryScript language client", () => {
   it("records the requested server workspace and forwards the notification", () => {
     const outputChannel = {
       appendLine: vi.fn(),
-    } as unknown as vscode.OutputChannel;
+    } as unknown as vscode.LogOutputChannel;
     const onChangeWorkspace = vi.fn();
     const client = new FoundryScriptLanguageClient({
       endpoint: { host: "127.0.0.1", port: 6005 },
@@ -415,7 +415,7 @@ describe("FoundryScript language client", () => {
     } satisfies WorkspaceMismatchHandler;
     const client = new FoundryScriptLanguageClient({
       endpoint: { host: "127.0.0.1", port: 6005 },
-      outputChannel: { appendLine: vi.fn() } as unknown as vscode.OutputChannel,
+      outputChannel: { appendLine: vi.fn() } as unknown as vscode.LogOutputChannel,
       onChangeWorkspace,
       workspaceMismatchHandler,
     });
@@ -446,7 +446,7 @@ describe("FoundryScript language client", () => {
     } satisfies WorkspaceMismatchHandler;
     new FoundryScriptLanguageClient({
       endpoint: { host: "127.0.0.1", port: 6005 },
-      outputChannel: { appendLine: vi.fn() } as unknown as vscode.OutputChannel,
+      outputChannel: { appendLine: vi.fn() } as unknown as vscode.LogOutputChannel,
       workspaceMismatchHandler,
     });
     const interceptNotification = transportMock.options[0]?.interceptNotification;
@@ -476,7 +476,7 @@ describe("FoundryScript language client", () => {
     } satisfies WorkspaceMismatchHandler;
     new FoundryScriptLanguageClient({
       endpoint: { host: "127.0.0.1", port: 6005 },
-      outputChannel: { appendLine: vi.fn() } as unknown as vscode.OutputChannel,
+      outputChannel: { appendLine: vi.fn() } as unknown as vscode.LogOutputChannel,
       onChangeWorkspace,
       workspaceMismatchHandler,
     });
@@ -492,7 +492,7 @@ describe("FoundryScript language client", () => {
   it("keeps the standard language-client notification handling when no mismatch handler is configured", () => {
     new FoundryScriptLanguageClient({
       endpoint: { host: "127.0.0.1", port: 6005 },
-      outputChannel: { appendLine: vi.fn() } as unknown as vscode.OutputChannel,
+      outputChannel: { appendLine: vi.fn() } as unknown as vscode.LogOutputChannel,
     });
 
     expect(transportMock.options[0]?.interceptNotification).toBeUndefined();
@@ -501,7 +501,7 @@ describe("FoundryScript language client", () => {
   it("disables the language client's implicit restart", async () => {
     new FoundryScriptLanguageClient({
       endpoint: { host: "127.0.0.1", port: 6005 },
-      outputChannel: { appendLine: vi.fn() } as unknown as vscode.OutputChannel,
+      outputChannel: { appendLine: vi.fn() } as unknown as vscode.LogOutputChannel,
     });
     const clientOptions = languageClientMock.constructorCalls[0]?.[3] as {
       errorHandler?: {
@@ -520,7 +520,7 @@ describe("FoundryScript language client", () => {
   it("reports only an unexpected running-to-stopped transition", () => {
     const client = new FoundryScriptLanguageClient({
       endpoint: { host: "127.0.0.1", port: 6005 },
-      outputChannel: { appendLine: vi.fn() } as unknown as vscode.OutputChannel,
+      outputChannel: { appendLine: vi.fn() } as unknown as vscode.LogOutputChannel,
     });
     const stopped = vi.fn();
 

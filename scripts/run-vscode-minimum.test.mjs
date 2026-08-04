@@ -14,7 +14,7 @@ async function loadRunner() {
 }
 
 describe("minimum VS Code runner", () => {
-  it("launches exact VS Code 1.90.0 from the repository root and committed fixture", async () => {
+  it("launches exact VS Code 1.125.0 from the repository root and committed fixture", async () => {
     const runner = await loadRunner();
     expect(runner).toBeDefined();
     if (runner === undefined) return;
@@ -33,7 +33,7 @@ describe("minimum VS Code runner", () => {
 
     expect(runTests).toHaveBeenCalledOnce();
     expect(runTests).toHaveBeenCalledWith({
-      version: "1.90.0",
+      version: "1.125.0",
       extensionDevelopmentPath: repositoryRoot,
       extensionTestsPath: path.join(
         repositoryRoot,
@@ -81,9 +81,9 @@ describe("minimum VS Code runner", () => {
       expect(userDataArgument).toBeDefined();
       if (userDataArgument === undefined) return;
       const userDataPath = userDataArgument.slice("--user-data-dir=".length);
-      expect(path.join(userDataPath, "1.90-main.sock").length).toBeLessThanOrEqual(
-        103,
-      );
+      expect(
+        path.join(userDataPath, "1.125-main.sock").length,
+      ).toBeLessThanOrEqual(103);
     },
   );
 

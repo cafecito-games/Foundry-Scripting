@@ -82,7 +82,7 @@ export function parseFoundryCapabilities(
 
 export interface FoundryScriptLanguageClientOptions {
   endpoint: TcpEndpoint;
-  outputChannel: vscode.OutputChannel;
+  outputChannel: vscode.LogOutputChannel;
   signal?: AbortSignal;
   onCapabilities?: (capabilities: FoundryCapabilities) => void;
   onChangeWorkspace?: (params: ChangeWorkspaceParams) => void;

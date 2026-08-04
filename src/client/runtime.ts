@@ -24,7 +24,7 @@ export function createToolingHostCoordinator(
 }
 
 export function createConnectionManager(
-  outputChannel: vscode.OutputChannel,
+  outputChannel: vscode.LogOutputChannel,
   workspacePath: string,
   onStateChange: (state: ConnectionState) => void,
   diagnostics: DiagnosticsUnit,

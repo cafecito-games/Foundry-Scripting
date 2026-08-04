@@ -669,7 +669,9 @@ function startNativeRuntime(context: vscode.ExtensionContext): void {
   registerFoundryTaskProvider(context, diagnostics, resolveProject);
   const debugOutput = vscode.window.createOutputChannel("FoundryScript Debug");
   context.subscriptions.push(debugOutput);
-  const outputChannel = vscode.window.createOutputChannel("FoundryScript LSP");
+  const outputChannel = vscode.window.createOutputChannel("FoundryScript LSP", {
+    log: true,
+  });
   context.subscriptions.push(outputChannel);
   const statusItem = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left,

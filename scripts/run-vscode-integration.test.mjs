@@ -39,13 +39,13 @@ afterEach(async () => {
 });
 
 describe("packaged VS Code integration runner contract", () => {
-  it("pins the complete order-independent scenario inventory to VS Code 1.90.0", async () => {
+  it("pins the complete order-independent scenario inventory to VS Code 1.125.0", async () => {
     const runner = await import("./run-vscode-integration.mjs").catch(
       () => undefined,
     );
 
     expect(runner).toBeDefined();
-    expect(runner?.VSCODE_VERSION).toBe("1.90.0");
+    expect(runner?.VSCODE_VERSION).toBe("1.125.0");
     expect(runner?.INTEGRATION_SCENARIOS).toEqual(expectedScenarios);
     expect([...runner.INTEGRATION_SCENARIOS].reverse()).toEqual(
       [...expectedScenarios].reverse(),
@@ -73,6 +73,29 @@ describe("packaged VS Code integration runner contract", () => {
     }
   });
 
+  it("isolates the VS Code process from Node flags and unrelated AI features", async () => {
+    const runner = await import("./run-vscode-integration.mjs");
+
+    expect(
+      runner.buildVSCodeEnvironment(
+        { FOUNDRY_E2E_SCENARIO: "diagnostics", SHARED: "scenario" },
+        { NODE_OPTIONS: "--dns-result-order=ipv4first", SHARED: "parent" },
+      ),
+    ).toEqual({
+      FOUNDRY_E2E_SCENARIO: "diagnostics",
+      SHARED: "scenario",
+    });
+    expect(runner.buildVSCodeUserSettings("language-tasks")).toEqual({
+      "chat.disableAIFeatures": true,
+    });
+    expect(runner.buildVSCodeUserSettings("restricted")).toMatchObject({
+      "chat.disableAIFeatures": true,
+      "security.workspace.trust.enabled": true,
+      "security.workspace.trust.startupPrompt": "never",
+      "security.workspace.trust.banner": "never",
+    });
+  });
+
   it("runs a packaged product with only the driver as a development extension", async () => {
     const runner = await import("./run-vscode-integration.mjs").catch(
       () => undefined,
@@ -88,7 +111,7 @@ describe("packaged VS Code integration runner contract", () => {
       control: "/tmp/fs-e2e/language-tasks/control",
       logs: "/tmp/fs-e2e/language-tasks/logs",
     });
-    expect(launch.version).toBe("1.90.0");
+    expect(launch.version).toBe("1.125.0");
     expect(launch.extensionDevelopmentPath).toBe(
       path.join(repositoryRoot, "tests/extension-host/driver"),
     );
@@ -249,6 +272,28 @@ describe("packaged VS Code integration runner contract", () => {
     ]);
   });
 
+  it("allows the VS Code JSON extension shutdown race but rejects near misses", async () => {
+    const runner = await import("./run-vscode-integration.mjs");
+    const builtInShutdownRace =
+      "2026-08-03 20:52:54.382 [error] Error: Channel has been closed\n" +
+      "  at Object.info (extensionHostProcess.js:541:4305)\n" +
+      "  at QT.info (/app/extensions/json-language-features/client/dist/node/jsonClientMain.js:14:709)\n" +
+      "2026-08-03 20:52:54.382 [info] Extension host exiting\n";
+
+    expect(
+      runner.unexpectedExtensionHostLogMarkers(builtInShutdownRace, true),
+    ).toEqual([]);
+    expect(
+      runner.unexpectedExtensionHostLogMarkers(
+        builtInShutdownRace.replace(
+          "/extensions/json-language-features/",
+          "/extensions/foundryscript/",
+        ),
+        true,
+      ),
+    ).toEqual(["Channel has been closed", "[error]"]);
+  });
+
   it("retains scenario logs when an isolated worker fails", async () => {
     const runner = await import("./run-vscode-integration.mjs");
     let suiteRoot;
@@ -289,7 +334,7 @@ describe("packaged VS Code integration runner contract", () => {
     const job = workflow.slice(workflow.indexOf("  vscode-integration:"));
     expect(job).toContain("runs-on: ubuntu-22.04");
     expect(job).toContain("timeout-minutes:");
-    expect(job).toContain('node-version: "20.9.0"');
+    expect(job).toContain('node-version: "24"');
     expect(job).toContain("xvfb-run -a npm run test:vscode-integration");
     expect(job).toContain("actions/upload-artifact@v7");
   });

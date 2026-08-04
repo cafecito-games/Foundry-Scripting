@@ -27,7 +27,7 @@ export async function runMinimumVSCodeSmoke({
   const resolvedProfileRoot = profileRoot ?? (await createProfileRoot());
   try {
     await runTests({
-      version: "1.90.0",
+      version: "1.125.0",
       extensionDevelopmentPath: repositoryRoot,
       extensionTestsPath: path.join(
         repositoryRoot,
@@ -190,7 +190,7 @@ if (
     await runMain();
   } catch (error) {
     console.error(
-      "VS Code 1.90.0 Extension Host smoke failed:",
+      "VS Code 1.125.0 Extension Host smoke failed:",
       error instanceof Error ? error.stack ?? error.message : String(error),
     );
     process.exitCode = 1;
