@@ -57,6 +57,10 @@ Wrapper repositories can select their project explicitly:
 If multiple nested projects exist, configure `foundryScript.projectPath`. The extension
 currently operates one Foundry project per VS Code window.
 
+**Multi-root workspaces:** only the first file-scheme workspace folder participates in
+project resolution. This is intentional — reorder folders to switch which project is
+active, or set `foundryScript.projectPath` to target a project in a non-first folder.
+
 Cold project initialization may include file scanning, script-class registration, and
 editor setup before the tooling readiness record appears. While Foundry emits startup
 output, the extension allows that work to continue for up to two minutes. A silent

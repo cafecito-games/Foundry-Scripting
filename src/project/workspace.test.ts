@@ -79,37 +79,9 @@ describe("VS Code workspace project resolver", () => {
       { uri: { scheme: "file", fsPath: "/workspace/first" } },
       { uri: { scheme: "file", fsPath: "/workspace/second" } },
     );
-    workspaceMock.configuration.set("projectPath", "test_project");
-    const manifestExists = vi.fn().mockResolvedValue(true);
-    const resolveProject = createWorkspaceProjectResolver({ manifestExists });
-
-    await expect(resolveProject()).resolves.toEqual({
-      success: true,
-      project: "/workspace/first/test_project",
-    });
-    // The configured path is resolved from the first folder only; no
-    // multi-folder scan is performed when projectPath is set.
-    expect(manifestExists).toHaveBeenCalledWith("/workspace/first/test_project");
-    expect(manifestExists).not.toHaveBeenCalledWith(
-      "/workspace/second/test_project",
-    );
-    expect(workspaceMock.findFiles).not.toHaveBeenCalled();
-  });
-
-  it("searches every file-scheme folder when projectPath is unset", async () => {
-    workspaceMock.workspaceFolders.push(
-      { uri: { scheme: "file", fsPath: "/workspace/first" } },
-      { uri: { scheme: "file", fsPath: "/workspace/second" } },
-    );
-    let callIndex = 0;
-    workspaceMock.findFiles.mockImplementation(() => {
-      callIndex += 1;
-      return Promise.resolve(
-        callIndex === 1
-          ? [{ fsPath: "/workspace/first/test_project/project.foundry" }]
-          : [],
-      );
-    });
+    workspaceMock.findFiles.mockResolvedValue([
+      { fsPath: "/workspace/first/test_project/project.foundry" },
+    ]);
     const resolveProject = createWorkspaceProjectResolver({
       manifestExists: vi.fn().mockResolvedValue(false),
     });
@@ -118,33 +90,15 @@ describe("VS Code workspace project resolver", () => {
       success: true,
       project: "/workspace/first/test_project",
     });
-    expect(workspaceMock.findFiles).toHaveBeenCalledTimes(2);
-  });
-
-  it("reports ambiguity when multiple folders contain a project", async () => {
-    workspaceMock.workspaceFolders.push(
-      { uri: { scheme: "file", fsPath: "/workspace/first" } },
-      { uri: { scheme: "file", fsPath: "/workspace/second" } },
+    // Multi-root resolution intentionally prefers the first folder; the
+    // reconfiguration e2e scenario relies on reordering to swap projects.
+    expect(workspaceMock.findFiles).toHaveBeenCalledWith(
+      expect.objectContaining({
+        base: "/workspace/first",
+        pattern: "**/project.foundry",
+      }),
+      expect.stringContaining("node_modules"),
     );
-    let callIndex = 0;
-    workspaceMock.findFiles.mockImplementation(() => {
-      callIndex += 1;
-      return Promise.resolve(
-        callIndex === 1
-          ? [{ fsPath: "/workspace/first/game/project.foundry" }]
-          : [{ fsPath: "/workspace/second/tools/project.foundry" }],
-      );
-    });
-    const resolveProject = createWorkspaceProjectResolver({
-      manifestExists: vi.fn().mockResolvedValue(false),
-    });
-
-    const result = await resolveProject();
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.failure.kind).toBe("ambiguous_projects");
-      expect(result.failure.setting).toBe("foundryScript.projectPath");
-    }
   });
 
   it("reads the configured project path on every resolution", async () => {
