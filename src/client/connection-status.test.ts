@@ -27,6 +27,17 @@ describe("connection status presentation", () => {
       text: "$(sync~spin) FoundryScript: Retrying 3/5",
       tooltip: "Reconnect attempt 3 of 5 starts in 2 seconds.",
     });
+    expect(
+      renderConnectionState({
+        kind: "retrying",
+        attempt: 1,
+        maxAttempts: 5,
+        delayMs: 0,
+      }),
+    ).toEqual({
+      text: "$(sync~spin) FoundryScript: Retrying 1/5",
+      tooltip: "Reconnect attempt 1 of 5 starts immediately.",
+    });
     expect(renderConnectionState({ kind: "disconnected" })).toMatchObject({
       text: "$(debug-disconnect) FoundryScript: Disconnected",
     });

@@ -190,6 +190,23 @@ describe("Foundry lint diagnostics publisher", () => {
     expect(replace).toHaveBeenCalledOnce();
     expect(replace).toHaveBeenCalledWith({ source: "cli", entries: [] });
   });
+
+  it("clears prior diagnostics when a new project's run fails", () => {
+    const { unit, accept, replace } = createHarness();
+    const publisher = new FoundryLintDiagnosticsPublisher(unit);
+    const firstProject = publisher.beginRun("/workspace/game");
+    firstProject.appendStdout(capturedFixture);
+    firstProject.complete(1);
+    replace.mockClear();
+
+    const secondProject = publisher.beginRun("/workspace/editor-tools");
+    secondProject.appendStdout(report([]));
+    secondProject.complete(2);
+
+    expect(accept).not.toHaveBeenCalled();
+    expect(replace).toHaveBeenCalledOnce();
+    expect(replace).toHaveBeenCalledWith({ source: "cli", entries: [] });
+  });
 });
 
 function report(diagnostics: unknown[]): string {

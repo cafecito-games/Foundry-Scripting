@@ -5,6 +5,6 @@
   "publisher": "cafecito-games-test",
   "engines": { "vscode": "^1.90.0" },
   "main": "./extension.cjs",
-  "activationEvents": ["*"],
+  "activationEvents": ["onStartupFinished"],
   "extensionKind": ["workspace"]
 }

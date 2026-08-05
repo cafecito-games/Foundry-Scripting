@@ -246,12 +246,29 @@ export class FoundryTestDebugExecutor {
         );
       }
       const sessionStartedAt = this.now();
+      const stopOrphanSessionOnPublish = (): void => {
+        // The session-start readiness timer may fire before VS Code publishes
+        // the matching session through onDidStartDebugSession. The regular
+        // subscriptions are torn down in the finally block on throw, so we
+        // install a one-shot listener outside that set: when VS Code later
+        // publishes the orphan, we stop it explicitly and release the DAP
+        // lease that src/debug/runtime.ts already acquired.
+        let resolved = false;
+        this.options.onDidStartDebugSession((candidate) => {
+          if (resolved || !matches(candidate)) return;
+          resolved = true;
+          void Promise.resolve(this.options.stopDebugging(candidate)).catch(
+            () => undefined,
+          );
+        });
+      };
       while (session === undefined) {
         if (
           cancellationRequestedAt !== undefined &&
           this.now() - cancellationRequestedAt >= this.terminationTimeoutMs
         ) {
           retainTemporaryDirectory = true;
+          stopOrphanSessionOnPublish();
           throw new TestAdapterFailure(
             "readiness_timeout",
             `VS Code did not publish the FoundryScript test debug session within ${String(this.terminationTimeoutMs)} ms after cancellation; its report directory was retained at ${temporaryDirectory}.`,
@@ -260,6 +277,7 @@ export class FoundryTestDebugExecutor {
         }
         if (this.now() - sessionStartedAt >= this.sessionStartTimeoutMs) {
           retainTemporaryDirectory = true;
+          stopOrphanSessionOnPublish();
           throw new TestAdapterFailure(
             "readiness_timeout",
             `VS Code did not publish the FoundryScript test debug session within ${String(this.sessionStartTimeoutMs)} ms; its report directory was retained at ${temporaryDirectory}.`,

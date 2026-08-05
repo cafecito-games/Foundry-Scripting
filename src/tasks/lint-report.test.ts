@@ -43,7 +43,7 @@ describe("Foundry lint JSON parser", () => {
       JSON.stringify({
         version: 1,
         diagnostics: [
-          diagnostic({ path: "/shared/lib.fs", severity: "note" }),
+          diagnostic({ path: "/workspace/game/shared/lib.fs", severity: "note" }),
           diagnostic({ path: "scripts/player.fs" }),
         ],
       }),
@@ -54,9 +54,30 @@ describe("Foundry lint JSON parser", () => {
       filePath,
       severity,
     }))).toEqual([
-      { filePath: "/shared/lib.fs", severity: "note" },
+      { filePath: "/workspace/game/shared/lib.fs", severity: "note" },
       { filePath: "/workspace/game/scripts/player.fs", severity: "error" },
     ]);
+  });
+
+  it("rejects a lint report path that escapes the project", () => {
+    expect(() =>
+      parseFoundryLintReport(
+        JSON.stringify({
+          version: 1,
+          diagnostics: [diagnostic({ path: "/etc/passwd" })],
+        }),
+        "/workspace/game",
+      ),
+    ).toThrow(LintReportError);
+    expect(() =>
+      parseFoundryLintReport(
+        JSON.stringify({
+          version: 1,
+          diagnostics: [diagnostic({ path: "res://../../../../etc/passwd" })],
+        }),
+        "/workspace/game",
+      ),
+    ).toThrow(LintReportError);
   });
 
   it.each([

@@ -106,9 +106,18 @@ export class FoundryScriptLanguageClient extends LanguageClient {
     onDiagnostics,
     workspaceMismatchHandler,
   }: FoundryScriptLanguageClientOptions) {
-    let dispatchChangeWorkspace:
-      | ((params: ChangeWorkspaceParams) => void)
-      | undefined;
+    // Define handleChangeWorkspace before constructing interceptNotification
+    // so the closure never reads an uninitialized dispatch reference. Any
+    // caller that starts the transport during construction (today none do)
+    // would still observe a stable handler.
+    const handleChangeWorkspace = (params: ChangeWorkspaceParams): void => {
+      this.currentServerWorkspacePath = params.path;
+      writeLog(outputChannel, "warn", "lsp.workspace.change_requested", {
+        path: params.path,
+      });
+      onChangeWorkspace?.(params);
+      void workspaceMismatchHandler?.handleServerWorkspace(params.path);
+    };
     const interceptNotification =
       workspaceMismatchHandler === undefined
         ? undefined
@@ -123,7 +132,7 @@ export class FoundryScriptLanguageClient extends LanguageClient {
               if (!isChangeWorkspaceParams(params)) {
                 return false;
               }
-              dispatchChangeWorkspace?.(params);
+              handleChangeWorkspace(params);
               return true;
             }
             return false;
@@ -179,15 +188,6 @@ export class FoundryScriptLanguageClient extends LanguageClient {
       });
       onCapabilities?.(copyCapabilities(this.currentCapabilities));
     });
-    const handleChangeWorkspace = (params: ChangeWorkspaceParams): void => {
-      this.currentServerWorkspacePath = params.path;
-      writeLog(outputChannel, "warn", "lsp.workspace.change_requested", {
-        path: params.path,
-      });
-      onChangeWorkspace?.(params);
-      void workspaceMismatchHandler?.handleServerWorkspace(params.path);
-    };
-    dispatchChangeWorkspace = handleChangeWorkspace;
     this.onNotification(changeWorkspaceNotification, handleChangeWorkspace);
   }
 

@@ -250,7 +250,7 @@
     "watch": "node esbuild.mjs --watch",
     "typecheck": "tsc --noEmit && npm run typecheck:strict-production",
     "typecheck:strict-production": "tsc --project tsconfig.production-strict.json",
-    "lint": "eslint src",
+    "lint": "eslint .",
     "test": "npm run test:unit && npm run test:grammar",
     "test:unit": "vitest run",
     "test:grammar": "vscode-tmgrammar-test \"tests/grammar/**/*.fs\" && node scripts/check-assertions.mjs",

@@ -44,11 +44,6 @@ export function createTcpServerOptions({
       error.name = "AbortError";
       socket.destroy(error);
     };
-    if (signal?.aborted === true) {
-      abort();
-    } else {
-      signal?.addEventListener("abort", abort, { once: true });
-    }
     socket.on("connect", () => {
       writeLog(output, "info", "lsp.socket.connected", { host, port });
     });
@@ -68,6 +63,16 @@ export function createTcpServerOptions({
         hadError,
       });
     });
+    // Attach every listener before checking signal.aborted: when the signal is
+    // already aborted on entry, abort() synchronously destroys the socket. If
+    // the 'error' and 'close' listeners were attached afterwards, Node could
+    // emit those events through process.nextTick before the handlers exist and
+    // surface them as unhandled emits.
+    if (signal?.aborted === true) {
+      abort();
+    } else {
+      signal?.addEventListener("abort", abort, { once: true });
+    }
 
     if (interceptNotification === undefined) {
       return Promise.resolve({ reader: socket, writer: socket });

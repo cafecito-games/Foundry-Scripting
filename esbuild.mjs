@@ -12,6 +12,10 @@ const options = {
   target: "node20",
   sourcemap: true,
   logLevel: "info",
+  // Minify syntax and whitespace but preserve identifier names so stack
+  // traces from production reports remain readable. Sourcemaps cover the rest.
+  minifySyntax: true,
+  minifyWhitespace: true,
 };
 
 if (watch) {

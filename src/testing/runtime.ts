@@ -207,7 +207,23 @@ export class TestingRuntime {
         this.publishExternalCancellation(generation, externalSignal);
         return;
       }
-      this.options.onDiscovery(request.project, model);
+      try {
+        // Explorer/discovery-applied failures are not spawn failures. Isolate
+        // the onDiscovery callback so a throw here surfaces a dedicated kind
+        // instead of being re-wrapped by the outer try-catch.
+        this.options.onDiscovery(request.project, model);
+      } catch (error) {
+        if (!this.isCurrent(generation)) {
+          return;
+        }
+        const failure = new TestAdapterFailure(
+          "discovery_apply_failed",
+          `Foundry test explorer could not apply discovery results: ${errorMessage(error)}`,
+          { cause: error },
+        );
+        this.publish({ kind: "error", failure });
+        return;
+      }
       if (this.isCurrent(generation)) {
         this.ready = {
           configuration: {

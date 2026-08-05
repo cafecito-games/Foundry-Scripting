@@ -77,10 +77,29 @@ let activeTestingLifecycle: ActiveTestingLifecycle | undefined;
 
 interface ActiveNativeRuntimeGate {
   readonly startIfEligible: () => void;
+  readonly whenRegistrationSettled: () => Promise<void>;
   readonly stop: () => Promise<void>;
 }
 
 let activeNativeRuntimeGate: ActiveNativeRuntimeGate | undefined;
+
+// Stop promises that the subscription disposers below fire-and-forget. When
+// VS Code tears the extension down via deactivate() we flush them so the LSP
+// child, tooling host, and test adapter processes are not orphaned mid-shutdown
+// when deactivate is invoked (and not just on a hard reload/crash).
+const pendingTeardownPromises = new Set<Promise<void>>();
+
+function trackTeardown(promise: Promise<void>): void {
+  pendingTeardownPromises.add(promise);
+  void promise.finally(() => {
+    pendingTeardownPromises.delete(promise);
+  });
+}
+
+async function flushPendingTeardown(): Promise<void> {
+  if (pendingTeardownPromises.size === 0) return;
+  await Promise.allSettled([...pendingTeardownPromises]);
+}
 
 const TESTING_CONFIGURATION_SECTIONS = [
   "foundryScript.testing.enabled",
@@ -442,12 +461,12 @@ function registerTestingRuntime(
     if (token.isCancellationRequested) {
       return;
     }
-    const controller = new AbortController();
+    const abortController = new AbortController();
     const cancellation = token.onCancellationRequested?.(
-      () => controller.abort(),
+      () => abortController.abort(),
     );
     try {
-      await refresh.explicitRefresh(controller.signal);
+      await refresh.explicitRefresh(abortController.signal);
     } finally {
       cancellation?.dispose();
     }
@@ -506,7 +525,7 @@ function registerTestingRuntime(
         if (activeTestingLifecycle === lifecycle) {
           activeTestingLifecycle = undefined;
         }
-        void lifecycle.stop();
+        trackTeardown(lifecycle.stop());
       },
     },
   );
@@ -613,7 +632,16 @@ function isActionableTestingFailure(failure: TestAdapterFailure): boolean {
 }
 
 function testingFailureFingerprint(failure: TestAdapterFailure): string {
-  return JSON.stringify([failure.kind, failure.setting ?? null, failure.message]);
+  // Include exit code and signal so a flaky engine that fails with the same
+  // message but a different cause (port-in-use vs. crash) keeps surfacing
+  // rather than being suppressed after the first occurrence.
+  return JSON.stringify([
+    failure.kind,
+    failure.setting ?? null,
+    failure.message,
+    failure.exitCode ?? null,
+    failure.signal ?? null,
+  ]);
 }
 
 async function showTestingFailure(
@@ -671,6 +699,7 @@ function startNativeRuntime(context: vscode.ExtensionContext): void {
   context.subscriptions.push(debugOutput);
   const outputChannel = vscode.window.createOutputChannel("FoundryScript LSP");
   context.subscriptions.push(outputChannel);
+  setNativeRuntimeFailureSink(outputChannel);
   const statusItem = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left,
     100,
@@ -697,6 +726,7 @@ function startNativeRuntime(context: vscode.ExtensionContext): void {
   statusItem.show();
   context.subscriptions.push(
     statusItem,
+    statusController,
     vscode.commands.registerCommand(CONNECTION_ACTIONS_COMMAND, async () =>
       statusController.showActions(),
     ),
@@ -773,7 +803,7 @@ function startNativeRuntime(context: vscode.ExtensionContext): void {
         if (activeConnectionLifecycle === lifecycle) {
           activeConnectionLifecycle = undefined;
         }
-        void lifecycle.stop();
+        trackTeardown(lifecycle.stop());
       },
     },
   );
@@ -785,7 +815,29 @@ function startNativeRuntime(context: vscode.ExtensionContext): void {
   void lifecycle.requestReconciliation();
 }
 
+type NativeRuntimeFailureSink = {
+  readonly appendLine: (line: string) => void;
+};
+
+let nativeRuntimeFailureSink: NativeRuntimeFailureSink | undefined;
+
+export function setNativeRuntimeFailureSink(
+  sink: NativeRuntimeFailureSink | undefined,
+): void {
+  nativeRuntimeFailureSink = sink;
+}
+
 function logNativeRuntimeFailure(message: string, error: unknown): void {
+  // Prefer the structured output channel so users (and support) can see why a
+  // native runtime registration or shutdown failed; fall back to console.error
+  // for cases that fire before any channel has been created (e.g. early
+  // activation errors).
+  const detail = error instanceof Error ? error.stack ?? error.message : String(error);
+  try {
+    nativeRuntimeFailureSink?.appendLine(`${message} ${detail}`);
+  } catch {
+    // The channel may be disposed during teardown; fall through to console.
+  }
   console.error(message, error);
 }
 
@@ -858,6 +910,8 @@ function createNativeRuntimeGate(
   };
   return {
     startIfEligible,
+    whenRegistrationSettled: () =>
+      startPromise === undefined ? Promise.resolve() : startPromise,
     stop: () => {
       if (stopPromise !== undefined) return stopPromise;
       stopped = true;
@@ -882,19 +936,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       dispose: () => {
         if (activeNativeRuntimeGate !== gate) return;
         activeNativeRuntimeGate = undefined;
-        void gate.stop().catch((error: unknown) => {
-          logNativeRuntimeFailure(
-            "FoundryScript native runtime shutdown failed:",
-            error,
-          );
-        });
+        trackTeardown(
+          gate.stop().catch((error: unknown) => {
+            logNativeRuntimeFailure(
+              "FoundryScript native runtime shutdown failed:",
+              error,
+            );
+          }),
+        );
       },
     },
   );
   gate.startIfEligible();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  // Settle synchronous provider registration (debug resolvers, task providers,
+  // test controller) before activate() resolves, so VS Code never invokes a
+  // provider that has not been wired up yet. The gate's start promise replaces
+  // the brittle microtask-count race that previously lived here.
+  await gate.whenRegistrationSettled();
 }
 
 async function stopNativeRuntime(): Promise<void> {
@@ -913,7 +971,9 @@ export async function deactivate(): Promise<void> {
   activeNativeRuntimeGate = undefined;
   if (gate !== undefined) {
     await gate.stop();
+    await flushPendingTeardown();
     return;
   }
   await stopNativeRuntime();
+  await flushPendingTeardown();
 }

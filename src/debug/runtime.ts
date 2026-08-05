@@ -104,6 +104,7 @@ export function registerFoundryScriptDebugRuntime(
   const endSession = (session: vscode.DebugSession, reason: string): void => {
     const acquisition = sessions.get(session.id);
     loggedLaunches.delete(session.id);
+    reportedFailures.delete(session.id);
     if (acquisition === undefined) return;
     sessions.delete(session.id);
     acquisition.controller.abort();

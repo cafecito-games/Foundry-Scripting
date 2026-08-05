@@ -15,9 +15,14 @@ class FakeChildProcess extends EventEmitter {
   readonly stderr = new PassThrough();
   readonly pid = 4321;
   exitCode: number | null = null;
+  signalCode: NodeJS.Signals | null = null;
   readonly kill = vi.fn((signal?: NodeJS.Signals | number) => {
-    this.exitCode = 0;
-    queueMicrotask(() => this.emit("exit", 0, signal ?? null));
+    if (typeof signal === "string" && signal !== "SIGTERM") {
+      this.signalCode = signal;
+    } else {
+      this.exitCode = 0;
+    }
+    queueMicrotask(() => this.emit("exit", this.exitCode, this.signalCode));
     return true;
   });
 
@@ -241,6 +246,45 @@ describe("host launch abstraction", () => {
       expect(child.kill).toHaveBeenCalledWith("SIGTERM");
     },
   );
+
+  it("escalates to SIGKILL when SIGTERM is ignored past the grace period", async () => {
+    // Child that ignores SIGTERM but exits on SIGKILL. Regression guard for
+    // the signal-vs-exit classification that previously SIGKILLed dead
+    // processes (and conversely failed to escalate when SIGTERM was ignored).
+    const ignoringChild = new (class extends FakeChildProcess {
+      override readonly kill = vi.fn((signal?: NodeJS.Signals | number) => {
+        if (signal === "SIGKILL") {
+          this.signalCode = "SIGKILL";
+          queueMicrotask(() => this.emit("exit", null, "SIGKILL"));
+        }
+        // SIGTERM is intentionally ignored: no exit, no signalCode change.
+        return true;
+      });
+    })();
+    const launcher = new FoundryHostLauncher({
+      spawnProcess: () => {
+        queueMicrotask(() => {
+          ignoringChild.stdout.write(
+            `FOUNDRY_TOOLING ${JSON.stringify(validReadiness)}\n`,
+          );
+        });
+        return ignoringChild.asChildProcess();
+      },
+      inactivityTimeoutMs: 1_000,
+      absoluteTimeoutMs: 5_000,
+      pollIntervalMs: 5,
+    });
+    const host = await launcher.launch({
+      enginePath: "/opt/foundry",
+      project: "/workspace/game",
+    });
+
+    await host.stop();
+
+    expect(ignoringChild.kill).toHaveBeenCalledTimes(2);
+    expect(ignoringChild.kill).toHaveBeenNthCalledWith(1, "SIGTERM");
+    expect(ignoringChild.kill).toHaveBeenNthCalledWith(2, "SIGKILL");
+  });
 
   it("exposes owned-process exit without coupling it to an LSP client", async () => {
     const child = new FakeChildProcess();

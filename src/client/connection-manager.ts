@@ -2,6 +2,7 @@ import type { TcpEndpoint } from "./transport.js";
 import {
   MAX_RECONNECT_ATTEMPTS,
   reconnectDelayMs,
+  reconnectDelayWithJitter,
 } from "./retry-policy.js";
 import { type LogOutput, writeLog } from "./logging.js";
 import type {
@@ -70,6 +71,9 @@ export interface ConnectionManagerOptions {
   onStateChange?: (state: ConnectionState) => void;
   output?: LogOutput;
   initializationTimeoutMs?: number;
+  // Override for jitter; production code leaves this undefined so retry
+  // windows are decorrelated from concurrent restarters.
+  random?: () => number;
 }
 
 export interface StartConnectionOptions {
@@ -134,13 +138,20 @@ export class ConnectionManager {
   private generation = 0;
   private retryTimer: DisposableHandle | undefined;
   private pendingCleanup: Promise<void> = Promise.resolve();
+  // Tracks the most recent attempt number used by the retry schedule. A
+  // connection that drops before stabilization continues the backoff from
+  // where it left off, instead of resetting to attempt 1 on every flap.
+  private retryAttempt = 0;
+  private lastConnectedAt: number | undefined;
   private readonly scheduler: RetryScheduler;
   private readonly initializationTimeoutMs: number;
+  private readonly random: () => number;
 
   constructor(private readonly options: ConnectionManagerOptions) {
     this.scheduler = options.scheduler ?? defaultScheduler;
     this.initializationTimeoutMs =
       options.initializationTimeoutMs ?? DEFAULT_INITIALIZATION_TIMEOUT_MS;
+    this.random = options.random ?? Math.random;
   }
 
   async start({ settings, project }: StartConnectionOptions): Promise<void> {
@@ -167,6 +178,7 @@ export class ConnectionManager {
     try {
       await promise;
       if (generation === this.generation && validatedSettings.mode !== "off") {
+        this.markConnected();
         this.publish({ kind: "connected" });
       }
     } catch (error) {
@@ -191,7 +203,7 @@ export class ConnectionManager {
       enginePath: settings.enginePath,
       project,
       lspPort: settings.port,
-      dapPort: settings.dapPort ?? 6006,
+      dapPort: settings.dapPort,
     };
     if (settings.mode === "off") {
       await this.options.coordinator.start(request, { signal });
@@ -236,6 +248,8 @@ export class ConnectionManager {
     this.startOptions = undefined;
     this.retryTimer?.dispose();
     this.retryTimer = undefined;
+    this.retryAttempt = 0;
+    this.lastConnectedAt = undefined;
     const pending = this.pendingStart;
     pending?.controller.abort();
     if (pending !== undefined) {
@@ -260,6 +274,12 @@ export class ConnectionManager {
     const generation = ++this.generation;
     this.retryTimer?.dispose();
     this.retryTimer = undefined;
+    // Clear startOptions before awaiting so an unexpected stop on the active
+    // client cannot demote this explicit "Reconnect Now" into a background
+    // retry. handleUnexpectedStop observes startOptions === undefined and
+    // skips its own scheduleRetry; we restore startOptions before invoking
+    // runConnectionAttempt if the generation is still current.
+    this.startOptions = undefined;
     this.publish({
       kind: "retrying",
       attempt: 1,
@@ -277,10 +297,12 @@ export class ConnectionManager {
     if (generation !== this.generation) {
       return;
     }
+    this.startOptions = startOptions;
 
     try {
       await this.runConnectionAttempt(startOptions, generation);
       if (generation === this.generation) {
+        this.markConnected();
         this.publish({ kind: "connected" });
       }
     } catch (error) {
@@ -359,7 +381,14 @@ export class ConnectionManager {
       return;
     }
     const generation = ++this.generation;
-    this.scheduleRetry(1, generation, startOptions, () => {
+    // If the previous connection stabilized, reset the backoff cadence. If it
+    // never did (flapping server), continue from the prior attempt so the
+    // schedule escalates instead of looping forever at attempt 1.
+    const stabilized =
+      this.lastConnectedAt !== undefined &&
+      Date.now() - this.lastConnectedAt >= this.initializationTimeoutMs;
+    const nextAttempt = stabilized ? 1 : Math.max(1, this.retryAttempt + 1);
+    this.scheduleRetry(nextAttempt, generation, startOptions, () => {
       const cleanup = this.releaseActiveResources().catch((error: unknown) => {
         this.log("warn", "lsp.connection.cleanup_failed", {
           message: error instanceof Error ? error.message : String(error),
@@ -370,33 +399,43 @@ export class ConnectionManager {
     });
   }
 
+  private markConnected(): void {
+    this.lastConnectedAt = Date.now();
+    this.retryAttempt = 0;
+  }
+
   private scheduleRetry(
     attempt: number,
     generation: number,
     startOptions: StartConnectionOptions,
     startCleanup?: () => Promise<void>,
   ): void {
-    const delayMs = reconnectDelayMs(attempt);
-    if (delayMs === undefined) {
+    this.retryAttempt = attempt;
+    const nominalDelayMs = reconnectDelayMs(attempt);
+    if (nominalDelayMs === undefined) {
       this.publish({ kind: "disconnected" });
       this.log("warn", "lsp.connection.retry_exhausted", {
         attempt: MAX_RECONNECT_ATTEMPTS,
       });
       return;
     }
+    // Publish the nominal delay so the tooltip stays readable and tests stay
+    // deterministic, but schedule with jitter so concurrent VS Code windows
+    // or supervisors do not stay in lockstep indefinitely.
+    const scheduledDelayMs = reconnectDelayWithJitter(attempt, this.random);
     this.publish({
       kind: "retrying",
       attempt,
       maxAttempts: MAX_RECONNECT_ATTEMPTS,
-      delayMs,
+      delayMs: nominalDelayMs,
     });
     this.log("info", "lsp.connection.retry_scheduled", {
       attempt,
       maxAttempts: MAX_RECONNECT_ATTEMPTS,
-      delayMs,
+      delayMs: scheduledDelayMs,
     });
     const cleanup = startCleanup?.() ?? Promise.resolve();
-    this.retryTimer = this.scheduler.schedule(delayMs, () => {
+    this.retryTimer = this.scheduler.schedule(scheduledDelayMs ?? nominalDelayMs, () => {
       this.retryTimer = undefined;
       void cleanup.then(async () => {
         if (generation !== this.generation) {
@@ -405,6 +444,7 @@ export class ConnectionManager {
         try {
           await this.runConnectionAttempt(startOptions, generation);
           if (generation === this.generation) {
+            this.markConnected();
             this.publish({ kind: "connected" });
           }
         } catch (error) {

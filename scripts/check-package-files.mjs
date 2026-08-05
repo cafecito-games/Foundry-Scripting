@@ -2,26 +2,29 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+// Allowed VSIX contents. Runtime assets come from package.json `contributes`,
+// `main`, and the auto-packaged LICENSE/README/CHANGELOG. Anything outside this
+// set is rejected so that agent scratch directories, task runners, and other
+// development-only files cannot leak into a published extension.
+const ALLOWED_FILES = new Set([
+  "package.json",
+  "LICENSE",
+  "README.md",
+  "CHANGELOG.md",
+  "dist/extension.js",
+  "language-configuration.json",
+  "syntaxes/foundryscript.tmLanguage.json",
+]);
+
 const REQUIRED_FILES = [
   "package.json",
+  "LICENSE",
+  "README.md",
+  "CHANGELOG.md",
   "dist/extension.js",
   "language-configuration.json",
   "syntaxes/foundryscript.tmLanguage.json",
 ];
-
-const PROHIBITED_PREFIXES = [
-  ".worktrees/",
-  ".github/",
-  ".cursor/",
-  ".vscode/",
-  "docs/",
-  "scripts/",
-  "src/",
-  "tests/",
-  "node_modules/",
-];
-
-const PROHIBITED_FILES = ["tsconfig.production-strict.json"];
 
 function normalizePackagePath(packagePath) {
   return packagePath.replaceAll("\\", "/").replace(/^\.\//, "");
@@ -37,12 +40,10 @@ export function validatePackageFiles(packageFiles) {
   }
 
   for (const packagePath of normalizedFiles) {
-    if (
-      PROHIBITED_FILES.includes(packagePath) ||
-      PROHIBITED_PREFIXES.some((prefix) => packagePath.startsWith(prefix)) ||
-      packagePath.endsWith(".map")
-    ) {
-      throw new Error(`VSIX contains prohibited file: ${packagePath}`);
+    if (!ALLOWED_FILES.has(packagePath)) {
+      throw new Error(
+        `VSIX contains an unexpected file: ${packagePath}. Only files explicitly listed in scripts/check-package-files.mjs are permitted.`,
+      );
     }
   }
 }

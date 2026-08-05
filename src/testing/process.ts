@@ -223,6 +223,11 @@ export class FoundryTestAdapterProcess {
   }
 }
 
+// Minimum discarded-chunk count before compactDiscardedChunks rewrites the
+// chunk array. Keeps small tails untouched while bounding memory for streams
+// that drip many small chunks.
+const COMPACT_HEAD_THRESHOLD = 64;
+
 class ChunkedTextTail {
   private chunks: string[] = [];
   private head = 0;
@@ -284,7 +289,10 @@ class ChunkedTextTail {
   }
 
   private compactDiscardedChunks(): void {
-    if (this.head < 64 || this.head * 2 < this.chunks.length) {
+    // Compact only when the discarded prefix is large enough to matter, and
+    // only when it would free at least half the chunk array, so we amortize
+    // the slice cost instead of paying it on every chunk.
+    if (this.head < COMPACT_HEAD_THRESHOLD || this.head * 2 < this.chunks.length) {
       return;
     }
     this.chunks = this.chunks.slice(this.head);

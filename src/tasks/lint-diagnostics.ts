@@ -18,11 +18,21 @@ interface DiagnosticBatch {
 
 export class FoundryLintDiagnosticsPublisher {
   private generation = 0;
+  private activeProjectPath: string | undefined;
 
   constructor(private readonly diagnostics: DiagnosticsUnit) {}
 
   beginRun(projectPath: string): FoundryLintRun {
     const generation = ++this.generation;
+    // Diagnostics from a prior run are valid only for the same project. When
+    // the user switches projects and the new run fails, we must not leave the
+    // previous project's diagnostics visible in the new window.
+    if (this.activeProjectPath !== projectPath) {
+      this.activeProjectPath = projectPath;
+      if (generation !== 1) {
+        this.diagnostics.replace({ source: "cli", entries: [] });
+      }
+    }
     let stdout = "";
     let completed = false;
 

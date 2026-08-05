@@ -198,6 +198,11 @@ export class ToolingHostCoordinator {
   onStateChange(
     listener: (state: ToolingHostCoordinatorState) => void,
   ): DisposableHandle {
+    // After disposal no further publishes occur; immediately dispose the
+    // registration so late callers do not retain a listener that never fires.
+    if (this.disposed) {
+      return { dispose: () => undefined };
+    }
     this.stateListeners.add(listener);
     return { dispose: () => this.stateListeners.delete(listener) };
   }

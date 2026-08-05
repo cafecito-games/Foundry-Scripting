@@ -33,6 +33,7 @@ export interface FoundryTaskProviderOptions extends FoundryTaskProcessOptions {
 export class FoundryTaskProvider implements vscode.TaskProvider {
   private readonly lintPublisher: FoundryLintDiagnosticsPublisher | undefined;
   private readonly resolveProject: ResolveWorkspaceProject;
+  private cachedTasks: vscode.Task[] | undefined;
 
   constructor(
     private readonly processOptions: FoundryTaskProviderOptions = {},
@@ -46,9 +47,15 @@ export class FoundryTaskProvider implements vscode.TaskProvider {
   }
 
   provideTasks(): vscode.Task[] {
-    return FOUNDRY_TASK_KINDS.map((kind) =>
-      this.createTask({ type: FOUNDRY_TASK_TYPE, command: kind }, kind),
-    );
+    // VS Code calls provideTasks every time the Run Tasks quick-pick opens;
+    // cache the five Foundry tasks so "recently used" stays stable across
+    // openings and we avoid rebuilding CustomExecution instances.
+    if (this.cachedTasks === undefined) {
+      this.cachedTasks = FOUNDRY_TASK_KINDS.map((kind) =>
+        this.createTask({ type: FOUNDRY_TASK_TYPE, command: kind }, kind),
+      );
+    }
+    return this.cachedTasks;
   }
 
   resolveTask(task: vscode.Task): vscode.Task | undefined {
@@ -56,7 +63,20 @@ export class FoundryTaskProvider implements vscode.TaskProvider {
     if (!isFoundryTaskKind(kind)) {
       return undefined;
     }
-    return this.createTask(task.definition, kind);
+    // Replace only the execution so user customizations on the original task
+    // (group, problemMatcher, presentation, detail, etc.) survive resolution.
+    task.execution = new vscode.CustomExecution(
+      () =>
+        Promise.resolve(
+          new FoundryTaskTerminal(
+            kind,
+            this.processOptions,
+            this.lintPublisher,
+            this.resolveProject,
+          ),
+        ),
+    );
+    return task;
   }
 
   private createTask(
@@ -188,7 +208,11 @@ class FoundryTaskTerminal implements vscode.Pseudoterminal {
 
   close(): void {
     this.closed = true;
+    // cancel() schedules the SIGKILL escalation; dispose() then tears down the
+    // timer and closure explicitly so the discarded terminal does not retain
+    // them for terminationGraceMs after VS Code closes the terminal.
     this.process?.cancel();
+    this.process?.dispose();
   }
 
   private reportConfigurationError(

@@ -42,7 +42,8 @@ export type TestAdapterFailureKind =
   | "process_crash"
   | "readiness_timeout"
   | TestDiscoveryParseErrorKind
-  | "discovery_exit_mismatch";
+  | "discovery_exit_mismatch"
+  | "discovery_apply_failed";
 
 export type TestAdapterPhase = "capabilities" | "discovery" | "execution";
 

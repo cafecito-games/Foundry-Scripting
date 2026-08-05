@@ -95,10 +95,11 @@ for await (const file of findScripts(enginePath)) {
   let lineNumber = 0;
 
   // The \r? is load-bearing, not cosmetic. A CR surviving into the line text
-  // turns a line-continuation backslash into invalid.illegal.unknown-escape and
-  // cascades into the following line, so a CRLF checkout would fail this gate on
-  // valid engine code. Real VS Code is unaffected -- getLineContent() strips the
-  // full EOL -- so this only bites tooling that splits a file itself.
+  // is not stripped by the grammar and changes tokenization of the following
+  // line (the trailing carriage return becomes part of the line content that
+  // the grammar sees), so a CRLF checkout would fail this gate on otherwise
+  // valid engine code. Real VS Code is unaffected -- getLineContent() strips
+  // the full EOL -- so this only bites tooling that splits a file itself.
   for (const line of source.split(/\r?\n/)) {
     lineNumber += 1;
     const result = grammar.tokenizeLine(line, ruleStack);

@@ -68,6 +68,8 @@ function usage() {
       "--foundry <binary> --project <directory> " +
       "--runner <res://runner> --path <res://root>\n",
   );
-  process.exitCode = 2;
-  throw new Error("Invalid live-verifier arguments.");
+  // Exit directly so callers see the intended "bad invocation" code. Setting
+  // process.exitCode and then throwing becomes an unhandled rejection at the
+  // module top-level call site, which Node rewrites to exit code 1.
+  process.exit(2);
 }

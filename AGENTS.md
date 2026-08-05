@@ -36,10 +36,16 @@ extension syncs its TextMate grammar from the engine release artifact.
 | `src/extension.ts` | Activation and subsystem wiring |
 | `src/client/` | LSP transport and connection lifecycle |
 | `src/diagnostics/` | Single owner of the Problems panel |
+| `src/debug/` | FoundryScript debug adapter descriptor/tracker wiring |
 | `src/tasks/` | `foundry` CLI task provider |
 | `src/testing/` | Test explorer and adapter protocol |
+| `src/tooling/` | Tooling host coordinator (DAP leases, host lifecycle) |
+| `src/project/` | Workspace project resolution (`project.foundry` discovery) |
 | `syntaxes/` | TextMate grammar (offline fallback) |
 | `tests/grammar/` | Scope assertion fixtures |
+| `tests/extension-host/` | VS Code end-to-end driver and virtual providers |
+| `tests/vscode-minimum/` | Minimum-engine integration suite |
+| `scripts/` | Grammar sync, packaging checks, CI helpers, DAP corpus runner |
 
 Only `client/` should know LSP transport details. Diagnostics arbitration:
 LSP wins while connected; CLI lint fills the gap when disconnected.

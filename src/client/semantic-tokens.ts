@@ -206,10 +206,23 @@ function normalizeDidOpenParams(params: unknown): unknown {
   };
 }
 
+export interface FoundrySemanticTokensFeatureOptions {
+  readonly onMalformedResponse?: (
+    reason: string,
+    uri: string | undefined,
+  ) => void;
+}
+
 export class FoundrySemanticTokensFeature implements StaticFeature {
   private legend: AdvertisedSemanticTokensLegend | undefined;
+  private readonly onMalformedResponse;
 
-  constructor(private readonly output: LogOutput) {}
+  constructor(
+    private readonly output: LogOutput,
+    options: FoundrySemanticTokensFeatureOptions = {},
+  ) {
+    this.onMalformedResponse = options.onMalformedResponse;
+  }
 
   get middleware(): Pick<Middleware, "sendRequest" | "sendNotification"> {
     return {
@@ -236,6 +249,10 @@ export class FoundrySemanticTokensFeature implements StaticFeature {
             uri: semanticTokensUri(params),
           },
         );
+        // Surface malformed responses to higher layers so they can fire
+        // telemetry or show a one-time warning instead of leaving the user
+        // with blank highlighting and only a log entry.
+        this.onMalformedResponse?.(validation.reason, semanticTokensUri(params));
         return null as typeof result;
       },
       sendNotification: (type, next, params) =>

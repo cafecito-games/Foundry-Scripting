@@ -7,6 +7,16 @@ import {
 } from "./workspace-mismatch.js";
 
 describe("workspace path comparison", () => {
+  it("pins the raw engine mismatch warning literal", () => {
+    // Regression guard for C2: if the Foundry engine rephrases its
+    // window/showMessage payload, this assertion forces a deliberate update to
+    // RAW_WORKSPACE_MISMATCH_WARNING so the hard-match suppression keeps
+    // firing. Capture the live payload from the engine before changing either.
+    expect(RAW_WORKSPACE_MISMATCH_WARNING).toBe(
+      "The FoundryScript Language Server might not work correctly with other projects than the one opened in Foundry.",
+    );
+  });
+
   it("normalizes separators, dot segments, and trailing separators", () => {
     expect(
       workspacePathsMatch("/projects/game/", "/projects/./game", {

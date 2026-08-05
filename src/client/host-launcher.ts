@@ -139,6 +139,7 @@ export type HostStartupTimeoutReason = "inactivity" | "absolute";
 export interface HostStartupFailureDetails extends HostLaunchRequest {
   kind: HostStartupFailureKind;
   exitCode?: number | null;
+  exitSignal?: NodeJS.Signals | null;
   timeoutReason?: HostStartupTimeoutReason;
   timeoutMs?: number;
   toolingMessage?: string;
@@ -163,11 +164,16 @@ function startupFailureMessage(details: HostStartupFailureDetails): string {
         .join(": ");
       return `Could not start Foundry for ${target}${reason === "" ? "." : `: ${reason}.`}`;
     }
-    case "process_exit":
+    case "process_exit": {
+      const exitDescription =
+        details.exitSignal !== undefined && details.exitSignal !== null
+          ? `signal ${String(details.exitSignal)}`
+          : `code ${String(details.exitCode)}`;
       return (
-        `Foundry exited with code ${String(details.exitCode)} before the ` +
+        `Foundry exited with ${exitDescription} before the ` +
         `language server for ${target} became ready.`
       );
+    }
     case "port_conflict":
       return `Foundry could not bind the tooling host for ${target} because a requested port is already in use.`;
     case "invalid_project":
@@ -201,6 +207,7 @@ export class HostStartupFailure extends Error {
   readonly enginePath: string;
   readonly project: string;
   readonly exitCode: number | null | undefined;
+  readonly exitSignal: NodeJS.Signals | null | undefined;
   readonly timeoutReason: HostStartupTimeoutReason | undefined;
   readonly timeoutMs: number | undefined;
 
@@ -211,6 +218,7 @@ export class HostStartupFailure extends Error {
     this.enginePath = details.enginePath;
     this.project = details.project;
     this.exitCode = details.exitCode;
+    this.exitSignal = details.exitSignal;
     this.timeoutReason = details.timeoutReason;
     this.timeoutMs = details.timeoutMs;
   }
@@ -233,7 +241,7 @@ export interface FoundryHostLauncherOptions {
 
 interface StartupState {
   spawnError?: NodeJS.ErrnoException;
-  exit?: { code: number | null };
+  exit?: { code: number | null; signal: NodeJS.Signals | null };
   readiness?: ToolingHostReadiness;
   toolingError?: ToolingErrorRecord;
   stderr: string;
@@ -328,17 +336,26 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
 }
 
 async function stopChild(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null) {
+  // A child killed by signal has exitCode === null and signalCode set. Treat
+  // any already-terminated child (clean exit or signal) as stopped without
+  // touching it, so we never escalate to SIGKILL on a dead process.
+  if (child.exitCode !== null || child.signalCode !== null) {
     return;
   }
-  const exited = new Promise<void>((resolve) => {
-    child.once("exit", () => resolve());
-  });
+  let settled = false;
+  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+    (resolve) => {
+      child.once("exit", (code, signal) => {
+        settled = true;
+        resolve({ code, signal });
+      });
+    },
+  );
   if (!child.kill("SIGTERM")) {
     return;
   }
-  await Promise.race([exited, delay(2000)]);
-  if (child.exitCode === null) {
+  const result = await Promise.race([exited, delay(2000).then(() => null)]);
+  if (result === null && !settled) {
     child.kill("SIGKILL");
   }
 }
@@ -394,8 +411,8 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
     child.once("error", (error: NodeJS.ErrnoException) => {
       state.spawnError = error;
     });
-    child.once("exit", (code) => {
-      state.exit = { code };
+    child.once("exit", (code, signal) => {
+      state.exit = { code, signal };
       for (const listener of exitListeners) listener(code);
     });
     const outputObserver = observeOutput(
@@ -499,6 +516,7 @@ export class FoundryHostLauncher implements ToolingHostLauncher {
           ...request,
           kind: isBindFailure(state) ? "port_conflict" : "process_exit",
           exitCode: state.exit.code,
+          exitSignal: state.exit.signal,
         });
       }
 

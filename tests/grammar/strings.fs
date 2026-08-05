@@ -25,6 +25,7 @@ var g = '''triple single'''
 
 var h = "bad \q escape"
 #            ^^ string.quoted.double.foundryscript
+#            ^^^ - constant.character.escape.foundryscript
 
 var bad = "unterminated
 var after = 1

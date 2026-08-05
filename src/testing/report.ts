@@ -385,7 +385,9 @@ export class FoundryTap13Parser {
           this.add("report.yaml", "Every point requires an immediately following YAML block.");
           this.candidate = undefined;
           this.phase = "point";
-          this.acceptLine(line);
+          // Iterative dispatch rather than recursing into acceptLine. A future
+          // phase addition would otherwise risk unbounded recursion depth.
+          this.acceptPointLine(line);
           return;
         }
         this.blockLines = [];

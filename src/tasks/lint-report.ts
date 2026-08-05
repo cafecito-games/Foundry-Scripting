@@ -111,12 +111,22 @@ function parseSeverity(
 }
 
 function resolveReportPath(reportPath: string, projectPath: string): string {
-  if (reportPath.startsWith("res://")) {
-    return path.resolve(projectPath, reportPath.slice("res://".length));
+  const resolved =
+    reportPath.startsWith("res://")
+      ? path.resolve(projectPath, reportPath.slice("res://".length))
+      : path.isAbsolute(reportPath)
+        ? path.normalize(reportPath)
+        : path.resolve(projectPath, reportPath);
+  // Lint diagnostics should never point outside the project. A checked-in lint
+  // report (or a malicious project.foundry that fakes output) could otherwise
+  // plant squiggles on files outside the workspace.
+  const relative = path.relative(projectPath, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new LintReportError(
+      `lint report path "${reportPath}" resolves outside of the project`,
+    );
   }
-  return path.isAbsolute(reportPath)
-    ? path.normalize(reportPath)
-    : path.resolve(projectPath, reportPath);
+  return resolved;
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {
@@ -134,7 +144,7 @@ function nonEmptyString(value: unknown, label: string): string {
 }
 
 function positiveInteger(value: unknown, label: string): number {
-  if (!Number.isInteger(value) || typeof value !== "number" || value < 1) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
     throw new LintReportError(`${label} must be a positive integer`);
   }
   return value;

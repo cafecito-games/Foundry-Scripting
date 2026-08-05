@@ -50,7 +50,10 @@ export function createDiagnosticsUnit(
     visibleUris.set(key, entry.uri);
   };
   const project = (entries: ReadonlyMap<string, DiagnosticEntry>): void => {
-    for (const [key, uri] of visibleUris) {
+    // Iterate a snapshot of visibleUris since the loop deletes from it. V8
+    // tolerates mutation during iteration, but the snapshot keeps the contract
+    // obvious and safe under other engines.
+    for (const [key, uri] of [...visibleUris.entries()]) {
       const entry = entries.get(key);
       if (entry === undefined || entry.diagnostics.length === 0) {
         collection.delete(uri);

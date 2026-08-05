@@ -1,8 +1,13 @@
 .github/**
 .cursor/**
+.opencode/**
+.claude/**
 .vscode/**
 .worktrees/**
 AGENTS.md
+CODE_REVIEW.md
+Taskfile.yml
+foundry-grammar.json
 docs/**
 scripts/**
 src/**
@@ -10,6 +15,7 @@ tests/**
 node_modules/**
 .gitignore
 .gitattributes
+*.vsix
 eslint.config.mjs
 esbuild.mjs
 tsconfig.json

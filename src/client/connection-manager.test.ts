@@ -77,17 +77,20 @@ function createHost(lspPort = 49152): OwnedToolingHost & {
 function deferred<T>(): {
   promise: Promise<T>;
   resolve: (value: T) => void;
+  reject: (error: unknown) => void;
 } {
   let resolvePromise: ((value: T) => void) | undefined;
-  const promise = new Promise<T>((resolve) => {
+  let rejectPromise: ((error: unknown) => void) | undefined;
+  const promise = new Promise<T>((resolve, reject) => {
     resolvePromise = resolve;
+    rejectPromise = reject;
   });
   return {
     promise,
     resolve: (value) => resolvePromise?.(value),
+    reject: (error) => rejectPromise?.(error),
   };
 }
-
 function connectionRefused(): Error & { code: string } {
   return Object.assign(new Error("connect ECONNREFUSED"), {
     code: "ECONNREFUSED",
@@ -138,6 +141,8 @@ describe("connection modes", () => {
       onStateChange: (state) => states.push(state),
       output,
       initializationTimeoutMs,
+      // Deterministic jitter so existing tests stay stable.
+      random: () => 0.5,
     });
   }
 
@@ -743,6 +748,38 @@ describe("connection modes", () => {
     expect(states.at(-1)).toEqual({ kind: "connected" });
     await vi.advanceTimersByTimeAsync(500);
     expect(clients).toHaveLength(2);
+    await manager.stop();
+  });
+
+  it("reconnectNow is not demoted to a background retry when an unexpected stop races it", async () => {
+    // Regression guard for H8: previously reconnectNow left startOptions set
+    // across its awaits, so an unexpected stop on the active client during
+    // cleanup triggered scheduleRetry and silently demoted the user's
+    // explicit "Reconnect Now" click into a 500 ms-delayed background retry.
+    vi.useFakeTimers();
+    const firstClient = createSuccessfulClient();
+    const refusedRetry = createClient(connectionRefused());
+    const thirdClient = createSuccessfulClient();
+    const manager = managerWith([firstClient, refusedRetry, thirdClient]);
+    await manager.start({
+      settings: { mode: "attach", port: 6005, dapPort: 6006, enginePath: "foundry" },
+      project: "/workspace/game",
+    });
+
+    const reconnecting = manager.reconnectNow();
+    // While reconnectNow is awaiting, the first client reports an unexpected
+    // stop. Previously this armed a background retry that competed with the
+    // explicit reconnect; now reconnectNow owns the generation and the stop
+    // is a no-op because startOptions was cleared.
+    firstClient.fireUnexpectedStop();
+    // Second client refuses, so reconnectNow escalates to scheduleRetry(2).
+    await reconnecting.catch(() => undefined);
+
+    // scheduleRetry(2) was invoked exactly once (from reconnectNow's catch),
+    // not duplicated by handleUnexpectedStop. Advance the timer and confirm
+    // the third client is started by exactly one schedule.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(thirdClient.start).toHaveBeenCalledOnce();
     await manager.stop();
   });
 
