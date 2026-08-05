@@ -46,6 +46,15 @@ export class FoundryTestRunProfile {
     let cancellation: vscode.Disposable | undefined;
 
     try {
+      const abortController = new AbortController();
+      // Register cancellation as early as possible so a cancel during the
+      // prep phase (snapshot lookups, started calls) is observed instead of
+      // silently dropped. The previous placement only saw cancellation that
+      // happened after the prep finished.
+      cancellation = token.onCancellationRequested(() => abortController.abort());
+      if (token.isCancellationRequested) {
+        abortController.abort();
+      }
       const ready = this.options.readyContext();
       const snapshot = this.options.snapshot();
       if (
@@ -89,8 +98,8 @@ export class FoundryTestRunProfile {
       const byId = new Map(selected.map((item) => [item.id, item] as const));
       const completed = new Set<string>();
       let routingFailure: string | undefined;
-      const abortController = new AbortController();
-      cancellation = token.onCancellationRequested(() => abortController.abort());
+      // Re-check before execute: a cancellation that fired during prep should
+      // not silently enter the run.
       if (token.isCancellationRequested) {
         abortController.abort();
       }

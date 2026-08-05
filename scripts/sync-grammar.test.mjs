@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
@@ -26,6 +27,17 @@ const validGrammar = Buffer.from(
   )}\n`,
 );
 
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+async function writeManifest(rootDirectory, manifest) {
+  await writeFile(
+    path.join(rootDirectory, "foundry-grammar.json"),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+  );
+}
+
 describe("sync-grammar command", () => {
   let root;
   let server;
@@ -37,10 +49,10 @@ describe("sync-grammar command", () => {
   beforeEach(async () => {
     root = await mkdtemp(path.join(tmpdir(), "foundry-grammar-sync-"));
     await mkdir(path.join(root, "syntaxes"));
-    await writeFile(
-      path.join(root, "foundry-grammar.json"),
-      `${JSON.stringify({ engineVersion: version }, null, 2)}\n`,
-    );
+    await writeManifest(root, {
+      engineVersion: version,
+      sha256: sha256(validGrammar),
+    });
     responseBody = validGrammar;
     responseStatus = 200;
     requests = [];
@@ -195,15 +207,40 @@ describe("sync-grammar command", () => {
   });
 
   it("rejects an unsafe engine version", async () => {
-    await writeFile(
-      path.join(root, "foundry-grammar.json"),
-      `${JSON.stringify({ engineVersion: "../wrong" }, null, 2)}\n`,
-    );
+    await writeManifest(root, {
+      engineVersion: "../wrong",
+      sha256: sha256(validGrammar),
+    });
 
     const error = await runFailure();
 
     expect(error.stderr).toContain("engineVersion");
     expect(requests).toEqual([]);
+  });
+
+  it("rejects a manifest without a pinned SHA-256", async () => {
+    await writeManifest(root, { engineVersion: version });
+
+    const error = await runFailure();
+
+    expect(error.stderr).toContain("sha256 must be");
+    expect(requests).toEqual([]);
+  });
+
+  it("rejects a downloaded asset whose SHA-256 does not match the pin", async () => {
+    const grammarPath = path.join(root, "syntaxes/foundryscript.tmLanguage.json");
+    const existing = Buffer.from("keep this grammar\n");
+    await writeFile(grammarPath, existing);
+    const tampered = Buffer.from(
+      validGrammar.toString("utf8").replace("#.*", "#.+"),
+    );
+    expect(sha256(tampered)).not.toBe(sha256(validGrammar));
+    responseBody = tampered;
+
+    const error = await runFailure();
+
+    expect(error.stderr).toContain("SHA-256 mismatch");
+    expect(await readFile(grammarPath)).toEqual(existing);
   });
 
   it("rejects unsupported arguments", async () => {

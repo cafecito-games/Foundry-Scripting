@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import path from "node:path";
 
 export const PROJECT_PATH_SETTING = "foundryScript.projectPath";
@@ -28,6 +29,10 @@ export interface FoundryProjectResolutionRequest {
   readonly configuredPath: string;
   readonly manifestExists: (project: string) => Promise<boolean>;
   readonly findManifests: (workspace: string) => Promise<readonly string[]>;
+  // Optional override for testability; production code uses realpathSync.native
+  // so symlinked workspace/configured paths canonicalize identically to the
+  // paths emitted by the language server.
+  readonly realpath?: (path: string) => string;
 }
 
 export async function resolveFoundryProject(
@@ -50,12 +55,16 @@ export async function resolveFoundryProject(
     );
   }
 
-  const workspace = path.resolve(request.workspacePath);
+  const resolveRealpath = request.realpath ?? realpathSync.native;
+  const workspace = canonicalize(path.resolve(request.workspacePath), resolveRealpath);
   const configured = request.configuredPath.trim();
   if (configured !== "") {
-    const project = path.isAbsolute(configured)
-      ? path.resolve(configured)
-      : path.resolve(workspace, configured);
+    const project = canonicalize(
+      path.isAbsolute(configured)
+        ? path.resolve(configured)
+        : path.resolve(workspace, configured),
+      resolveRealpath,
+    );
     const exists = await checkManifest(request, project);
     if (!exists.success) return exists;
     return exists.present
@@ -83,7 +92,11 @@ export async function resolveFoundryProject(
   }
 
   const projects = [
-    ...new Set(manifests.map((manifest) => path.resolve(path.dirname(manifest)))),
+    ...new Set(
+      manifests.map((manifest) =>
+        canonicalize(path.resolve(path.dirname(manifest)), resolveRealpath),
+      ),
+    ),
   ];
   if (projects.length === 1) {
     const project = projects[0];
@@ -105,6 +118,16 @@ export async function resolveFoundryProject(
     `Multiple Foundry projects were found: ${candidates.join(", ")}. Configure ${PROJECT_PATH_SETTING}.`,
     { setting: PROJECT_PATH_SETTING, candidates },
   );
+}
+
+function canonicalize(resolvedPath: string, realpath: (path: string) => string): string {
+  try {
+    return realpath(resolvedPath);
+  } catch {
+    // Path may not exist yet (remote or starting server); lexical resolution
+    // remains safe and deterministic in that case.
+    return resolvedPath;
+  }
 }
 
 type ManifestCheck =

@@ -74,7 +74,7 @@ describe("VS Code workspace project resolver", () => {
     expect(workspaceMock.findFiles).not.toHaveBeenCalled();
   });
 
-  it("reads projectPath and searches only the first workspace folder", async () => {
+  it("reads projectPath and resolves it from the first workspace folder only", async () => {
     workspaceMock.workspaceFolders.push(
       { uri: { scheme: "file", fsPath: "/workspace/first" } },
       { uri: { scheme: "file", fsPath: "/workspace/second" } },
@@ -90,6 +90,8 @@ describe("VS Code workspace project resolver", () => {
       success: true,
       project: "/workspace/first/test_project",
     });
+    // Multi-root resolution intentionally prefers the first folder; the
+    // reconfiguration e2e scenario relies on reordering to swap projects.
     expect(workspaceMock.findFiles).toHaveBeenCalledWith(
       expect.objectContaining({
         base: "/workspace/first",

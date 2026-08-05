@@ -12,6 +12,7 @@ class FakeChildProcess extends EventEmitter {
   readonly stdout = new PassThrough();
   readonly stderr = new PassThrough();
   exitCode: number | null = null;
+  signalCode: NodeJS.Signals | null = null;
   readonly kill = vi.fn(() => true);
 
   complete(code: number | null): void {

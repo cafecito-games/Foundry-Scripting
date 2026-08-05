@@ -12,6 +12,10 @@ export function selectRunnableLeaves(
   const leaves = model.items.filter(
     (item): item is TestDiscoveryTest => item.kind === "test" && item.runnable,
   );
+  // Pre-compute a parent-suite -> descendant-leaves index once so each
+  // include/exclude suite resolves in O(1) instead of re-walking every leaf
+  // for every suite (O(suites × leaves × depth)).
+  const leavesBySuite = buildLeavesBySuiteIndex(leaves, byId);
   const selected = new Set<string>();
 
   if (includeIds === undefined) {
@@ -24,7 +28,12 @@ export function selectRunnableLeaves(
       if (item?.kind === "test" && item.runnable) {
         selected.add(item.id);
       } else if (item?.kind === "suite") {
-        addDescendantLeaves(item.id, leaves, byId, selected);
+        const descendantLeaves = leavesBySuite.get(id);
+        if (descendantLeaves !== undefined) {
+          for (const leafId of descendantLeaves) {
+            selected.add(leafId);
+          }
+        }
       }
     }
   }
@@ -34,53 +43,37 @@ export function selectRunnableLeaves(
     if (item?.kind === "test") {
       selected.delete(item.id);
     } else if (item?.kind === "suite") {
-      removeDescendantLeaves(item.id, leaves, byId, selected);
+      const descendantLeaves = leavesBySuite.get(id);
+      if (descendantLeaves !== undefined) {
+        for (const leafId of descendantLeaves) {
+          selected.delete(leafId);
+        }
+      }
     }
   }
 
   return leaves.filter((leaf) => selected.has(leaf.id));
 }
 
-function addDescendantLeaves(
-  suiteId: string,
+function buildLeavesBySuiteIndex(
   leaves: readonly TestDiscoveryTest[],
   byId: ReadonlyMap<string, TestDiscoveryModel["items"][number]>,
-  selected: Set<string>,
-): void {
+): Map<string, Set<string>> {
+  const index = new Map<string, Set<string>>();
   for (const leaf of leaves) {
-    if (hasAncestor(leaf, suiteId, byId)) {
-      selected.add(leaf.id);
+    let parentId: string | null = leaf.parentId;
+    const visited = new Set<string>();
+    while (parentId !== null && !visited.has(parentId)) {
+      let bucket = index.get(parentId);
+      if (bucket === undefined) {
+        bucket = new Set<string>();
+        index.set(parentId, bucket);
+      }
+      bucket.add(leaf.id);
+      visited.add(parentId);
+      const parent = byId.get(parentId);
+      parentId = parent?.kind === "suite" ? parent.parentId : null;
     }
   }
-}
-
-function removeDescendantLeaves(
-  suiteId: string,
-  leaves: readonly TestDiscoveryTest[],
-  byId: ReadonlyMap<string, TestDiscoveryModel["items"][number]>,
-  selected: Set<string>,
-): void {
-  for (const leaf of leaves) {
-    if (hasAncestor(leaf, suiteId, byId)) {
-      selected.delete(leaf.id);
-    }
-  }
-}
-
-function hasAncestor(
-  leaf: TestDiscoveryTest,
-  suiteId: string,
-  byId: ReadonlyMap<string, TestDiscoveryModel["items"][number]>,
-): boolean {
-  let parentId: string | null = leaf.parentId;
-  const visited = new Set<string>();
-  while (parentId !== null && !visited.has(parentId)) {
-    if (parentId === suiteId) {
-      return true;
-    }
-    visited.add(parentId);
-    const parent = byId.get(parentId);
-    parentId = parent?.kind === "suite" ? parent.parentId : null;
-  }
-  return false;
+  return index;
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { writeLog } from "./logging.js";
 
 describe("writeLog", () => {
@@ -10,5 +10,20 @@ describe("writeLog", () => {
     };
 
     expect(() => writeLog(output, "info", "shutdown")).not.toThrow();
+  });
+
+  it("warns on stderr when fields cannot be serialized", () => {
+    const circular: Record<string, unknown> = { kind: "loop" };
+    circular.self = circular;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    expect(() =>
+      writeLog({ appendLine: () => undefined }, "info", "loop", { circular }),
+    ).not.toThrow();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("loop"),
+    );
+
+    warn.mockRestore();
   });
 });

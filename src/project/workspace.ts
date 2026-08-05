@@ -27,6 +27,12 @@ export function createWorkspaceProjectResolver(
     return uris.map((uri) => uri.fsPath);
   };
   return async () => {
+    // Multi-root note: only the first file-scheme workspace folder participates
+    // in resolution. This is intentional so users can reorder folders to choose
+    // the active project (the reconfiguration e2e scenario relies on it). Use
+    // foundryScript.projectPath to target a project in a non-first folder, or
+    // open that folder as the primary workspace. Non-file schemes fall through
+    // to the unsupported-workspace path below.
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     const workspaceScheme = workspaceFolder?.uri.scheme;
     if (workspaceScheme !== undefined && workspaceScheme !== "file") {

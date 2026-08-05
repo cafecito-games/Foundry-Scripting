@@ -63,6 +63,10 @@ Wrapper repositories can select their project explicitly:
 If multiple nested projects exist, configure `foundryScript.projectPath`. The extension
 currently operates one Foundry project per VS Code window.
 
+**Multi-root workspaces:** only the first file-scheme workspace folder participates in
+project resolution. This is intentional — reorder folders to switch which project is
+active, or set `foundryScript.projectPath` to target a project in a non-first folder.
+
 Cold project initialization may include file scanning, script-class registration, and
 editor setup before the tooling readiness record appears. While Foundry emits startup
 output, the extension allows that work to continue for up to two minutes. A silent
@@ -196,6 +200,19 @@ and does not duplicate results already published to Test Explorer. The global
 one-session rule also applies here: stop any active scene or test debug session before
 starting another. Test debugging requires Foundry `v0.1.0-alpha.24` or later.
 
+#### Test runner settings
+
+The extension exposes two similarly named runner settings because the
+**Foundry: Test** task and the **Test Explorer** adapter are separate features:
+
+| Setting | Used by | Purpose |
+|---------|---------|---------|
+| `foundryScript.test.runner` | The **Foundry: Test** task (`foundry project test`) | Runner passed on the command line for the human-facing task. |
+| `foundryScript.testing.runner` | The **Test Explorer** adapter | Canonical `res://` resource implementing the Foundry Test Adapter Protocol used by Run/Debug in the Testing view. |
+
+Configure both if you use both features; each is validated independently and only the
+setting relevant to a given flow is reported on failure.
+
 ### Troubleshooting
 
 Open **Output: FoundryScript Debug** for the resolved project, connection mode, DAP
@@ -307,10 +324,13 @@ To update it:
 4. Run `npm run test:grammar` and, when an engine checkout is available,
    `FOUNDRY_ENGINE_PATH=/path/to/Foundry npm run test:corpus`.
 
-`npm run check:grammar-sync` downloads the pinned asset and verifies that its raw bytes
-exactly match the committed grammar. CI runs this as an explicit online drift check.
-Synchronization is not part of installation, building, packaging, or extension startup;
-after `npm ci`, normal builds use only files already in the checkout.
+`npm run check:grammar-sync` downloads the pinned release asset, validates its
+SHA-256 against the digest pinned in `foundry-grammar.json`, structurally checks
+the JSON against the grammar contract, and finally compares the downloaded bytes
+to the committed grammar. CI runs this as an explicit online drift and integrity
+check. Synchronization is not part of installation, building, packaging, or
+extension startup; after `npm ci`, normal builds use only files already in the
+checkout.
 
 To run the corpus regression check against an engine checkout:
 

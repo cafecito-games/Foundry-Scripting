@@ -1,8 +1,14 @@
 import { realpathSync } from "node:fs";
 import * as path from "node:path";
 
+// Pinned verbatim from the Foundry engine's language-server bootstrap. The
+// engine emits this through `window/showMessage` when its active project
+// differs from the workspace the editor opened. Suppression is hard-matched by
+// exact string equality so the extension can replace the raw, non-actionable
+// engine notice with its own "Open Server Project" prompt. Any change on the
+// engine side must be mirrored here and in the regression test below.
 export const RAW_WORKSPACE_MISMATCH_WARNING =
-  "The FoundryScript Language Server might not work correctly with other projects than the one opened in Godot.";
+  "The FoundryScript Language Server might not work correctly with other projects than the one opened in Foundry.";
 export const OPEN_SERVER_WORKSPACE_ACTION = "Open Server Project";
 
 export interface ServerShowMessage {

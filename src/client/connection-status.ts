@@ -1,3 +1,4 @@
+import type { Disposable } from "vscode";
 import type { ConnectionState } from "./connection-manager.js";
 
 export const CONNECTION_ACTIONS_COMMAND = "foundryScript.connectionActions";
@@ -10,10 +11,12 @@ export interface ConnectionStatusPresentation {
   tooltip: string;
 }
 
-export interface StatusBarItemHandle {
+export interface ConnectionStatusItemHandle {
   text: string;
   tooltip?: unknown;
   command?: unknown;
+  show?(): void;
+  dispose?(): void;
 }
 
 export interface ConnectionStatusActions {
@@ -27,8 +30,11 @@ export interface ConnectionStatusActions {
 }
 
 function formatDelay(delayMs: number): string {
+  if (delayMs <= 0) {
+    return "immediately";
+  }
   const seconds = delayMs / 1_000;
-  return `${seconds} ${seconds === 1 ? "second" : "seconds"}`;
+  return `in ${seconds} ${seconds === 1 ? "second" : "seconds"}`;
 }
 
 export function renderConnectionState(
@@ -50,7 +56,7 @@ export function renderConnectionState(
         text: `$(sync~spin) FoundryScript: Retrying ${state.attempt}/${state.maxAttempts}`,
         tooltip:
           `Reconnect attempt ${state.attempt} of ${state.maxAttempts} starts ` +
-          `in ${formatDelay(state.delayMs)}.`,
+          `${formatDelay(state.delayMs)}.`,
       };
     case "disconnected":
       return {
@@ -65,24 +71,35 @@ export function renderConnectionState(
   }
 }
 
-export class ConnectionStatusController {
+export class ConnectionStatusController implements Disposable {
   private state: ConnectionState = { kind: "disconnected" };
+  private disposed = false;
 
   constructor(
-    private readonly item: StatusBarItemHandle,
+    private readonly item: ConnectionStatusItemHandle,
     private readonly actions: ConnectionStatusActions,
   ) {
     this.item.command = CONNECTION_ACTIONS_COMMAND;
   }
 
   update(state: ConnectionState): void {
+    if (this.disposed) return;
     this.state = { ...state };
     const presentation = renderConnectionState(state);
     this.item.text = presentation.text;
     this.item.tooltip = presentation.tooltip;
   }
 
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    // Ownership of the underlying status item remains with the extension (the
+    // item is pushed separately to context.subscriptions). Reset internal
+    // state and short-circuit future updates without disposing the item.
+  }
+
   async showActions(): Promise<void> {
+    if (this.disposed) return;
     const choices =
       this.state.kind === "off"
         ? [OPEN_SETTINGS_ACTION, OPEN_LOG_ACTION]

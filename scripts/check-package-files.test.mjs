@@ -5,6 +5,9 @@ import { validatePackageFiles } from "./check-package-files.mjs";
 
 const requiredFiles = [
   "package.json",
+  "LICENSE",
+  "README.md",
+  "CHANGELOG.md",
   "dist/extension.js",
   "language-configuration.json",
   "syntaxes/foundryscript.tmLanguage.json",
@@ -17,9 +20,13 @@ describe("validatePackageFiles", () => {
 
   it.each([
     ".worktrees/package-leak/marker.txt",
+    ".opencode/opencode-loop/ses_session.json",
+    ".claude/settings.json",
     ".github/workflows/ci.yml",
     ".cursor/skills/example.md",
     ".vscode/settings.json",
+    "Taskfile.yml",
+    "foundry-grammar.json",
     "docs/packaging.md",
     "scripts/check-package-files.mjs",
     "src/extension.ts",

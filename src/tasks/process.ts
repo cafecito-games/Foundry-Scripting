@@ -95,11 +95,30 @@ export class FoundryTaskProcess {
 
     child.kill("SIGTERM");
     this.terminationTimer = setTimeout(() => {
-      if (!this.completed && child.exitCode === null) {
+      // A child killed by signal has exitCode === null and signalCode set.
+      // Only escalate when the process is genuinely still alive.
+      if (!this.completed && child.exitCode === null && child.signalCode === null) {
         child.kill("SIGKILL");
       }
     }, this.terminationGraceMs);
+    // Don't let the escalation timer keep the extension host alive on
+    // shutdown; explicit teardown still happens via the close listener or
+    // dispose() below.
     this.terminationTimer.unref?.();
+  }
+
+  // Explicit teardown for extension shutdown paths that may discard the
+  // terminal mid-task. Cancels the child if needed and clears the escalation
+  // timer so the closure on `child` and the close listener are released
+  // immediately rather than after terminationGraceMs.
+  dispose(): void {
+    if (!this.cancelled) {
+      this.cancel();
+    }
+    if (this.terminationTimer !== undefined) {
+      clearTimeout(this.terminationTimer);
+      this.terminationTimer = undefined;
+    }
   }
 
   private fail(error: unknown): void {

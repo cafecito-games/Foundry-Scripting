@@ -48,6 +48,7 @@ export class TestingRefreshCoordinator {
   private readonly cancelTimer;
   private timer: unknown;
   private generation = 0;
+  private inFlight: Promise<void> | undefined;
   private disposed = false;
 
   constructor(options: TestingRefreshCoordinatorOptions) {
@@ -78,6 +79,13 @@ export class TestingRefreshCoordinator {
       return;
     }
     this.cancelPending();
+    // Wait for an in-flight scheduled refresh so two refreshes do not run
+    // concurrently against the runtime (state stays consistent, but onState
+    // side effects and log lines would otherwise fire twice and interleave).
+    if (this.inFlight !== undefined) {
+      await this.inFlight.catch(() => undefined);
+      if (this.disposed) return;
+    }
     await this.refresh(signal);
   }
 
@@ -102,13 +110,24 @@ export class TestingRefreshCoordinator {
       return;
     }
     this.timer = undefined;
+    // Wait for a previous in-flight refresh so scheduled runs stay serialized.
+    if (this.inFlight !== undefined) {
+      await this.inFlight.catch(() => undefined);
+      if (this.disposed || generation !== this.generation) return;
+    }
+    const promise = this.refresh(undefined);
+    this.inFlight = promise;
     try {
-      await this.refresh(undefined);
+      await promise;
     } catch (error) {
       try {
         this.onError?.(error);
       } catch {
         // Refresh diagnostics must not create an unhandled rejection.
+      }
+    } finally {
+      if (this.inFlight === promise) {
+        this.inFlight = undefined;
       }
     }
   }

@@ -243,4 +243,47 @@ describe("TCP language-server transport", () => {
 
     expect(clientSocket.destroyed).toBe(true);
   });
+
+  it("emits a recorded close event when the signal is already aborted on entry", async () => {
+    const server = net.createServer();
+    servers.push(server);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("test server did not expose a TCP address");
+    }
+
+    const controller = new AbortController();
+    controller.abort();
+    const output = { appendLine: vi.fn() };
+    const streams = await createTcpServerOptions({
+      host: "127.0.0.1",
+      port: address.port,
+      output,
+      signal: controller.signal,
+    })();
+    const clientSocket = streams.reader as net.Socket;
+    sockets.push(clientSocket);
+
+    await new Promise<void>((resolve) => {
+      clientSocket.once("close", () => resolve());
+    });
+
+    expect(clientSocket.destroyed).toBe(true);
+    const records: unknown[] = output.appendLine.mock.calls.map(
+      ([line]) => JSON.parse(String(line)) as unknown,
+    );
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          level: "error",
+          event: "lsp.socket.closed",
+          host: "127.0.0.1",
+          port: address.port,
+          hadError: true,
+        }),
+      ]),
+    );
+  });
 });
